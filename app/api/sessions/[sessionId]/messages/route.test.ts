@@ -6,6 +6,7 @@ import { readSse, type SseEvent } from "@/lib/client/sse";
 // enqueue-after-close で落ちないことを固定する。パイプラインと永続化は差し替える。
 const mocks = vi.hoisted(() => ({
   runConversationPipeline: vi.fn(),
+  runToshioInterjection: vi.fn(),
   appendMessage: vi.fn(),
   addFabricatedFact: vi.fn(),
   getMessages: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@/lib/server/llm/pipeline", () => ({
   runConversationPipeline: mocks.runConversationPipeline,
+  runToshioInterjection: mocks.runToshioInterjection,
   fallbackMessage: () => "……ちょっと分からなくなった。もう一度言って。",
 }));
 vi.mock("@/lib/server/store", () => ({
@@ -46,7 +48,6 @@ function pipelineResult(overrides: Record<string, unknown> = {}) {
     regenerated: false,
     newFabricatedClaims: [],
     reusedFabricatedFactIds: [],
-    toshioMessage: TOSHIO,
     ...overrides,
   };
 }
@@ -93,6 +94,7 @@ beforeEach(() => {
   }));
   mocks.addFabricatedFact.mockImplementation(() => ({ id: "ff-new" }));
   mocks.runConversationPipeline.mockResolvedValue(pipelineResult());
+  mocks.runToshioInterjection.mockResolvedValue(TOSHIO);
 });
 
 describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→としおを順に流す", () => {
@@ -132,19 +134,41 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     expect(mocks.addFabricatedFact.mock.calls[0][0].introducedMessageId).toBe("msg-2");
   });
 
-  it("toshioMessage が null なら吹き出しはシオリの1つだけ", async () => {
-    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ toshioMessage: null }));
+  it("としおはシオリの発話を保存し終えてから、同じ材料（履歴・分析・生成結果）で呼ぶ", async () => {
+    mocks.runToshioInterjection.mockImplementation(async () => {
+      // 呼ばれた時点でシオリの発話は保存済み
+      expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori");
+      return TOSHIO;
+    });
+    const pipeline = pipelineResult();
+    mocks.runConversationPipeline.mockResolvedValue(pipeline);
+    await collect(await post("これって伏線じゃない？"));
+    expect(mocks.runToshioInterjection).toHaveBeenCalledWith({
+      workId: "w",
+      workTitle: "テスト作品",
+      sessionId: "s1",
+      currentEpisode: 3,
+      history: [],
+      userMessage: "これって伏線じゃない？",
+      analysis: pipeline.analysis,
+      generation: pipeline.generation,
+    });
+  });
+
+  it("としおが割り込まなければ（null）吹き出しはシオリの1つだけ", async () => {
+    mocks.runToshioInterjection.mockResolvedValue(null);
     const events = await collect(await post());
     expect(bubbles(events)).toEqual([["shiori", SHIORI]]);
     expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
     expect(events[events.length - 1].event).toBe("done");
   });
 
-  it("パイプラインが失敗したら定型文をシオリとして流し、保存する", async () => {
+  it("パイプラインが失敗したら定型文をシオリとして流して保存し、としおは呼ばない", async () => {
     mocks.runConversationPipeline.mockRejectedValue(new Error("boom"));
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     const events = await collect(await post());
     spy.mockRestore();
+    expect(mocks.runToshioInterjection).not.toHaveBeenCalled();
     expect(bubbles(events)).toEqual([["shiori", "……ちょっと分からなくなった。もう一度言って。"]]);
     expect(events.map((e) => e.event).filter((e) => e !== "token")).toEqual(["message-start", "metadata", "message-end", "done"]);
     expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "……ちょっと分からなくなった。もう一度言って。", "shiori");

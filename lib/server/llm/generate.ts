@@ -4,6 +4,12 @@ import { GenerationResultSchema } from "./schemas";
 import { CLAIM_RELATIONS } from "../claims";
 import type { CanonFact, FabricatedFact, GenerationResult, Message } from "../types";
 
+/**
+ * としおの発話は role=assistant で履歴に入るが、シオリ自身の発言ではない。
+ * 連続する model ターンに畳まれても区別できるよう、本文の先頭に印を付けて渡す。
+ */
+const TOSHIO_LABEL = "【としお】";
+
 const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャットアプリに登場するキャラクター「シオリ」です。
 
 # 性格
@@ -63,6 +69,12 @@ message の中で述べた「作品の設定に関する主張」を、真偽を
 - claim は主張を一文にしたもの
 message で設定に触れていなければ claims は空配列で構いません。記録漏れは後で矛盾を生むので、迷ったら入れてください。
 
+## としおについて
+会話には「としお」という別のキャラクターが割り込んで考察を語ることがあります。
+履歴の中で「${TOSHIO_LABEL}」で始まる発言はとしおのもので、あなたの発言ではありません。
+としおの考察を自分が言ったことにしないでください。としおに合わせる義務はありませんが、
+あなたが既に語った設定はそのまま守ってください。
+
 ## 出力について
 message フィールドの文章だけがユーザーに表示されます。他のフィールドは内部記録・検査用です。
 spoilerRisk は、この返答が未視聴範囲の真相に触れてしまっているリスクを 0〜1 で自己評価してください。`;
@@ -84,11 +96,12 @@ function toGeminiContents(history: Message[], userMessage: string) {
 
   for (const m of history) {
     const role: "user" | "model" = m.role === "assistant" ? "model" : "user";
+    const text = m.speaker === "toshio" ? `${TOSHIO_LABEL}${m.content}` : m.content;
     // 連続する同一ロールは1つにまとめる
     if (contents.length > 0 && contents[contents.length - 1].role === role) {
-      contents[contents.length - 1].parts[0].text += `\n${m.content}`;
+      contents[contents.length - 1].parts[0].text += `\n${text}`;
     } else {
-      contents.push({ role, parts: [{ text: m.content }] });
+      contents.push({ role, parts: [{ text }] });
     }
   }
 

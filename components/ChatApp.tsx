@@ -105,26 +105,34 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
       content: text,
       createdAt: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, userMessage]);
-
-    // 1回の送信でシオリ→（ときどき）としお、と複数の発話が届きうる。
-    // message-start が来るたびに新しい吹き出しを積み、以降の token/metadata は
-    // それに紐づける。
+    // 返答を待つ間も入力中の表示を出すため、吹き出しは先に1つ積んでおき、
+    // 最初の message-start はそれに充てる。1回の送信でシオリ→（ときどき）としお、
+    // と複数の発話が届きうるので、2つ目以降の message-start は新しく積む。
+    const placeholderId = `local-assistant-${crypto.randomUUID()}`;
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { id: placeholderId, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true },
+    ]);
+    let placeholderUsed = false;
+    // 以降の token/metadata はこの吹き出しに紐づける
     let currentId: string | null = null;
 
     try {
       await sendMessage(sessionId, text, {
         onMessageStart: (speaker) => {
-          currentId = `local-assistant-${crypto.randomUUID()}`;
-          const message: ViewMessage = {
-            id: currentId,
-            role: "assistant",
-            content: "",
-            createdAt: new Date().toISOString(),
-            isStreaming: true,
-            speaker,
-          };
-          setMessages((prev) => [...prev, message]);
+          if (!placeholderUsed) {
+            placeholderUsed = true;
+            currentId = placeholderId;
+            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker } : m)));
+            return;
+          }
+          const id = `local-assistant-${crypto.randomUUID()}`;
+          currentId = id;
+          setMessages((prev) => [
+            ...prev,
+            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker },
+          ]);
         },
         onToken: (chunk) => {
           const id = currentId;
@@ -167,6 +175,13 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
       }
       setSendError(e instanceof Error ? e.message : "送信に失敗しました。回線を確認してもう一度試して。");
     } finally {
+      // 何も届かないまま終わった（送信自体の失敗など）placeholder は消し、
+      // message-end が来ないまま閉じた吹き出しは streaming を解除する
+      setMessages((prev) =>
+        prev
+          .filter((m) => !(m.id === placeholderId && !placeholderUsed))
+          .map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
+      );
       setIsSending(false);
     }
   }

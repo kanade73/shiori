@@ -116,6 +116,22 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
     expect(contents[contents.length - 1].role).toBe("user");
   });
 
+  it("としおの発話（speaker=toshio）は model に畳まれるが、【としお】の印でシオリ自身の発言と区別する", async () => {
+    await generateResponse({
+      ...baseParams,
+      history: [
+        msg("user", "これって伏線じゃない？"),
+        { ...msg("assistant", "そうだね。"), speaker: "shiori" },
+        { ...msg("assistant", "結論から言うとね……"), speaker: "toshio" },
+      ],
+    });
+    const contents = generateContent.mock.calls[0][0].contents;
+    expect(contents[1]).toEqual({ role: "model", parts: [{ text: "そうだね。\n【としお】結論から言うとね……" }] });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("【としお】");
+    expect(system).toContain("あなたの発言ではありません");
+  });
+
   it("履歴が空なら今回の発言だけを user として送る", async () => {
     await generateResponse(baseParams);
     expect(generateContent.mock.calls[0][0].contents).toEqual([

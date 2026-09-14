@@ -125,3 +125,18 @@ describe("ChatApp: 返答を待つ間の表示", () => {
     expect(screen.queryByText("入力中")).toBeNull();
   });
 });
+
+describe("ChatApp: 途中で切れたストリーム", () => {
+  it("message-start の後に失敗したら、その吹き出しに定型文を入れて閉じる（入力中のまま残さない）", async () => {
+    mocks.sendMessage.mockImplementation(async (_s: string, _c: string, h: SendMessageHandlers) => {
+      h.onMessageStart("shiori");
+      throw new Error("network");
+    });
+    await renderAndSend("hi");
+
+    await screen.findByText("network");
+    const [bubble] = assistantBubbles();
+    expect(within(bubble).getByText("……ちょっと分からなくなった。もう一度言って。")).toBeTruthy();
+    expect(screen.queryByText("入力中")).toBeNull();
+  });
+});

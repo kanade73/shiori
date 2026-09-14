@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { appendMessage, addFabricatedFact, getMessages, getSession } from "@/lib/server/store";
 import { getWork } from "@/lib/server/works";
-import { runConversationPipeline, fallbackMessage } from "@/lib/server/llm/pipeline";
+import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
 import type { Message } from "@/lib/server/types";
 
@@ -81,22 +81,26 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         }
       };
 
-      try {
-        const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds, toshioMessage } =
-          await runConversationPipeline({
-          workId: session.workId,
-          workTitle: work.title,
-          sessionId,
-          currentEpisode: session.currentEpisode,
-          history: historyBefore,
-          userMessage: content,
-        });
-
-        send("message-start", { speaker: "shiori" });
-        for (const chunk of chunkText(generation.message)) {
+      const streamText = async (text: string) => {
+        for (const chunk of chunkText(text)) {
           send("token", { text: chunk });
           await sleep(18);
         }
+      };
+
+      try {
+        const { analysis, generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+          await runConversationPipeline({
+            workId: session.workId,
+            workTitle: work.title,
+            sessionId,
+            currentEpisode: session.currentEpisode,
+            history: historyBefore,
+            userMessage: content,
+          });
+
+        send("message-start", { speaker: "shiori" });
+        await streamText(generation.message);
 
         const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
 
@@ -123,15 +127,24 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         });
         send("message-end", {});
 
-        // issue #6: シオリの返答の後、材料が揃っているときだけ「としお」が割り込む。
+        // issue #6: シオリの返答を出し切ってから、材料が揃っているときだけ「としお」が割り込む。
+        // シオリの嘘は保存済みなので、としおには今ついた嘘も「既に語った設定」として渡る。
+        const toshioMessage = await runToshioInterjection({
+          workId: session.workId,
+          workTitle: work.title,
+          sessionId,
+          currentEpisode: session.currentEpisode,
+          history: historyBefore,
+          userMessage: content,
+          analysis,
+          generation,
+        });
         if (toshioMessage) {
           send("message-start", { speaker: "toshio" });
-          for (const chunk of chunkText(toshioMessage)) {
-            send("token", { text: chunk });
-            await sleep(18);
-          }
+          await streamText(toshioMessage);
           appendMessage(sessionId, "assistant", toshioMessage, "toshio");
-          send("metadata", { fabricatedFactIds: [], strategy: generation.strategy, regenerated: false });
+          // としおの発話は嘘の仕組み（FabricatedFact / strategy）に乗っていない
+          send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
           send("message-end", {});
         }
 
@@ -140,10 +153,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         console.error(`[sessions/${sessionId}/messages] pipeline failed:`, error);
         const fallback = fallbackMessage();
         send("message-start", { speaker: "shiori" });
-        for (const chunk of chunkText(fallback)) {
-          send("token", { text: chunk });
-          await sleep(18);
-        }
+        await streamText(fallback);
         appendMessage(sessionId, "assistant", fallback, "shiori");
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
         send("message-end", {});

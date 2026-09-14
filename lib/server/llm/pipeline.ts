@@ -16,8 +16,6 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
-  /** としお（issue #6）の割り込みコメント。無ければ今回は割り込まない。 */
-  toshioMessage: string | null;
 };
 
 // としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない
@@ -126,27 +124,6 @@ export async function runConversationPipeline(params: {
     }
   }
 
-  let toshioMessage: string | null = null;
-  if (turnsSinceLastToshio(history) >= TOSHIO_COOLDOWN_TURNS && worthAskingToshio(generation, analysis)) {
-    try {
-      const commentary = await generateToshioCommentary({
-        workTitle,
-        currentEpisode,
-        canonFacts: visibleCanonFacts,
-        fabricatedFacts: existingFabricatedFacts,
-        userMessage,
-        shioriMessage: generation.message,
-      });
-      if (commentary.shouldComment && commentary.message.trim().length > 0) {
-        toshioMessage = commentary.message;
-      }
-    } catch (error) {
-      // としおの割り込みは演出であって本筋ではない。失敗してもシオリの返答は
-      // 既に確定しているので、単に今回は割り込まなかったことにする。
-      console.error("としおの割り込み生成に失敗:", error);
-    }
-  }
-
   return {
     analysis,
     generation,
@@ -154,8 +131,49 @@ export async function runConversationPipeline(params: {
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
-    toshioMessage,
   };
+}
+
+/**
+ * issue #6: としおの割り込み。シオリの返答を流し終えて保存した後に呼ぶ
+ * （シオリのパイプラインに含めると、としお分の Gemini 待ちがシオリの返答の
+ * 表示まで遅らせる）。材料はシオリと同じ取り方で取り直すので、この発話で
+ * シオリが新しくついた嘘も「既に語った設定」として渡る。
+ * 割り込むなら本文、しないなら null。失敗しても例外にしない。
+ */
+export async function runToshioInterjection(params: {
+  workId: string;
+  workTitle: string;
+  sessionId: string;
+  currentEpisode: number;
+  /** シオリのパイプラインに渡したのと同じ、今回の発話より前の履歴 */
+  history: Message[];
+  userMessage: string;
+  analysis: UserMessageAnalysis;
+  generation: GenerationResult;
+}): Promise<string | null> {
+  const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation } = params;
+
+  if (turnsSinceLastToshio(history) < TOSHIO_COOLDOWN_TURNS) return null;
+  if (!worthAskingToshio(generation, analysis)) return null;
+
+  try {
+    const commentary = await generateToshioCommentary({
+      workTitle,
+      currentEpisode,
+      canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis),
+      fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
+      userMessage,
+      shioriMessage: generation.message,
+    });
+    if (commentary.shouldComment && commentary.message.trim().length > 0) return commentary.message;
+    return null;
+  } catch (error) {
+    // としおの割り込みは演出であって本筋ではない。失敗してもシオリの返答は
+    // 既に確定しているので、単に今回は割り込まなかったことにする。
+    console.error("としおの割り込み生成に失敗:", error);
+    return null;
+  }
 }
 
 export function fallbackMessage(): string {
