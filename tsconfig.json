@@ -38,6 +38,7 @@
     ".next-3001/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "**/*.test.ts"
   ]
 }

@@ -1,21 +1,23 @@
-import type { CanonFact, FabricatedFact, GenerationResult, NewFactDraft, ResponseEvaluation } from "../types";
+import { findContradictions, isFabricated, normalizeTriple, type Normalizer } from "../claims";
+import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
 
 /**
- * Heuristic checker instead of a second LLM call - docs/specs/mvp-spec.md section 8 Step 5
- * explicitly allows "別のLLM呼び出し【または】検査処理" (an LLM call OR a
- * deterministic check). This keeps the pipeline fast/cheap and avoids
- * relying on another model call to judge the first one.
+ * Deterministic checker instead of a second LLM call. The generation step is
+ * deliberately unconstrained (wild lies are the point); this is the only
+ * place that says no, and it says no for exactly three reasons:
+ *   1. a claim contradicts a lie the character already told this session
+ *   2. a claim cites a canon fact beyond the user's viewing progress
+ *   3. a fabricated claim directly overwrites a visible canon fact
  */
 
-function norm(s: string): string {
-  return s.toLowerCase().trim();
-}
-
-function directlyContradicts(
-  a: { subject: string; relation: string; object: string },
-  b: { subject: string; relation: string; object: string },
-): boolean {
-  return norm(a.subject) === norm(b.subject) && norm(a.relation) === norm(b.relation) && norm(a.object) !== norm(b.object);
+function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer): boolean {
+  // Canon relations are free text, so only the coarse case is checkable:
+  // same subject, same relation phrase, different object.
+  return (
+    normalize(claim.subject) === normalize(canon.subject) &&
+    normalize(claim.relation) === normalize(canon.relation) &&
+    normalize(claim.object) !== normalize(canon.object)
+  );
 }
 
 export function evaluateGeneration(params: {
@@ -24,39 +26,49 @@ export function evaluateGeneration(params: {
   allCanonFacts: CanonFact[];
   currentEpisode: number;
   existingFabricatedFacts: FabricatedFact[];
+  normalize: Normalizer;
 }): ResponseEvaluation {
-  const { result, visibleCanonFacts, allCanonFacts, currentEpisode, existingFabricatedFacts } = params;
+  const { result, visibleCanonFacts, allCanonFacts, currentEpisode, existingFabricatedFacts, normalize } = params;
 
+  const details: string[] = [];
   let canonConflicts = 0;
   let fabricatedConflicts = 0;
   let spoilerRiskScore = result.spoilerRisk;
 
-  const checkAgainstFuture = (draft: NewFactDraft) => {
-    for (const id of draft.sourceCanonFactIds) {
+  for (const claim of result.claims) {
+    for (const id of claim.sourceCanonFactIds) {
       const fact = allCanonFacts.find((f) => f.id === id);
       if (fact && fact.episodeFrom > currentEpisode) {
         spoilerRiskScore = 1;
+        details.push(`「${claim.claim}」は第${fact.episodeFrom}話以降の情報（${fact.id}）に基づいている`);
       }
     }
-  };
 
-  for (const draft of result.newFacts) {
-    checkAgainstFuture(draft);
-    if (visibleCanonFacts.some((fact) => directlyContradicts(draft, fact))) canonConflicts += 1;
-    if (existingFabricatedFacts.some((fact) => directlyContradicts(draft, fact))) fabricatedConflicts += 1;
+    const normalized = normalizeTriple(claim, normalize);
+    const contradictions = findContradictions(normalized, existingFabricatedFacts);
+    if (contradictions.length > 0) {
+      fabricatedConflicts += 1;
+      for (const c of contradictions) {
+        details.push(`「${claim.claim}」は既に語った「${c.existing.claim}」と矛盾する（${c.reason}）`);
+      }
+    }
+
+    if (isFabricated(claim) && visibleCanonFacts.some((fact) => contradictsCanon(claim, fact, normalize))) {
+      canonConflicts += 1;
+      details.push(`「${claim.claim}」は本物の設定と直接矛盾する`);
+    }
   }
 
   const believabilityScore = 0.85;
-  const totalNew = Math.max(result.newFacts.length, 1);
-  const canonContradictionScore = Math.min(1, canonConflicts / totalNew);
-  const fabricatedConsistencyScore = 1 - Math.min(1, fabricatedConflicts / totalNew);
+  const total = Math.max(result.claims.length, 1);
+  const canonContradictionScore = Math.min(1, canonConflicts / total);
+  const fabricatedConsistencyScore = fabricatedConflicts > 0 ? 0 : 1;
 
-  const shouldRegenerate =
-    spoilerRiskScore > 0.2 || fabricatedConsistencyScore < 0.7 || believabilityScore < 0.6 || canonContradictionScore > 0.3;
+  const shouldRegenerate = spoilerRiskScore > 0.2 || fabricatedConflicts > 0 || canonContradictionScore > 0.3;
 
   const reasons: string[] = [];
   if (spoilerRiskScore > 0.2) reasons.push("視聴済み範囲を超えるネタバレの可能性がある");
-  if (fabricatedConsistencyScore < 0.7) reasons.push("既存の嘘と矛盾している");
+  if (fabricatedConflicts > 0) reasons.push("既に語った設定と矛盾している");
   if (canonContradictionScore > 0.3) reasons.push("本物の設定と矛盾している");
 
   return {
@@ -66,5 +78,6 @@ export function evaluateGeneration(params: {
     believabilityScore,
     shouldRegenerate,
     reason: reasons.length > 0 ? reasons.join("、") : undefined,
+    details,
   };
 }

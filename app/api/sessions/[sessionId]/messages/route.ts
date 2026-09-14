@@ -68,7 +68,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(sseEvent(event, data)));
 
       try {
-        const { generation, evaluation, regenerated } = await runConversationPipeline({
+        const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+          await runConversationPipeline({
           workId: session.workId,
           workTitle: work.title,
           sessionId,
@@ -85,14 +86,15 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         const assistantMessage = appendMessage(sessionId, "assistant", generation.message);
 
         const newFactIds: string[] = [];
-        for (const draft of generation.newFacts) {
+        for (const claim of newFabricatedClaims) {
           const fact = addFabricatedFact({
             sessionId,
-            subject: draft.subject,
-            relation: draft.relation,
-            object: draft.object,
-            claim: draft.claim,
-            sourceCanonFactIds: draft.sourceCanonFactIds,
+            subject: claim.subject,
+            relation: claim.relation,
+            object: claim.object,
+            negated: claim.negated,
+            claim: claim.claim,
+            sourceCanonFactIds: claim.sourceCanonFactIds,
             introducedMessageId: assistantMessage.id,
             confidence: Math.round((1 - evaluation.canonContradictionScore) * 100) / 100,
           });
@@ -100,7 +102,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         }
 
         send("metadata", {
-          fabricatedFactIds: [...newFactIds, ...generation.usedExistingFactIds],
+          fabricatedFactIds: [...newFactIds, ...reusedFabricatedFactIds],
           strategy: generation.strategy,
           regenerated,
         });

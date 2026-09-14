@@ -2,21 +2,28 @@ import { analyzeUserMessage } from "./analyze";
 import { generateResponse } from "./generate";
 import { evaluateGeneration } from "./evaluate";
 import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { getAllCanonFacts } from "../works";
-import type { GenerationResult, Message, ResponseEvaluation } from "../types";
+import { getAllCanonFacts, getEntities } from "../works";
+import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
+import type { Claim, GenerationResult, Message, ResponseEvaluation, UserMessageAnalysis } from "../types";
 
 export type PipelineResult = {
+  analysis: UserMessageAnalysis;
   generation: GenerationResult;
   evaluation: ResponseEvaluation;
   regenerated: boolean;
+  /** Fabricated claims from the final reply, normalized, that are not already stored. */
+  newFabricatedClaims: Claim[];
+  /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
+  reusedFabricatedFactIds: string[];
 };
 
 const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一度言って。";
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * Runs docs/specs/mvp-spec.md section 4 "会話時" steps 3-9: analyze -> retrieve -> decide
- * strategy & generate -> evaluate -> regenerate once if flagged.
+ * analyze (local) -> retrieve -> generate -> evaluate -> regenerate once if
+ * flagged. Generation is unconstrained; consistency is enforced only after
+ * the fact, against what the character already said in this session.
  */
 export async function runConversationPipeline(params: {
   workId: string;
@@ -28,10 +35,11 @@ export async function runConversationPipeline(params: {
 }): Promise<PipelineResult> {
   const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
 
-  const analysis = await analyzeUserMessage(userMessage);
+  const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
   const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
-  const existingFabricatedFacts = retrieveFabricatedFacts(sessionId);
+  const existingFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const allCanonFacts = getAllCanonFacts(workId);
+  const normalize = buildNormalizer(getEntities(workId));
 
   const genArgs = {
     workTitle,
@@ -41,38 +49,34 @@ export async function runConversationPipeline(params: {
     history,
     userMessage,
   };
-
-  let generation = await generateResponse(genArgs);
-  let evaluation = evaluateGeneration({
-    result: generation,
-    visibleCanonFacts,
-    allCanonFacts,
-    currentEpisode,
-    existingFabricatedFacts,
-  });
-
-  let regenerated = false;
-  if (evaluation.shouldRegenerate) {
-    regenerated = true;
-    generation = await generateResponse({ ...genArgs, feedback: evaluation.reason });
-    evaluation = evaluateGeneration({
-      result: generation,
+  const evaluate = (result: GenerationResult) =>
+    evaluateGeneration({
+      result,
       visibleCanonFacts,
       allCanonFacts,
       currentEpisode,
       existingFabricatedFacts,
+      normalize,
     });
 
+  let generation = await generateResponse(genArgs);
+  let evaluation = evaluate(generation);
+
+  let regenerated = false;
+  if (evaluation.shouldRegenerate) {
+    regenerated = true;
+    const feedback = [evaluation.reason, ...evaluation.details.map((d) => `- ${d}`)].filter(Boolean).join("\n");
+    generation = await generateResponse({ ...genArgs, feedback });
+    evaluation = evaluate(generation);
+
     // Still flagged after one retry: don't trust the generated *text* either
-    // (it may have been written around the very lie we're discarding, so
-    // clearing newFacts alone could still leave spoiler-risk prose on
-    // screen) - replace the whole reply with a safe, generic non-answer
-    // per docs/specs/mvp-spec.md section 13 rather than looping.
+    // (it may have been written around the very lie we're discarding), so
+    // replace the whole reply with a safe non-answer rather than looping.
     if (evaluation.shouldRegenerate) {
       generation = {
         ...generation,
         message: SAFE_UNCERTAIN_MESSAGE,
-        newFacts: [],
+        claims: [],
         usedExistingFactIds: [],
         strategy: "admit_uncertainty",
         spoilerRisk: 0,
@@ -80,7 +84,27 @@ export async function runConversationPipeline(params: {
     }
   }
 
-  return { generation, evaluation, regenerated };
+  const newFabricatedClaims: Claim[] = [];
+  const reused = new Set<string>(generation.usedExistingFactIds);
+  for (const claim of generation.claims) {
+    if (!isFabricated(claim)) continue;
+    const normalized = normalizeTriple(claim, normalize);
+    const duplicate = findDuplicate(normalized, existingFabricatedFacts);
+    if (duplicate) {
+      reused.add(duplicate.id);
+    } else if (!newFabricatedClaims.some((c) => c.subject === normalized.subject && c.relation === normalized.relation && c.object === normalized.object && c.negated === normalized.negated)) {
+      newFabricatedClaims.push(normalized);
+    }
+  }
+
+  return {
+    analysis,
+    generation,
+    evaluation,
+    regenerated,
+    newFabricatedClaims,
+    reusedFabricatedFactIds: Array.from(reused),
+  };
 }
 
 export function fallbackMessage(): string {

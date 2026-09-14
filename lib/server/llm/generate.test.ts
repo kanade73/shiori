@@ -13,7 +13,7 @@ import { generateResponse } from "./generate";
 const okResult = {
   message: "そうだね。",
   strategy: "no_new_lie",
-  newFacts: [],
+  claims: [],
   usedExistingFactIds: [],
   spoilerRisk: 0.1,
 };
