@@ -1,0 +1,199 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { Sidebar } from "./Sidebar";
+import { ChatHeader } from "./ChatHeader";
+import { ChatMessageItem } from "./ChatMessageItem";
+import { TypingIndicator } from "./TypingIndicator";
+import { ChatInput } from "./ChatInput";
+import { Mascot } from "./Mascot";
+import {
+  getFabricatedFacts,
+  getSessionData,
+  listSessions,
+  sendMessage,
+  type SessionSummary,
+} from "@/lib/client/api";
+import type { ChatSession, Message, Work } from "@/lib/server/types";
+import type { ViewMessage } from "@/lib/client/types";
+
+function toViewMessage(message: Message, factIdsByMessage: Map<string, string[]>): ViewMessage {
+  return {
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    createdAt: message.createdAt,
+    fabricatedFactIds: factIdsByMessage.get(message.id),
+  };
+}
+
+function CenteredNote({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex h-dvh flex-col items-center justify-center gap-sm bg-canvas px-md text-center">
+      <Mascot size={96} variant="display" animated={false} />
+      <p className="max-w-[320px] text-[14px] text-muted">{children}</p>
+    </div>
+  );
+}
+
+export function ChatApp({ sessionId }: { sessionId: string }) {
+  const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [work, setWork] = useState<Work | null>(null);
+  const [session, setSession] = useState<ChatSession | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [messages, setMessages] = useState<ViewMessage[]>([]);
+  const [input, setInput] = useState("");
+  const [isSending, setIsSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function load() {
+      setLoading(true);
+      setLoadError(null);
+      try {
+        const [data, facts] = await Promise.all([getSessionData(sessionId), getFabricatedFacts(sessionId)]);
+        if (cancelled) return;
+
+        const factIdsByMessage = new Map<string, string[]>();
+        for (const fact of facts) {
+          const list = factIdsByMessage.get(fact.introducedMessageId) ?? [];
+          list.push(fact.id);
+          factIdsByMessage.set(fact.introducedMessageId, list);
+        }
+
+        setWork(data.work);
+        setSession(data.session);
+        setMessages(data.messages.map((m) => toViewMessage(m, factIdsByMessage)));
+
+        const list = await listSessions(data.work.id);
+        if (!cancelled) setSessions(list);
+      } catch (e) {
+        if (!cancelled) setLoadError(e instanceof Error ? e.message : "読み込みに失敗しました");
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    load();
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId]);
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
+  }, [messages]);
+
+  async function handleSend() {
+    const text = input.trim();
+    if (!text || isSending) return;
+
+    setInput("");
+    setSendError(null);
+    setIsSending(true);
+
+    const userMessage: ViewMessage = {
+      id: `local-user-${crypto.randomUUID()}`,
+      role: "user",
+      content: text,
+      createdAt: new Date().toISOString(),
+    };
+    const assistantId = `local-assistant-${crypto.randomUUID()}`;
+    const assistantMessage: ViewMessage = {
+      id: assistantId,
+      role: "assistant",
+      content: "",
+      createdAt: new Date().toISOString(),
+      isStreaming: true,
+    };
+    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+
+    try {
+      await sendMessage(sessionId, text, {
+        onToken: (chunk) => {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)));
+        },
+        onMetadata: (data) => {
+          setMessages((prev) =>
+            prev.map((m) =>
+              m.id === assistantId ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
+            ),
+          );
+        },
+        onDone: () => {
+          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
+        },
+      });
+
+      if (work) {
+        listSessions(work.id)
+          .then(setSessions)
+          .catch(() => {});
+      }
+    } catch (e) {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantId
+            ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
+            : m,
+        ),
+      );
+      setSendError(e instanceof Error ? e.message : "送信に失敗しました。回線を確認してもう一度試して。");
+    } finally {
+      setIsSending(false);
+    }
+  }
+
+  if (loading) return <CenteredNote>読み込み中……</CenteredNote>;
+  if (loadError || !work || !session) {
+    return <CenteredNote>{loadError ?? "セッションが見つかりませんでした。"}</CenteredNote>;
+  }
+
+  return (
+    <div className="flex h-dvh bg-canvas">
+      <Sidebar
+        isOpen={sidebarOpen}
+        onClose={() => setSidebarOpen(false)}
+        work={work}
+        sessions={sessions}
+        activeSessionId={sessionId}
+      />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <ChatHeader
+          workTitle={work.title}
+          currentEpisode={session.currentEpisode}
+          progressDescription={session.progressDescription}
+          sessionId={sessionId}
+          onOpenSidebar={() => setSidebarOpen(true)}
+        />
+
+        <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
+          <div className="mx-auto max-w-[760px] py-md">
+            {messages.map((message) =>
+              message.isStreaming && message.content === "" ? (
+                <TypingIndicator key={message.id} />
+              ) : (
+                <ChatMessageItem key={message.id} message={message} sessionId={sessionId} />
+              ),
+            )}
+          </div>
+        </div>
+
+        {sendError && (
+          <div className="mx-auto w-full max-w-[760px] px-md pb-xs">
+            <p className="rounded-md bg-[#c6435a1a] px-sm py-xs text-[13px] text-error">{sendError}</p>
+          </div>
+        )}
+
+        <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending} />
+      </div>
+    </div>
+  );
+}
