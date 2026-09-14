@@ -17,8 +17,8 @@ import type {
  *
  * 真偽の出どころは generate が返した claims の grounding（発話ごとに保存したもの）。
  * 本文中の位置は claim の quote で探す。としおの発言は主張を記録していないので、
- * 「直前のシオリの嘘を知ったうえで話を合わせていた」ことだけを示す（としおはその嘘を
- * 印付きで渡されている。toshio.ts の markLies）。
+ * 「直前のシオリの嘘を題材として渡されたうえで話を合わせていた」ことだけを示す
+ * （toshio.ts の premises）。
  */
 export type BuiltReveal = {
   messages: RevealMessage[];

@@ -51,6 +51,71 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - 限界: 真偽は generate の自己申告（grounding）なので、上の調査メモにある「作り話なのに claims に記録されない」問題はそのまま「印なし」として見える。凡例では「印のない部分は感想や相づち」と書いている
 - テスト: `lib/server/reveal.test.ts`, `lib/server/store.reveal.test.ts`, `app/api/sessions/[sessionId]/reveal/route.test.ts`, `components/RevealView.test.tsx`, `ChatApp.test.tsx`・messages の `route.test.ts` に追記。`npm test` 99件・lint・build 通過
 - 実画面の確認は、本物の `.data/db.json` を汚さないよう `DATA_DIR` をスクラッチに向けた別 dev サーバー（3005番）でデモセッションを作って行った（答え合わせすると会話が終わるため）。`next dev` を別 distDir で起動すると `tsconfig.json` の include に `.next-XXXX` が自動追加されるので、戻してある
+- 作業ブランチ: `feat/issue-6-toshio`（`dev` から分岐）
+- 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加` → `dev` 向き。issue #10（としおのプロフ画像）も同乗していて、#8 のマージで #6 と #10 の両方が閉じる
+- 会話パイプラインを「判断はコード、中身は LLM」の折衷形に組み替えた（下のセクション）。**まだ push していない**
+- **実 API では未確認**（`gemini-3.6-flash` の日次無料枠を使い切っているため）。動作確認はすべて vitest のモック経由
+- ポート 3001 の dev サーバーを `GEMINI_MODEL=gemini-3.5-flash-lite` 付きで起動したままにしていた可能性がある。停止は `pkill -f "next dev -p 3001"`
+
+## 環境設定: Herdr の Claude 連携
+- `herdr integration install claude` を実行済み。`~/.claude/hooks/herdr-agent-state.sh` が導入され、`~/.claude/settings.json` の `SessionStart` に Herdr の状態連携フックが追加された
+- `herdr integration status` で `claude: current (v9)` を確認済み。Claude Code 本体は `~/.local/bin/claude` の v2.1.270
+- リポジトリの実装変更ではなく、ユーザー環境の Herdr/Claude 連携設定
+
+## 直近のセッション: 「量と頻度はコード、中身は LLM」への組み替え
+
+ひとつ前のセッションの形（生成は会話だけ + 主張の分解を extract.ts の別呼び出し）は、嘘は出るものの **疑われると引っ込める**・**API 呼び出しが1発話2回** になり、採用しなかった。今回はその折衷。
+
+設計の要点:
+- **量と頻度はコードが決める、中身は LLM が決める。** ペルソナから「5択の strategy と比率」を消し、代わりにバックエンドが決めた **directive（今回の指示）1行** を可変部に差し込む
+- 生成は **1回の構造化出力**（返答文 + claims を同時に出す）に戻した。`extract.ts` / `extract.test.ts` は削除。**API 呼び出しは1発話1回**（差し戻し時のみ2回）
+- ペルソナは分厚くてよい（口調・嘘の作り方・「疑われたとき撤回しない」・claims の記録規則）。判断だけを外に出した
+
+`lib/server/llm/directive.ts`（新設・純粋関数・LLM を呼ばない）のルール（この順）:
+1. `questionType === "doubt"` → **layer**。`doubted` は言及キャラ/出来事に一致する既存の嘘。一致0件なら直前のシオリ発話でついた嘘。それも無ければ空配列
+2. 直近 `LIE_STREAK_LIMIT`(=2) 件のシオリの返答すべてに嘘が保存されている → **plain**（連続で嘘をつき続けない）
+3. `impression` / `other` で言及キャラも出来事も無い → **plain**
+4. それ以外 → **introduce**（新しい設定を1つ自然に混ぜる）
+
+directive の文面は `formatDirective`（generate.ts から export、テスト済み）。layer は「撤回せず、気のせいにせず、話をそらさず、裏付ける新しい細部を1つ足す」と言う。これが「疑われると引っ込める」への対処。
+
+**ネタバレ防止は全廃した**:
+- `ResponseStrategy` から `avoid_spoiler`、`ResponseEvaluation` から `spoilerRiskScore` を削除
+- `evaluate.ts` から `sourceCanonFactIds` の未視聴チェックを削除（パラメータの `allCanonFacts` / `currentEpisode` も削除）。残る検査は **既存の嘘との矛盾** と **fabricated claim による本物の設定の直接上書き** の2つだけ
+- ペルソナからも「ネタバレ」の語を排除（`generate.test.ts` が含まれないことを検証している）
+- ただし `retrieveCanonFacts` が視聴話数以下の canonFacts しか返さない仕組み（`getCanonFactsUpTo`）は **判断待ちとして残してある**。ここを外すかはユーザー判断
+
+そのほか:
+- `retrieval.ts` の `textIncludesAny` を export（directive.ts が同じ関連判定に使う）
+- `PipelineResult` に `directive` を追加（route はまだ使っていない）
+- `worthAskingToshio` から `avoid_spoiler` の分岐を削除（`admit_uncertainty` は残す）
+- としお（`toshio.ts`）は「題材（premises）」方式のまま。触っていない
+- テスト 85 件通過。`directive.test.ts` を新設、`generate.test.ts` を `generateResponse` 向けに書き直し、`pipeline.toshio.test.ts` の「2回落ちて定型文」ケースを未視聴 canonFact 依拠 → 既存の嘘との矛盾に書き換え。`tsc` / `eslint` / `build` OK
+
+## その前のセッション: 長いセッションで嘘をつかなくなる問題への組み替え（extract 方式・現在は廃止）
+
+
+ユーザーの方針: 「LLM には自由度を持たせたい。バックエンドで矯正するのは好みではない」。なので制御を足すのではなく、**生成から制約を外して事後の検査に押し出す**方向にした（AGENTS.md「発想は縛らず、整合だけ縛る」）。
+
+原因の見立て: プロンプトに「既に語った設定の全件」「絶対に矛盾させるな」「claims をすべて記録・quote は一字一句」が積まれ、セッションが長いほどモデルが自己監視に寄って嘘をやめる。要約・圧縮の仕組みは元々無く、嘘の全件渡しが線形に伸びていた。
+
+変更:
+- `generate.ts`: `generateResponse` → `generateReply`。構造化出力をやめ、返答文だけを返す。ペルソナは約 6,000 字 → 約 1,000 字（strategy の選択肢・比率・claims 規則・としおの説明・spoilerRisk を削除）。canonFacts は description だけ、id は渡さない。履歴からとしおの発話を落とす（`【としお】` 印は廃止）
+- `extract.ts`（新規）: `extractClaims(workTitle, message, canonFacts)`。返答文から主張を構造化出力で取り出す 2 回目の呼び出し。grounding は渡した canonFacts に基づくかで判定。**1 発話あたりの API 呼び出しは generate + extract の 2 回**（差し戻し時は 4 回）。無料枠を倍速で消費する点に注意
+- `retrieval.ts`: `retrieveFabricatedFacts` は言及キャラに関係する嘘を新しい順に最大 8 件（生成の「前に話したこと」用）。新設 `getActiveFabricatedFacts` が全件で、evaluate はこちらと照合する
+- `pipeline.ts`: generate → extract → evaluate → 差し戻し 1 回 → 定型文。`strategy` はモデルに選ばせず、保存結果から事後に決める（新しい嘘あり=introduce_small_lie、既存の言い直し=reinforce_existing_lie、それ以外=no_new_lie、定型文=admit_uncertainty）。UI のバッジととしおのゲーティングにだけ使う
+- `types.ts` / `schemas.ts`: `Claim.quote`、`GenerationResult.usedExistingFactIds` / `spoilerRisk` を削除。`evaluate.ts` の spoilerRisk は sourceCanonFactIds の未視聴チェックだけになった
+- `toshio.ts`: 「嘘の位置を印で教える」方式（`markLies` / `stripLieMarks` / `【嘘】`）を廃止。代わりにそのターンの fabricated claims を **「今回の題材」** として渡し、本作の事実として乗って考察を重ねるよう指示する。としおは嘘か本当かを見分ける必要がなくなった（claims の記録漏れがあっても印が欠けるのではなく、題材が減るだけ）
+- `route.ts`: `HISTORY_LIMIT` 16 → 12（としおを落とすので実質ユーザー↔シオリ 5〜6 往復）
+- テスト: `generate.test.ts` 書き換え、`extract.test.ts` 新規、`toshio.test.ts` / `pipeline.toshio.test.ts` を題材方式と 2 段呼び出しに合わせて更新。75 件通過、`tsc` / `eslint` / `build` OK
+
+実 API 確認（`gemini-3.5-flash-lite`、第 30 話設定、3 ターン）: 3 ターンとも嘘が出て、抽出された嘘が 7 件保存され、としおは題材（地下労働の歴史）に乗って考察した。差し戻しは 0 回。**逆に毎ターン嘘をついていて、素直な共感だけの返答が出ていない**。長いセッションでの頻度はまだ未計測
+
+## 次にやるとよいこと（extract 方式のセッション分。extract 廃止で一部は解消済み）
+- 長いセッション（20 ターン以上）で嘘の頻度が落ちないかを実測する。`strategy` は db に保存されないので、測るなら `metadata` を残すか db.json の fabricatedFacts の createdAt で数える
+- 嘘の頻度が高すぎるなら、ペルソナの「素直な共感だけの返答も混ぜて」の一文を強めるか、直近 N ターンで嘘をついた回数を 1 行添える（矯正にならない範囲の促し）
+- 作り話が canon 扱いになる記録漏れは残課題（extract を廃止して generate の claims に戻したので、今度は generate 側の記録漏れになる）
+- 直下 `HANDOFF.md` と `docs/HANDOFF.md` の二重化は未解消。`docs/HANDOFF.md` には別セッションの未コミット差分が乗っているので触っていない
 
 ## 直近のセッション: issue #10「としお専用のプロフ画像」
 - ユーザーが用意した `public/character/toshio-{64,128,256}.png` / `toshio-display-512.png` を配置し、`Mascot` に `character` props を追加して話者ごとに画像を出し分け（コミット `c353a75`）

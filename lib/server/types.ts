@@ -115,8 +115,8 @@ export type Claim = {
   grounding: ClaimGrounding;
   sourceCanonFactIds: string[];
   /**
-   * 返答文（message）の中でこの主張を述べている部分を、そのまま抜き出したもの。
-   * としおにシオリの返答のどこが嘘かを教えるのに使う（ユーザーには送らない）。
+   * 返答文（message）の中でこの主張を述べている部分の抜き出し。答え合わせで本文中の
+   * 位置を示すのに使う。モデルが省略することがあるので必須にしない。
    */
   quote?: string;
 };
@@ -217,6 +217,12 @@ export type RevealData =
       graph: RevealGraph;
     };
 
+/** バックエンドが1ターンごとに決める、シオリへの「今回の指示」。 */
+export type TurnDirective =
+  | { kind: "introduce" }
+  | { kind: "layer"; doubted: FabricatedFact[] }
+  | { kind: "plain" };
+
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 
 export type FabricatedFact = {
@@ -258,16 +264,18 @@ export type ResponseStrategy =
   | "no_new_lie"
   | "introduce_small_lie"
   | "reinforce_existing_lie"
-  | "avoid_spoiler"
   | "admit_uncertainty";
 
+/**
+ * 返答文と、そこで述べた主張。
+ * strategy はモデルが選ぶものではなく、保存された嘘の有無から事後に決まる
+ * （UI のバッジと、としおのゲーティングに使うだけ）。
+ */
 export type GenerationResult = {
   message: string;
   strategy: ResponseStrategy;
   /** Every setting-level claim in `message`, canon-grounded or not. */
   claims: Claim[];
-  usedExistingFactIds: string[];
-  spoilerRisk: number;
 };
 
 /**
@@ -283,7 +291,6 @@ export type ToshioCommentary = {
 export type ResponseEvaluation = {
   canonContradictionScore: number;
   fabricatedConsistencyScore: number;
-  spoilerRiskScore: number;
   believabilityScore: number;
   shouldRegenerate: boolean;
   reason?: string;

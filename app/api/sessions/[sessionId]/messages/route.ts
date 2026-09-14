@@ -6,7 +6,8 @@ import { isRateLimited } from "@/lib/server/rate-limit";
 import type { Message } from "@/lib/server/types";
 
 const MAX_CONTENT_LENGTH = 1000;
-const HISTORY_LIMIT = 16;
+// シオリに渡す直近の履歴。としおの発話は generate 側で落とすので、実質ユーザー↔シオリの往復5回分。
+const HISTORY_LIMIT = 12;
 
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
