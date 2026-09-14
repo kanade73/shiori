@@ -3,25 +3,41 @@
 import { useMemo } from "react";
 
 type MascotVariant = "avatar" | "display";
+export type MascotCharacter = "shiori" | "toshio";
 
 interface MascotProps {
   size?: number;
   variant?: MascotVariant;
+  /** 話者。画像の出し分けに使う。既定はシオリ。 */
+  character?: MascotCharacter;
   animated?: boolean;
   delay?: number;
   className?: string;
-  /** alt テキストに使う表示名。としお用の画像はまだ無く、シオリの画像を代用しているため既定は「ムラサキ」のまま。 */
+  /** alt テキストに使う表示名。 */
   name?: string;
 }
 
-const AVATAR_SOURCES = [
-  { maxSize: 80, src: "/character/avatar-64.png" },
-  { maxSize: 180, src: "/character/avatar-128.png" },
-  { maxSize: Infinity, src: "/character/avatar-256.png" },
-];
+const AVATAR_SOURCES: Record<MascotCharacter, { maxSize: number; src: string }[]> = {
+  shiori: [
+    { maxSize: 80, src: "/character/avatar-64.png" },
+    { maxSize: 180, src: "/character/avatar-128.png" },
+    { maxSize: Infinity, src: "/character/avatar-256.png" },
+  ],
+  toshio: [
+    { maxSize: 80, src: "/character/toshio-64.png" },
+    { maxSize: 180, src: "/character/toshio-128.png" },
+    { maxSize: Infinity, src: "/character/toshio-256.png" },
+  ],
+};
 
-function pickAvatarSource(size: number) {
-  return AVATAR_SOURCES.find((entry) => size <= entry.maxSize)?.src ?? AVATAR_SOURCES[AVATAR_SOURCES.length - 1].src;
+const DISPLAY_SOURCES: Record<MascotCharacter, string> = {
+  shiori: "/character/display-512.png",
+  toshio: "/character/toshio-display-512.png",
+};
+
+function pickAvatarSource(size: number, character: MascotCharacter) {
+  const sources = AVATAR_SOURCES[character];
+  return sources.find((entry) => size <= entry.maxSize)?.src ?? sources[sources.length - 1].src;
 }
 
 /**
@@ -31,9 +47,20 @@ function pickAvatarSource(size: number) {
  * whole-image tilt — no per-feature animation (no blink rig) is attempted
  * on this level of detail.
  */
-export function Mascot({ size = 36, variant = "avatar", animated = true, delay = 0, className = "", name = "ムラサキ" }: MascotProps) {
+export function Mascot({
+  size = 36,
+  variant = "avatar",
+  character = "shiori",
+  animated = true,
+  delay = 0,
+  className = "",
+  name = "ムラサキ",
+}: MascotProps) {
   const isAvatar = variant === "avatar";
-  const src = useMemo(() => (isAvatar ? pickAvatarSource(size) : "/character/display-512.png"), [isAvatar, size]);
+  const src = useMemo(
+    () => (isAvatar ? pickAvatarSource(size, character) : DISPLAY_SOURCES[character]),
+    [isAvatar, size, character],
+  );
 
   return (
     <div
