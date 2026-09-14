@@ -98,7 +98,9 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
             >
               <div className="flex items-center justify-between gap-xs">
                 <span className="truncate">{s.progressDescription ?? `第${s.currentEpisode}話まで`}</span>
-                <span className="shrink-0 text-[11px] text-muted-soft">{s.fabricatedFactCount}件</span>
+                <span className="shrink-0 text-[11px] text-muted-soft">
+                  {s.reveal ? "答え合わせ済み" : `${s.fabricatedFactCount}件`}
+                </span>
               </div>
               <span className="text-[11px] text-muted-soft">{formatDateTime(s.updatedAt)}</span>
             </Link>

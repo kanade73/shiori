@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { appendMessage, addFabricatedFact, getMessages, getSession } from "@/lib/server/store";
+import { appendMessage, addFabricatedFact, getMessages, getSession, saveMessageClaims } from "@/lib/server/store";
 import { getWork } from "@/lib/server/works";
 import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
@@ -39,6 +39,11 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   const session = getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
+  }
+
+  // 答え合わせで真偽を明かした会話は、そこで終わり（嘘を知ったうえで続けても、もう効かない）
+  if (session.reveal) {
+    return NextResponse.json({ error: "このセッションは答え合わせ済みです。新しいセッションを始めてください。" }, { status: 409 });
   }
 
   if (isRateLimited(sessionId)) {
@@ -103,6 +108,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         await streamText(generation.message);
 
         const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
+        // 答え合わせ用に、この返答の主張を真偽（grounding）と抜き出し位置（quote）ごと残す
+        saveMessageClaims(sessionId, assistantMessage.id, generation.claims);
 
         const newFactIds: string[] = [];
         for (const claim of newFabricatedClaims) {
@@ -154,7 +161,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         const fallback = fallbackMessage();
         send("message-start", { speaker: "shiori" });
         await streamText(fallback);
-        appendMessage(sessionId, "assistant", fallback, "shiori");
+        const fallbackMessageRecord = appendMessage(sessionId, "assistant", fallback, "shiori");
+        saveMessageClaims(sessionId, fallbackMessageRecord.id, []);
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
         send("message-end", {});
         send("done", {});

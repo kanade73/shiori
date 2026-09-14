@@ -47,6 +47,8 @@ export type ChatSession = {
   currentEpisode: number;
   /** The free-text description the user gave at setup, e.g. "幻影旅団編を全部見た". Shown in the UI in place of a raw episode number when present. */
   progressDescription?: string;
+  /** 答え合わせ済みなら、その時刻とユーザーの予想。答え合わせした会話は続けられない。 */
+  reveal?: RevealState;
   createdAt: string;
   updatedAt: string;
 };
@@ -118,6 +120,66 @@ export type Claim = {
    */
   quote?: string;
 };
+
+/** 発話ごとに保存する claim。答え合わせで「どの主張が本当/嘘だったか」を示すのに使う。 */
+export type StoredClaim = Claim & { id: string };
+
+// --- 答え合わせ（会話の終わりに、シオリととしおの話の真偽を明かす） ---
+
+export type Verdict = "true" | "lie";
+
+export type RevealState = {
+  revealedAt: string;
+  /** statement id → ユーザーの予想。予想しなかったものは含まない */
+  guesses: Record<string, Verdict>;
+};
+
+/** 答え合わせの対象になる主張1件。今のところシオリの claims だけ（としおの発言は主張を記録していない）。 */
+export type RevealStatement = {
+  id: string;
+  messageId: string;
+  verdict: Verdict;
+  claim: string;
+  /** 返答文の中の該当部分。記録が無い（旧データ）なら null */
+  quote: string | null;
+  /** 本当の主張なら根拠、嘘なら元にした本物の設定。視聴済み範囲のものだけ */
+  sources: { episodeFrom: number; description: string }[];
+};
+
+/** 発話本文を、主張の抜き出し位置で区切ったもの。statementId の無い部分はただの会話 */
+export type RevealSegment = { text: string; statementId?: string };
+
+export type RevealMessage = {
+  id: string;
+  role: "user" | "assistant";
+  speaker?: Speaker;
+  content: string;
+  createdAt: string;
+  segments: RevealSegment[];
+  /** この発話の主張（本文中の位置が特定できなかったものも含む） */
+  statementIds: string[];
+  /** としおの発話のみ: 直前のシオリの返答でついた嘘。としおはどこが嘘かを知ったうえで話を合わせていた */
+  premiseStatementIds?: string[];
+};
+
+/** 答え合わせ前に出す問題。真偽は含めない */
+export type RevealQuestion = {
+  id: string;
+  speaker: Speaker;
+  text: string;
+  createdAt: string;
+};
+
+export type RevealData =
+  | { status: "pending"; questions: RevealQuestion[] }
+  | {
+      status: "revealed";
+      reveal: RevealState;
+      messages: RevealMessage[];
+      statements: RevealStatement[];
+      /** 主張の記録を始める前のシオリの発話がある（その発話は嘘だけを、位置なしで示す） */
+      hasUntrackedMessages: boolean;
+    };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 

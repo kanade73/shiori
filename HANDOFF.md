@@ -4,9 +4,19 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: このセッションの終わり）
 
-- 作業ブランチ: `feat/issue-6-toshio`（`dev` から分岐）
+- 作業ブランチ: `feat/checking_mockup`（`feat/issue-6-toshio` の `671fee7` から分岐。PR #8 がまだ `dev` に入っていないため、としおの実装に依存している）
+- このセッションの変更はコミット・プッシュ済み（`origin/feat/checking_mockup`）。PR は未作成。出すなら #8 のマージ後に `dev` 向きで
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加` → `dev` 向き。まだレビュー・マージ待ち。issue #10（としおのプロフ画像）も同乗していて、#8 のマージで #6 と #10 の両方が閉じる（PR本文に `Closes #6` / `Closes #10`）
-- `git status` はクリーン。コミット済みの内容がそのまま現在の実装
+
+## 直近のセッション: 答え合わせ機能のモックアップ（`feat/checking_mockup`）
+- ユーザー要望:「会話の終わりにシオリととしおの話したことが本当か嘘かを判別したい。モックアップをフロントエンド含めて実装して」
+- 設計の要点は AGENTS.md の「答え合わせ」節。流れ: チャットのヘッダー「答え合わせ」→ `/reveal/[id]` で主張ごとに本当/嘘を予想 →「答えを見る」→ 正解数・見抜いた/だまされた/疑いすぎ + 本文の嘘・本当の部分を塗り分けた会話のふりかえり
+- バックエンド: `Message` とは別に `db.messageClaims[sessionId][messageId]` にシオリの claims を保存（`store.saveMessageClaims`。チャットの取得 API に真偽を載せないため別に置いた）。定型文の発話にも空配列を保存し、「記録前の旧データ」と区別している
+- 答え合わせ済みは `ChatSession.reveal = { revealedAt, guesses }`。一度きり（2回目の POST は最初の予想のまま）で、以後メッセージ送信は 409。チャット画面は入力欄の代わりに「結果を見る / 新しいセッション」、サイドバーは「答え合わせ済み」表示
+- としおは claims を持たないので、真偽は一文ごとには出さない。直前のシオリの返答の嘘（としおに印付きで渡したもの）を「知ったうえで乗った」前提として示すだけ。一文ごとに出すなら、としおの構造化出力にも claims を足す必要がある（未着手）
+- 限界: 真偽は generate の自己申告（grounding）なので、上の調査メモにある「作り話なのに claims に記録されない」問題はそのまま「印なし」として見える。凡例では「印のない部分は感想や相づち」と書いている
+- テスト: `lib/server/reveal.test.ts`, `lib/server/store.reveal.test.ts`, `app/api/sessions/[sessionId]/reveal/route.test.ts`, `components/RevealView.test.tsx`, `ChatApp.test.tsx`・messages の `route.test.ts` に追記。`npm test` 99件・lint・build 通過
+- 実画面の確認は、本物の `.data/db.json` を汚さないよう `DATA_DIR` をスクラッチに向けた別 dev サーバー（3005番）でデモセッションを作って行った（答え合わせすると会話が終わるため）。`next dev` を別 distDir で起動すると `tsconfig.json` の include に `.next-XXXX` が自動追加されるので、戻してある
 
 ## 直近のセッション: issue #10「としお専用のプロフ画像」
 - ユーザーが用意した `public/character/toshio-{64,128,256}.png` / `toshio-display-512.png` を配置し、`Mascot` に `character` props を追加して話者ごとに画像を出し分け（コミット `c353a75`）
