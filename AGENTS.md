@@ -65,6 +65,8 @@
 
 `lib/server/store.ts`。JSONファイル1本（`.data/db.json`、gitignore済み）にセッション・メッセージ・嘘を全部持つ。単一プロセス・単一ユーザー前提。DBを入れる要件は今のところない。
 
+置き場所は `DATA_DIR` 環境変数で差し替えられる（未設定なら `process.cwd()/.data`）。本番は Fly.io の永続ボリュームを `/app/.data` にマウントし、再起動・再デプロイをまたいで `db.json` を残す（`fly.toml` の `[mounts]`）。
+
 ---
 
 ## 技術スタック
@@ -76,7 +78,7 @@
 | バックエンド | Next.js Route Handlers（別サーバーを立てない） |
 | LLM | Anthropic SDK（`@anthropic-ai/sdk`）+ zod 構造化出力 |
 | 永続化 | JSONファイル（`.data/db.json`） |
-| デプロイ | Vercel |
+| デプロイ | Fly.io（Docker コンテナ 1 台 + 永続ボリューム）。`Dockerfile` はホスト非依存で Railway / Render でも動く |
 
 ### LLM 呼び出しは現在 無効化されている
 
@@ -148,9 +150,10 @@ pictures/                           デザイン素材・スケッチ
 
 ```
 ANTHROPIC_API_KEY=       # .env.example をコピーして .env.local に
+DATA_DIR=                # 省略可。db.json の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
-Vercel 側の環境変数登録を忘れないこと（`.env.local` はデプロイに含まれない）。
+本番の API キーは `fly secrets set ANTHROPIC_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 
 ---
 

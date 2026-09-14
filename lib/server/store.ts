@@ -9,7 +9,8 @@ type Db = {
   fabricatedRelations: Record<string, FabricatedRelation[]>;
 };
 
-const DB_DIR = path.join(process.cwd(), ".data");
+// DATA_DIR で永続化先を差し替えられる（コンテナではボリュームのマウント先を指す）
+const DB_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
 const DB_PATH = path.join(DB_DIR, "db.json");
 
 function emptyDb(): Db {

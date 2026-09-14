@@ -7,7 +7,7 @@ description: dev を main に取り込んでよいか判定し、OKなら実際�
 
 ## 前提
 
-- `main` は提出・デプロイ用（Vercel が見る）。壊れた状態を絶対に置かない
+- `main` は提出・デプロイ用（Fly.io に `fly deploy` するブランチ）。壊れた状態を絶対に置かない
 - `dev` は統合ブランチ。PR はすべて `dev` に向く（AGENTS.md「ブランチ運用」参照）
 - 昇格は **fast-forward のみ**。`main` に `dev` にないコミットがある場合は止めて報告する
 - 判定は機械的なチェックを優先し、最後に企画の制約（AGENTS.md）に照らす
@@ -44,7 +44,7 @@ cd /tmp/promote-check && npm ci --silent && npm run build && npx tsc --noEmit -p
 - `NEXT_PUBLIC_` に API キー、またはクライアントから `lib/server/` の値 import がないか
 - `getAllCanonFacts` / `getAllEpisodes` が debug 画面・進捗解決以外から呼ばれていないか
 - `.env.local` / `.data/` / 秘密情報がコミットされていないか（`git diff --name-only` で確認）
-- `lib/server/llm/client.ts` の API キー無効化が、意図せず解除されていないか。解除されていたら Vercel 側の環境変数登録が済んでいるかユーザーに確認する
+- `lib/server/llm/client.ts` の API キー無効化が、意図せず解除されていないか。解除されていたら `fly secrets set ANTHROPIC_API_KEY` が済んでいるかユーザーに確認する
 - `data/*/work.json` が変わっている場合、JSON としてパースでき、id 重複と `episodeFrom > episodeCount` がないか
 
 ```bash
@@ -81,4 +81,4 @@ git checkout dev
 
 `--ff-only` が失敗したら force しない。理由を報告して止める。
 
-反映後、`main` の先頭コミットのハッシュと、Vercel のデプロイが走ることを一言添える。
+反映後、`main` の先頭コミットのハッシュと、デプロイは自動では走らないので `fly deploy` が必要なことを一言添える。
