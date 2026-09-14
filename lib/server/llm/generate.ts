@@ -1,6 +1,5 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import Anthropic from "@anthropic-ai/sdk";
-import { anthropic, GENERATION_MODEL } from "./client";
+import { Type } from "@google/genai";
+import { ai, GENERATION_MODEL } from "./client";
 import { GenerationResultSchema } from "./schemas";
 import type { CanonFact, FabricatedFact, GenerationResult, Message } from "../types";
 
@@ -72,9 +71,76 @@ function formatFabricatedFacts(facts: FabricatedFact[]): string {
     .join("\n");
 }
 
-function toApiMessages(history: Message[]): Anthropic.MessageParam[] {
-  return history.map((m) => ({ role: m.role, content: m.content }));
+function toGeminiContents(history: Message[], userMessage: string) {
+  const contents: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+
+  for (const m of history) {
+    const role: "user" | "model" = m.role === "assistant" ? "model" : "user";
+    // 連続する同一ロールは1つにまとめる
+    if (contents.length > 0 && contents[contents.length - 1].role === role) {
+      contents[contents.length - 1].parts[0].text += `\n${m.content}`;
+    } else {
+      contents.push({ role, parts: [{ text: m.content }] });
+    }
+  }
+
+  if (contents.length > 0 && contents[contents.length - 1].role === "user") {
+    contents[contents.length - 1].parts[0].text += `\n${userMessage}`;
+  } else {
+    contents.push({ role: "user", parts: [{ text: userMessage }] });
+  }
+
+  // 先頭が model から始まる場合はダミーの user メッセージを挿入して Gemini の要件を満たす
+  if (contents.length > 0 && contents[0].role === "model") {
+    contents.unshift({ role: "user", parts: [{ text: "こんにちは" }] });
+  }
+
+  return contents;
 }
+
+const generationResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    message: {
+      type: Type.STRING,
+    },
+    strategy: {
+      type: Type.STRING,
+      enum: [
+        "no_new_lie",
+        "introduce_small_lie",
+        "reinforce_existing_lie",
+        "avoid_spoiler",
+        "admit_uncertainty",
+      ],
+    },
+    newFacts: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          subject: { type: Type.STRING },
+          relation: { type: Type.STRING },
+          object: { type: Type.STRING },
+          claim: { type: Type.STRING },
+          sourceCanonFactIds: {
+            type: Type.ARRAY,
+            items: { type: Type.STRING },
+          },
+        },
+        required: ["subject", "relation", "object", "claim", "sourceCanonFactIds"],
+      },
+    },
+    usedExistingFactIds: {
+      type: Type.ARRAY,
+      items: { type: Type.STRING },
+    },
+    spoilerRisk: {
+      type: Type.NUMBER,
+    },
+  },
+  required: ["message", "strategy", "newFacts", "usedExistingFactIds", "spoilerRisk"],
+};
 
 export async function generateResponse(params: {
   workTitle: string;
@@ -100,18 +166,22 @@ ${formatFabricatedFacts(fabricatedFacts)}`;
     ? `${PERSONA_PROMPT}\n\n${contextBlock}\n\n# 直前の生成についての差し戻し理由\n${feedback}\n上記の問題を避けて、もう一度生成してください。`
     : `${PERSONA_PROMPT}\n\n${contextBlock}`;
 
-  const response = await anthropic.messages.parse({
+  const response = await ai.models.generateContent({
     model: GENERATION_MODEL,
-    max_tokens: 2048,
-    system,
-    output_config: {
-      format: zodOutputFormat(GenerationResultSchema),
+    contents: toGeminiContents(history, userMessage),
+    config: {
+      systemInstruction: system,
+      responseMimeType: "application/json",
+      responseSchema: generationResponseSchema,
+      maxOutputTokens: 2048,
     },
-    messages: [...toApiMessages(history), { role: "user", content: userMessage }],
   });
 
-  if (!response.parsed_output) {
-    throw new Error("Failed to parse generation output");
+  const text = response.text || "{}";
+  try {
+    const json = JSON.parse(text);
+    return GenerationResultSchema.parse(json);
+  } catch (err) {
+    throw new Error(`Failed to parse generation output: ${err}`);
   }
-  return response.parsed_output;
 }
