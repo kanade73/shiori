@@ -33,18 +33,18 @@ const PILL_CLASS: Record<Verdict, string> = {
 /** 予想と真偽の組み合わせ。予想しなかったものは null */
 function outcomeOf(verdict: Verdict, guess: Verdict | undefined): { label: string; good: boolean } | null {
   if (!guess) return null;
-  if (verdict === "lie") return guess === "lie" ? { label: "見抜いた", good: true } : { label: "だまされた", good: false };
-  return guess === "true" ? { label: "正解", good: true } : { label: "疑いすぎ", good: false };
+  if (verdict === "lie") return guess === "lie" ? { label: "見抜いた", good: true } : { label: "本当と予想", good: false };
+  return guess === "true" ? { label: "正解", good: true } : { label: "嘘と予想", good: false };
 }
 
 function speakerName(speaker: RevealMessage["speaker"]) {
   return speaker === "toshio" ? "としお" : "シオリ";
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
+function Shell({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
   return (
     <div className="min-h-dvh bg-canvas px-md pb-section pt-lg">
-      <div className="mx-auto max-w-[760px]">{children}</div>
+      <div className={`mx-auto ${wide ? "max-w-[800px]" : "max-w-[760px]"}`}>{children}</div>
     </div>
   );
 }
@@ -135,10 +135,10 @@ function GuessPhase({
       <section className="mt-lg rounded-xl bg-surface-card px-md py-md">
         <h2 className="text-title-md font-medium text-ink">どれが嘘だったと思う？</h2>
         <p className="mt-xs text-[14px] leading-[1.6] text-body">
-          シオリが会話の中で語った設定を並べました。本当か嘘か予想してから、答えを見てください。予想しないで見ることもできます。
+          会話に出てきた話を、本当か嘘か選んでください。迷ったものは選ばずに進めます。
         </p>
         <p className="mt-xs text-[13px] leading-[1.6] text-muted">
-          答えを見ると、この会話はここで終わりになります。2周目を見る前なら、見終わってからめくった方が効きます。
+          答えを見ると、このチャットには続けて送信できなくなります。
         </p>
       </section>
 
@@ -171,7 +171,7 @@ function GuessPhase({
             disabled={submitting}
             className="shrink-0 rounded-md bg-primary px-md py-xs text-[14px] font-medium text-on-primary transition-colors enabled:hover:bg-primary-active disabled:bg-primary-disabled disabled:text-muted-soft"
           >
-            {submitting ? "めくっています……" : answered > 0 || questions.length === 0 ? "答えを見る" : "予想しないで答えを見る"}
+            {submitting ? "読み込み中……" : answered > 0 || questions.length === 0 ? "答えを見る" : "予想しないで答えを見る"}
           </button>
         </div>
       </div>
@@ -181,67 +181,33 @@ function GuessPhase({
 
 // --- 結果フェーズ ---
 
-function StatTile({ label, value, note, tone }: { label: string; value: string; note?: string; tone?: string }) {
+function ResultSummary({ data }: { data: Revealed }) {
+  const answered = data.statements.filter((s) => data.reveal.guesses[s.id]);
+  const correct = answered.filter((s) => data.reveal.guesses[s.id] === s.verdict).length;
+  const lies = data.statements.filter((s) => s.verdict === "lie").length;
   return (
-    <div className="rounded-lg border border-hairline bg-canvas px-sm py-sm">
-      <p className="text-[12px] text-muted">{label}</p>
-      <p className={`mt-[2px] font-display text-display-sm font-medium ${tone ?? "text-ink"}`}>{value}</p>
-      {note && <p className="text-[11px] text-muted-soft">{note}</p>}
-    </div>
-  );
-}
-
-function ScoreSummary({ data }: { data: Revealed }) {
-  const { statements, messages, reveal } = data;
-  const guesses = reveal.guesses;
-  const answered = statements.filter((s) => guesses[s.id]);
-  const correct = answered.filter((s) => guesses[s.id] === s.verdict).length;
-  const lies = statements.filter((s) => s.verdict === "lie");
-  const caught = lies.filter((s) => guesses[s.id] === "lie").length;
-  const fooled = lies.filter((s) => guesses[s.id] === "true").length;
-  const toshio = messages.filter((m) => m.speaker === "toshio");
-  const toshioOnLies = toshio.filter((m) => (m.premiseStatementIds?.length ?? 0) > 0).length;
-
-  return (
-    <section className="mt-lg rounded-xl bg-surface-card px-md py-md">
-      {answered.length > 0 ? (
-        <>
-          <p className="text-[13px] text-muted">あなたの予想</p>
-          <p className="mt-xxs text-ink">
-            <span className="font-display text-display-md font-medium">{correct}</span>
-            <span className="text-title-sm text-muted"> / {answered.length} 件 正解</span>
+    <section className="mt-xl border-y border-hairline py-lg">
+      <div className="flex flex-wrap items-end justify-between gap-lg">
+        <div>
+          <h2 className="text-[14px] text-muted">会話に混ざっていた嘘</h2>
+          <p className="mt-xs text-ink">
+            <span className="font-display text-[40px] font-medium leading-none tabular-nums">{lies}</span>
+            <span className="ml-xs text-[14px]">件</span>
+            <span className="ml-sm text-[13px] text-muted">／ 確認できる話 {data.statements.length}件</span>
           </p>
-          <p className="mt-xxs text-[13px] text-body">
-            見抜いた嘘 {caught}件 ・ だまされた {fooled}件 ・ 疑いすぎ {answered.length - correct - fooled}件
-            {answered.length < statements.length && ` ・ 予想なし ${statements.length - answered.length}件`}
-          </p>
-        </>
-      ) : (
-        <>
-          <p className="text-[13px] text-muted">シオリが語った設定</p>
-          <p className="mt-xxs text-ink">
-            <span className="font-display text-display-md font-medium">{statements.length}</span>
-            <span className="text-title-sm text-muted"> 件のうち、嘘は {lies.length} 件</span>
-          </p>
-        </>
-      )}
-
-      <div className="mt-md grid grid-cols-3 gap-xs">
-        <StatTile label="嘘" value={`${lies.length}`} tone="text-error" />
-        <StatTile label="本当" value={`${statements.length - lies.length}`} tone="text-success" />
-        <StatTile
-          label="としおの考察"
-          value={`${toshio.length}`}
-          note={toshio.length > 0 ? `うち${toshioOnLies}回は嘘に乗った` : undefined}
-        />
+        </div>
+        {answered.length > 0 && (
+          <p className="text-[14px] text-body">あなたの予想は <strong className="font-medium text-primary">{answered.length}件中 {correct}件正解</strong></p>
+        )}
       </div>
+      {data.statements.length === 0 && <p className="mt-sm text-[14px] text-muted">答え合わせできる話は記録されていません。</p>}
     </section>
   );
 }
 
 function Legend({ hasUntrackedMessages }: { hasUntrackedMessages: boolean }) {
   return (
-    <div className="mt-lg space-y-xxs text-[12px] text-muted">
+    <div className="space-y-xxs text-[12px] text-muted">
       <div className="flex flex-wrap items-center gap-x-sm gap-y-xxs">
         <span>
           <mark className={`rounded-[3px] px-[3px] text-ink underline decoration-2 underline-offset-4 ${MARK_CLASS.lie}`}>
@@ -255,7 +221,7 @@ function Legend({ hasUntrackedMessages }: { hasUntrackedMessages: boolean }) {
           </mark>
           <span className="ml-xxs">本物の設定</span>
         </span>
-        <span>印のない部分は、感想や相づち</span>
+        <span>印のない部分は、真偽を判定していません</span>
       </div>
       {hasUntrackedMessages && <p>※ 記録を始める前のシオリの発話は、嘘だけを本文の位置なしで示しています。</p>}
     </div>
@@ -307,14 +273,17 @@ function StatementRow({
   const sources = statement.sources.map((s) => `第${s.episodeFrom}話〜 ${s.description}`).join(" / ");
 
   return (
-    <li id={statementAnchorId(statement.id)} className="flex gap-xs rounded-md bg-surface-soft px-sm py-xs scroll-mt-lg target:ring-2 target:ring-primary">
+    <li
+      id={statementAnchorId(statement.id)}
+      className="flex gap-sm border-b border-hairline py-lg scroll-mt-lg target:bg-surface-soft"
+    >
       <span className="w-4 shrink-0 pt-[2px] text-right text-[11px] font-medium text-muted">{number}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-xs">
           <span className={`rounded-pill px-xs py-[1px] text-[11px] font-medium ${PILL_CLASS[statement.verdict]}`}>
             {VERDICT_LABEL[statement.verdict]}
           </span>
-          <span className="text-[13px] text-ink">{statement.claim}</span>
+          <span className="w-full text-[15px] leading-[1.8] text-ink">{statement.quote ?? statement.claim}</span>
           {outcome && (
             <span
               className={`rounded-pill border px-xs py-[1px] text-[11px] ${
@@ -332,7 +301,7 @@ function StatementRow({
               : "根拠の設定は記録されていません"
             : sources
               ? `元にした本物の設定: ${sources}`
-              : "まるごと作り話"}
+              : "この会話で作られた設定です。"}
           {!located && " ・ 本文中の位置は特定できませんでした"}
         </p>
       </div>
@@ -355,9 +324,9 @@ function ToshioNote({ message, numberOf }: { message: RevealMessage; numberOf: M
           が嘘だと知ったうえで、話を合わせていました。
         </p>
       ) : (
-        <p>直前のシオリの話に嘘はなく、本物の設定の上での考察でした。</p>
+        <p>直前のシオリの話には、嘘として記録された箇所はありません。</p>
       )}
-      <p className="mt-[2px] text-muted-soft">としおの考察は解釈なので、一文ごとの真偽は記録していません。</p>
+      <p className="mt-[2px] text-muted-soft">としおの発言は、一文ごとの真偽を判定していません。</p>
     </div>
   );
 }
@@ -367,7 +336,7 @@ function Transcript({ data }: { data: Revealed }) {
   const numberOf = useMemo(() => new Map(data.statements.map((s, i) => [s.id, i + 1])), [data.statements]);
 
   return (
-    <section className="mt-md space-y-xs">
+    <section className="space-y-xs">
       {data.messages.map((m) => {
         if (m.role === "user") {
           return (
@@ -379,7 +348,7 @@ function Transcript({ data }: { data: Revealed }) {
           );
         }
         const isToshio = m.speaker === "toshio";
-        const located = new Set(m.segments.flatMap((s) => (s.statementId ? [s.statementId] : [])));
+
         return (
           <article
             key={m.id}
@@ -397,27 +366,7 @@ function Transcript({ data }: { data: Revealed }) {
                 <span className="text-[12px] text-muted-soft">{formatTime(m.createdAt)}</span>
               </div>
               <MessageBody message={m} statementsById={statementsById} numberOf={numberOf} />
-              {isToshio ? (
-                <ToshioNote message={m} numberOf={numberOf} />
-              ) : (
-                m.statementIds.length > 0 && (
-                  <ul className="mt-xs space-y-xxs">
-                    {m.statementIds.map((id) => {
-                      const st = statementsById.get(id);
-                      if (!st) return null;
-                      return (
-                        <StatementRow
-                          key={id}
-                          statement={st}
-                          number={numberOf.get(id) ?? 0}
-                          guess={data.reveal.guesses[id]}
-                          located={located.has(id)}
-                        />
-                      );
-                    })}
-                  </ul>
-                )
-              )}
+              {isToshio && <ToshioNote message={m} numberOf={numberOf} />}
             </div>
           </article>
         );
@@ -429,11 +378,32 @@ function Transcript({ data }: { data: Revealed }) {
 function ResultPhase({ sessionId, data }: { sessionId: string; data: Revealed }) {
   return (
     <>
-      <ScoreSummary data={data} />
-      <RevealGraph graph={data.graph} />
-      <Legend hasUntrackedMessages={data.hasUntrackedMessages} />
-      <h2 className="mt-lg text-title-sm font-medium text-ink">会話をふりかえる</h2>
-      <Transcript data={data} />
+      <ResultSummary data={data} />
+      {data.statements.length > 0 && (
+        <section className="mt-xl" aria-labelledby="answers-title">
+          <h2 id="answers-title" className="text-title-md font-medium text-ink">話の答え</h2>
+          <p className="mt-xs text-[13px] text-muted">会話に出てきた順に、本当の設定と作り話を並べています。</p>
+          <ol className="mt-xs">
+            {data.statements.map((statement, i) => (
+              <StatementRow key={statement.id} statement={statement} number={i + 1}
+                guess={data.reveal.guesses[statement.id]}
+                located={data.messages.some((m) => m.segments.some((s) => s.statementId === statement.id))} />
+            ))}
+          </ol>
+        </section>
+      )}
+      <section className="mt-xxl">
+        <h2 className="text-title-md font-medium text-ink">会話をふりかえる</h2>
+        <div className="mt-sm"><Legend hasUntrackedMessages={data.hasUntrackedMessages} /></div>
+        <div className="mt-lg"><Transcript data={data} /></div>
+      </section>
+      {data.graph.nodes.some((node) => node.kind === "statement") && (
+        <details className="mt-xl rounded-lg border border-hairline p-md">
+          <summary className="cursor-pointer text-[14px] font-medium text-ink">話のつながりを図で見る</summary>
+          <RevealGraph graph={data.graph} />
+        </details>
+      )}
+
       <div className="mt-xl flex flex-wrap justify-center gap-xs">
         <Link
           href={`/chat/${sessionId}`}
@@ -445,7 +415,7 @@ function ResultPhase({ sessionId, data }: { sessionId: string; data: Revealed })
           href="/"
           className="rounded-md bg-primary px-md py-xs text-[14px] font-medium text-on-primary hover:bg-primary-active"
         >
-          新しいセッションを始める
+          別の会話を始める
         </Link>
       </div>
     </>
@@ -513,7 +483,7 @@ export function RevealView({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <Shell>
+    <Shell wide={data.status === "revealed"}>
       <Link href={`/chat/${sessionId}`} className="text-[13px] text-primary hover:underline">
         ← チャットに戻る
       </Link>

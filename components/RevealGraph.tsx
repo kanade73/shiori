@@ -1,27 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { layoutGraph, type LaidOutNode } from "@/lib/client/graph-layout";
+import { layoutGraph, type LaidOutEdge, type LaidOutNode } from "@/lib/client/graph-layout";
 import type { RevealGraph as RevealGraphData, RevealGraphEdge, RevealGraphNode, Verdict } from "@/lib/server/types";
 
 /**
- * 嘘の構造図。答え合わせの結果で、主張（本当/嘘）・主語になったキャラや物・
- * 嘘が元にした本物の設定・としおが乗った嘘、のつながりを1枚の絵にする。
- * ノードを押すと、ふりかえりの該当箇所へ飛ぶ。
+ * 嘘の構造図。左から右へ「本物の設定 → キャラ・物 → シオリの主張 → としお」と一方向に流れる。
+ * 主張は会話に出た順に上から下。ノードを押すと、ふりかえりの該当箇所へ飛ぶ。
  */
 
-const VERDICT_FILL: Record<Verdict, string> = { lie: "fill-error", true: "fill-success" };
-const VERDICT_FILL_SOFT: Record<Verdict, string> = { lie: "fill-error/15", true: "fill-success/15" };
 const VERDICT_STROKE: Record<Verdict, string> = { lie: "stroke-error", true: "stroke-success" };
+const VERDICT_FILL: Record<Verdict, string> = { lie: "fill-error", true: "fill-success" };
+const VERDICT_FILL_SOFT: Record<Verdict, string> = { lie: "fill-error/10", true: "fill-success/10" };
 
-const EDGE_STYLE: Record<RevealGraphEdge["kind"], { className: string; dash?: string; width: number }> = {
-  subject: { className: "stroke-muted-soft", width: 1.5 },
-  object: { className: "stroke-accent-steel", width: 1.5 },
-  based_on: { className: "stroke-warning", dash: "5 4", width: 1.5 },
-  rode_on: { className: "stroke-primary", dash: "2 4", width: 2 },
+const EDGE_STYLE: Record<RevealGraphEdge["kind"], { className: string; marker: string; dash?: string; width: number }> = {
+  subject: { className: "stroke-muted-soft", marker: "url(#arrow-muted)", width: 1.5 },
+  based_on: { className: "stroke-warning", marker: "url(#arrow-warning)", dash: "5 4", width: 1.5 },
+  rode_on: { className: "stroke-primary", marker: "url(#arrow-primary)", dash: "2 4", width: 2 },
+  object: { className: "stroke-accent-steel", marker: "", width: 1.5 }, // 図には描かない（逆向きになるため）
 };
 
-/** ノードのラベルに出す文字数。主張は短く、キャラ名は丸の中に収める */
 function trimLabel(text: string, max: number) {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text;
 }
@@ -40,32 +38,56 @@ function anchorOf(node: RevealGraphNode): string | null {
   return null;
 }
 
+function titleOf(node: RevealGraphNode): string {
+  switch (node.kind) {
+    case "statement":
+      return `${node.number}. ${node.verdict === "lie" ? "嘘" : "本当"}: ${node.label}`;
+    case "canon":
+      return `本物の設定（第${node.episodeFrom}話〜）: ${node.label}`;
+    default:
+      return node.label;
+  }
+}
+
+/** 右向きのなめらかな曲線。左のノードの右端から、右のノードの左端へ */
+function edgePath(e: LaidOutEdge): string {
+  const x1 = e.from.x + e.from.w;
+  const y1 = e.from.y + e.from.h / 2;
+  const x2 = e.to.x - 4; // 矢印の先の分
+  const y2 = e.to.y + e.to.h / 2;
+  const cx = (x1 + x2) / 2;
+  return `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
+}
+
 function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolean; active: boolean }) {
-  const { node, r } = item;
+  const { node, w, h } = item;
   const common = `transition-opacity duration-200 ${dimmed ? "opacity-25" : "opacity-100"}`;
-  const ring = active ? <circle r={r + 5} className="fill-none stroke-primary" strokeWidth={2} /> : null;
+  const ring = active ? (
+    <rect x={-3} y={-3} width={w + 6} height={h + 6} rx={h / 2 + 3} className="fill-none stroke-primary" strokeWidth={1.5} />
+  ) : null;
 
   switch (node.kind) {
-    case "entity":
-      return (
-        <g className={common}>
-          {ring}
-          <circle r={r} className={node.known ? "fill-primary" : "fill-accent-mauve"} />
-          <text textAnchor="middle" dominantBaseline="central" className="fill-on-primary text-[11px] font-medium" style={{ pointerEvents: "none" }}>
-            {trimLabel(node.label, 5)}
-          </text>
-        </g>
-      );
     case "statement":
       return (
         <g className={common}>
           {ring}
-          <circle r={r} className={`${VERDICT_FILL_SOFT[node.verdict]} ${VERDICT_STROKE[node.verdict]}`} strokeWidth={2} />
-          <text textAnchor="middle" dominantBaseline="central" className={`${VERDICT_FILL[node.verdict]} text-[12px] font-semibold`} style={{ pointerEvents: "none" }}>
+          <rect width={w} height={h} rx={h / 2} className={`${VERDICT_FILL_SOFT[node.verdict]} ${VERDICT_STROKE[node.verdict]}`} strokeWidth={1.5} />
+          <circle cx={h / 2} cy={h / 2} r={11} className={VERDICT_FILL[node.verdict]} />
+          <text x={h / 2} y={h / 2} textAnchor="middle" dominantBaseline="central" className="fill-on-primary text-[11px] font-semibold" style={{ pointerEvents: "none" }}>
             {node.number}
           </text>
-          <text y={r + 13} textAnchor="middle" className="fill-body text-[10px]" style={{ pointerEvents: "none" }}>
-            {trimLabel(node.label, 14)}
+          <text x={h + 4} y={h / 2} dominantBaseline="central" className="fill-ink text-[12px]" style={{ pointerEvents: "none" }}>
+            {trimLabel(node.label, 15)}
+          </text>
+        </g>
+      );
+    case "entity":
+      return (
+        <g className={common}>
+          {ring}
+          <rect width={w} height={h} rx={h / 2} className={node.known ? "fill-primary" : "fill-accent-mauve"} />
+          <text x={w / 2} y={h / 2} textAnchor="middle" dominantBaseline="central" className="fill-on-primary text-[12px] font-medium" style={{ pointerEvents: "none" }}>
+            {trimLabel(node.label, 6)}
           </text>
         </g>
       );
@@ -73,9 +95,12 @@ function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolea
       return (
         <g className={common}>
           {ring}
-          <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={3} transform="rotate(45)" className="fill-canvas stroke-warning" strokeWidth={1.5} />
-          <text y={r + 13} textAnchor="middle" className="fill-muted text-[9px]" style={{ pointerEvents: "none" }}>
-            第{node.episodeFrom}話〜 {trimLabel(node.label, 12)}
+          <rect width={w} height={h} rx={6} className="fill-canvas stroke-warning" strokeWidth={1.5} strokeDasharray="4 3" />
+          <text x={10} y={13} className="fill-muted text-[10px]" style={{ pointerEvents: "none" }}>
+            第{node.episodeFrom}話〜
+          </text>
+          <text x={10} y={29} className="fill-body text-[11px]" style={{ pointerEvents: "none" }}>
+            {trimLabel(node.label, 13)}
           </text>
         </g>
       );
@@ -84,12 +109,13 @@ function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolea
         <g className={common}>
           {ring}
           <clipPath id={`clip-${node.id}`}>
-            <circle r={r} />
+            <circle cx={22} cy={h / 2} r={18} />
           </clipPath>
-          <circle r={r + 1.5} className="fill-canvas stroke-primary" strokeWidth={1.5} />
-          <image href="/character/toshio-64.png" x={-r} y={-r} width={r * 2} height={r * 2} clipPath={`url(#clip-${node.id})`} preserveAspectRatio="xMidYMid slice" />
-          <text y={r + 13} textAnchor="middle" className="fill-body text-[10px]" style={{ pointerEvents: "none" }}>
-            {node.label}
+          <rect width={w} height={h} rx={h / 2} className="fill-canvas stroke-hairline" strokeWidth={1} />
+          <circle cx={22} cy={h / 2} r={19} className="fill-canvas stroke-primary" strokeWidth={1.5} />
+          <image href="/character/toshio-64.png" x={4} y={h / 2 - 18} width={36} height={36} clipPath={`url(#clip-${node.id})`} preserveAspectRatio="xMidYMid slice" />
+          <text x={46} y={h / 2} dominantBaseline="central" className="fill-body text-[11px]" style={{ pointerEvents: "none" }}>
+            {node.label.replace("としおの考察 ", "考察 ")}
           </text>
         </g>
       );
@@ -99,7 +125,7 @@ function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolea
 function LegendItem({ children, label }: { children: React.ReactNode; label: string }) {
   return (
     <span className="inline-flex items-center gap-[5px]">
-      <svg width="22" height="14" viewBox="0 0 22 14" aria-hidden="true">
+      <svg width="26" height="14" viewBox="0 0 26 14" aria-hidden="true">
         {children}
       </svg>
       <span>{label}</span>
@@ -113,14 +139,14 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
 
   const neighbors = useMemo(() => {
     const map = new Map<string, Set<string>>();
-    for (const e of graph.edges) {
-      if (!map.has(e.from)) map.set(e.from, new Set());
-      if (!map.has(e.to)) map.set(e.to, new Set());
-      map.get(e.from)!.add(e.to);
-      map.get(e.to)!.add(e.from);
+    for (const { edge } of layout.edges) {
+      if (!map.has(edge.from)) map.set(edge.from, new Set());
+      if (!map.has(edge.to)) map.set(edge.to, new Set());
+      map.get(edge.from)!.add(edge.to);
+      map.get(edge.to)!.add(edge.from);
     }
     return map;
-  }, [graph.edges]);
+  }, [layout.edges]);
 
   const statements = graph.nodes.filter((n) => n.kind === "statement");
   if (statements.length === 0) return null;
@@ -140,69 +166,61 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
   }
 
   return (
-    <section className="mt-lg rounded-xl bg-surface-card px-md py-md" data-testid="reveal-graph">
+    <section className="mt-sm rounded-lg border border-hairline bg-canvas px-md py-sm" data-testid="reveal-graph">
       <div className="flex flex-wrap items-baseline justify-between gap-x-sm gap-y-xxs">
         <h2 className="text-title-sm font-medium text-ink">嘘の構造図</h2>
         <p className="text-[12px] text-muted">
-          {lies > 0 ? `嘘 ${lies}件が` : "語られた設定が"}
-          {canonCount > 0 ? `、本物の設定 ${canonCount}件の上に` : ""}
-          {toshioCount > 0 ? `、としおの考察 ${toshioCount}回を巻き込んで` : ""}
-          広がっていました
+          {lies > 0 ? `嘘 ${lies}件` : "語られた設定"}
+          {canonCount > 0 ? `は本物の設定 ${canonCount}件の上に` : "は"}
+          {toshioCount > 0 ? `乗り、としおの考察 ${toshioCount}回に広がりました` : "あります"}
         </p>
       </div>
       <p className="mt-xxs text-[12px] leading-[1.6] text-muted">
-        主張は語られた順の番号。線でつながる主張は同じキャラや物の話です。丸を押すと、ふりかえりの該当箇所へ飛びます。
+        左から右へ、本物の設定がキャラの話になり、シオリの主張（上から会話順）になり、としおの考察に広がる流れです。ノードを押すと、ふりかえりの該当箇所へ飛びます。
       </p>
 
-      <div className="mt-sm overflow-x-auto rounded-lg border border-hairline bg-canvas">
+      <div className="mt-xs overflow-x-auto">
         <svg
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           width="100%"
-          style={{ minWidth: Math.min(layout.width, 520), maxHeight: 560, display: "block" }}
+          style={{ display: "block", maxWidth: layout.width, minWidth: Math.min(layout.width, 640) }}
           role="img"
           aria-label="嘘の構造図"
           onMouseLeave={() => setHovered(null)}
         >
           <defs>
-            <marker id="arrow-object" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-              <path d="M0,0.5 L8,4 L0,7.5 z" className="fill-accent-steel" />
-            </marker>
+            {(
+              [
+                ["arrow-muted", "fill-muted-soft"],
+                ["arrow-warning", "fill-warning"],
+                ["arrow-primary", "fill-primary"],
+              ] as const
+            ).map(([id, cls]) => (
+              <marker key={id} id={id} viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+                <path d="M0,0.5 L8,4 L0,7.5 z" className={cls} />
+              </marker>
+            ))}
           </defs>
 
-          {graph.edges.map((e) => {
-            const a = layout.byId.get(e.from);
-            const b = layout.byId.get(e.to);
-            if (!a || !b) return null;
-            const style = EDGE_STYLE[e.kind];
-            // 線は丸の縁から縁へ引く（矢印が丸に埋もれないように）
-            const dx = b.x - a.x;
-            const dy = b.y - a.y;
-            const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1e-3);
-            const x1 = a.x + (dx / d) * a.r;
-            const y1 = a.y + (dy / d) * a.r;
-            const x2 = b.x - (dx / d) * (b.r + (e.kind === "object" ? 3 : 0));
-            const y2 = b.y - (dy / d) * (b.r + (e.kind === "object" ? 3 : 0));
-            const mx = (x1 + x2) / 2;
-            const my = (y1 + y2) / 2;
-            const dimmed = isEdgeDimmed(e);
+          {layout.columns.map((c) => (
+            <text key={c.kind} x={c.x} y={14} className="fill-muted-soft text-[11px] font-medium">
+              {c.title}
+            </text>
+          ))}
+
+          {layout.edges.map((e) => {
+            const style = EDGE_STYLE[e.edge.kind];
+            const dimmed = isEdgeDimmed(e.edge);
+            const labelX = (e.from.x + e.from.w + e.to.x) / 2;
+            const labelY = (e.from.y + e.from.h / 2 + e.to.y + e.to.h / 2) / 2;
             return (
-              <g key={e.id} className={`transition-opacity duration-200 ${dimmed ? "opacity-15" : "opacity-100"}`}>
-                <line
-                  x1={x1}
-                  y1={y1}
-                  x2={x2}
-                  y2={y2}
-                  className={style.className}
-                  strokeWidth={style.width}
-                  strokeDasharray={style.dash}
-                  strokeLinecap="round"
-                  markerEnd={e.kind === "object" ? "url(#arrow-object)" : undefined}
-                />
-                {e.label && (
+              <g key={e.edge.id} className={`transition-opacity duration-200 ${dimmed ? "opacity-15" : "opacity-100"}`}>
+                <path d={edgePath(e)} className={`fill-none ${style.className}`} strokeWidth={style.width} strokeDasharray={style.dash} markerEnd={style.marker} />
+                {e.edge.label && (
                   <g>
-                    <rect x={mx - e.label.length * 4.6 - 3} y={my - 7} width={e.label.length * 9.2 + 6} height={14} rx={7} className="fill-canvas" />
-                    <text x={mx} y={my} textAnchor="middle" dominantBaseline="central" className="fill-muted text-[9px]">
-                      {e.label}
+                    <rect x={labelX - e.edge.label.length * 4.5 - 3} y={labelY - 7} width={e.edge.label.length * 9 + 6} height={14} rx={7} className="fill-canvas" />
+                    <text x={labelX} y={labelY} textAnchor="middle" dominantBaseline="central" className="fill-muted text-[9px]">
+                      {e.edge.label}
                     </text>
                   </g>
                 )}
@@ -212,12 +230,7 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
 
           {layout.nodes.map((item) => {
             const clickable = anchorOf(item.node) !== null;
-            const title =
-              item.node.kind === "statement"
-                ? `${item.node.number}. ${item.node.verdict === "lie" ? "嘘" : "本当"}: ${item.node.label}`
-                : item.node.kind === "canon"
-                  ? `本物の設定（第${item.node.episodeFrom}話〜）: ${item.node.label}`
-                  : item.node.label;
+            const title = titleOf(item.node);
             return (
               <g
                 key={item.node.id}
@@ -248,22 +261,22 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
 
       <div className="mt-xs flex flex-wrap gap-x-sm gap-y-xxs text-[11px] text-muted">
         <LegendItem label="嘘">
-          <circle cx="11" cy="7" r="5.5" className="fill-error/15 stroke-error" strokeWidth={1.5} />
+          <rect x="2" y="2" width="22" height="10" rx="5" className="fill-error/10 stroke-error" strokeWidth={1.5} />
         </LegendItem>
         <LegendItem label="本当">
-          <circle cx="11" cy="7" r="5.5" className="fill-success/15 stroke-success" strokeWidth={1.5} />
+          <rect x="2" y="2" width="22" height="10" rx="5" className="fill-success/10 stroke-success" strokeWidth={1.5} />
         </LegendItem>
         <LegendItem label="キャラ・物">
-          <circle cx="11" cy="7" r="6" className="fill-primary" />
+          <rect x="2" y="2" width="22" height="10" rx="5" className="fill-primary" />
         </LegendItem>
         <LegendItem label="元にした本物の設定">
-          <rect x="7" y="3" width="8" height="8" rx="1.5" transform="rotate(45 11 7)" className="fill-canvas stroke-warning" strokeWidth={1.5} />
+          <line x1="2" y1="7" x2="22" y2="7" className="stroke-warning" strokeWidth={1.5} strokeDasharray="4 3" />
+        </LegendItem>
+        <LegendItem label="どのキャラの話か">
+          <line x1="2" y1="7" x2="22" y2="7" className="stroke-muted-soft" strokeWidth={1.5} />
         </LegendItem>
         <LegendItem label="嘘の上に乗ったとしお">
-          <line x1="2" y1="7" x2="20" y2="7" className="stroke-primary" strokeWidth={2} strokeDasharray="2 4" strokeLinecap="round" />
-        </LegendItem>
-        <LegendItem label="別のキャラ・物への言及">
-          <line x1="2" y1="7" x2="20" y2="7" className="stroke-accent-steel" strokeWidth={1.5} />
+          <line x1="2" y1="7" x2="22" y2="7" className="stroke-primary" strokeWidth={2} strokeDasharray="2 4" />
         </LegendItem>
       </div>
     </section>
