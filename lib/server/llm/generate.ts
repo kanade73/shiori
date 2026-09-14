@@ -1,6 +1,5 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import Anthropic from "@anthropic-ai/sdk";
-import { anthropic, GENERATION_MODEL } from "./client";
+import { generateStructured } from "./provider";
 import { GenerationResultSchema } from "./schemas";
 import type { CanonFact, FabricatedFact, GenerationResult, Message } from "../types";
 
@@ -107,18 +106,10 @@ ${formatFabricatedFacts(fabricatedFacts)}`;
     ? `${PERSONA_PROMPT}\n\n${contextBlock}\n\n# 直前の生成についての差し戻し理由\n${feedback}\n上記の問題を避けて、もう一度生成してください。`
     : `${PERSONA_PROMPT}\n\n${contextBlock}`;
 
-  const response = await anthropic.messages.parse({
-    model: GENERATION_MODEL,
-    max_tokens: 2048,
+  return generateStructured({
     system,
-    output_config: {
-      format: zodOutputFormat(GenerationResultSchema),
-    },
+    schema: GenerationResultSchema,
+    maxTokens: 2048,
     messages: [...toApiMessages(history), { role: "user", content: userMessage }],
   });
-
-  if (!response.parsed_output) {
-    throw new Error("Failed to parse generation output");
-  }
-  return response.parsed_output;
 }
