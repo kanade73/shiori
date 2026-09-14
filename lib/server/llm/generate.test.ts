@@ -54,6 +54,25 @@ describe("generateResponse: Gemini の JSON 出力を GenerationResult として
     await expect(generateResponse(baseParams)).rejects.toThrow(/Failed to parse generation output/);
   });
 
+  it("各 claim に返答文からの抜き出し（quote）を必須で要求し、返ってきた quote は保持する", async () => {
+    const lie = {
+      subject: "A",
+      relation: "has",
+      object: "B",
+      negated: false,
+      claim: "A は B を持っている",
+      grounding: "fabricated",
+      sourceCanonFactIds: [],
+      quote: "B を持ってる",
+    };
+    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, message: "A は B を持ってるよ。", claims: [lie] }) });
+    const result = await generateResponse(baseParams);
+    expect(result.claims[0].quote).toBe("B を持ってる");
+
+    const claimSchema = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items;
+    expect(claimSchema.required).toContain("quote");
+  });
+
   it("text が空でも例外になり、握りつぶさない（pipeline 側の catch に任せる）", async () => {
     generateContent.mockResolvedValue({ text: "" });
     await expect(generateResponse(baseParams)).rejects.toThrow();

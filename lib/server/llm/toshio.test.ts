@@ -7,7 +7,8 @@ vi.mock("./client", () => ({
   GENERATION_MODEL: "test-model",
 }));
 
-import { generateToshioCommentary } from "./toshio";
+import { generateToshioCommentary, markLies } from "./toshio";
+import type { Claim } from "../types";
 
 const baseParams = {
   workTitle: "テスト作品",
@@ -16,7 +17,21 @@ const baseParams = {
   fabricatedFacts: [],
   userMessage: "これって伏線じゃない？",
   shioriMessage: "そうかもね。",
+  shioriLies: [] as Claim[],
 };
+
+function claim(overrides: Partial<Claim>): Claim {
+  return {
+    subject: "A",
+    relation: "has",
+    object: "B",
+    negated: false,
+    claim: "A は B を持っている",
+    grounding: "fabricated",
+    sourceCanonFactIds: [],
+    ...overrides,
+  };
+}
 
 beforeEach(() => {
   generateContent.mockReset();
@@ -111,5 +126,75 @@ describe("generateToshioCommentary: シオリの語った内容を「前提」�
   it("text が空でも例外にして握りつぶさない（pipeline 側で「今回は割り込まない」に落とす）", async () => {
     generateContent.mockResolvedValue({ text: "" });
     await expect(generateToshioCommentary(baseParams)).rejects.toThrow();
+  });
+});
+
+describe("markLies: シオリの返答文の嘘の部分に印を付ける", () => {
+  it("嘘の quote に当たる部分だけを【嘘】〜【/嘘】で囲む", () => {
+    const { marked, unlocated } = markLies("ハチワレは頑張ってたね。夜遅くまで復習してたみたい。", [
+      claim({ quote: "夜遅くまで復習してたみたい" }),
+    ]);
+    expect(marked).toBe("ハチワレは頑張ってたね。【嘘】夜遅くまで復習してたみたい【/嘘】。");
+    expect(unlocated).toEqual([]);
+  });
+
+  it("複数の嘘はそれぞれ囲み、重なる・接する抜き出しは1つの印にまとめる", () => {
+    const { marked } = markLies("ABCDEFGHIJ", [
+      claim({ quote: "HI" }),
+      claim({ quote: "BCD" }),
+      claim({ quote: "CDE" }),
+      claim({ quote: "F" }),
+    ]);
+    expect(marked).toBe("A【嘘】BCDEF【/嘘】G【嘘】HI【/嘘】J");
+  });
+
+  it("quote が無い・返答文に見つからない嘘は印を付けず unlocated に返す", () => {
+    const paraphrased = claim({ quote: "言い換えられた文" });
+    const noQuote = claim({ quote: undefined });
+    const { marked, unlocated } = markLies("そうだね。", [paraphrased, noQuote]);
+    expect(marked).toBe("そうだね。");
+    expect(unlocated).toEqual([paraphrased, noQuote]);
+  });
+});
+
+describe("generateToshioCommentary: シオリの返答のどこが嘘かをとしおに知らせる", () => {
+  const lie = claim({ claim: "ハチワレは夜遅くまで復習していた", quote: "夜遅くまで復習してたみたい" });
+  const lostLie = claim({ claim: "うさぎは参考書を持ち歩いている", quote: "本文に無い抜き出し" });
+
+  async function contentsFor(params: Partial<typeof baseParams>) {
+    generateContent.mockResolvedValue({ text: JSON.stringify({ shouldComment: false, message: "" }) });
+    await generateToshioCommentary({ ...baseParams, ...params });
+    const call = generateContent.mock.calls[0][0];
+    return { text: call.contents[0].parts[0].text as string, system: call.config.systemInstruction as string };
+  }
+
+  it("シオリの返答は嘘の部分に印を付けて渡し、この返答でついた嘘も一覧で渡す", async () => {
+    const { text } = await contentsFor({
+      shioriMessage: "頑張ってたね。夜遅くまで復習してたみたい。",
+      shioriLies: [lie, lostLie],
+    });
+    expect(text).toContain("頑張ってたね。【嘘】夜遅くまで復習してたみたい【/嘘】。");
+    expect(text).toContain("- ハチワレは夜遅くまで復習していた\n");
+    expect(text).toContain("- うさぎは参考書を持ち歩いている（本文中の位置は不明）");
+  });
+
+  it("嘘をついていない返答は印なしで渡し、嘘の一覧は「ついていない」と明示する", async () => {
+    const { text } = await contentsFor({ shioriMessage: "そうだね。", shioriLies: [] });
+    expect(text).toContain("ユーザーには印の無い文章が見えている）\nそうだね。\n");
+    expect(text).toContain("（この返答では嘘をついていません）");
+  });
+
+  it("ペルソナで印の意味と、嘘だと明かさないことを指示する", async () => {
+    const { system } = await contentsFor({});
+    expect(system).toContain("【嘘】");
+    expect(system).toContain("嘘だと明かしたり");
+  });
+
+  it("[ユーザーに見せない] としおが印を出力に写しても、返す前に取り除く", async () => {
+    generateContent.mockResolvedValue({
+      text: JSON.stringify({ shouldComment: true, message: "結論から言うとね、【嘘】夜遅くまで復習【/嘘】が鍵なんですよ。" }),
+    });
+    const result = await generateToshioCommentary(baseParams);
+    expect(result.message).toBe("結論から言うとね、夜遅くまで復習が鍵なんですよ。");
   });
 });

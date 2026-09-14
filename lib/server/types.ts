@@ -112,6 +112,11 @@ export type Claim = {
   claim: string;
   grounding: ClaimGrounding;
   sourceCanonFactIds: string[];
+  /**
+   * 返答文（message）の中でこの主張を述べている部分を、そのまま抜き出したもの。
+   * としおにシオリの返答のどこが嘘かを教えるのに使う（ユーザーには送らない）。
+   */
+  quote?: string;
 };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";

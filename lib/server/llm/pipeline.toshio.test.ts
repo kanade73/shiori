@@ -125,7 +125,18 @@ describe("runToshioInterjection: シオリの返答が確定した後に、材�
       fabricatedFacts: [existingLie],
       userMessage: "これって伏線じゃない？",
       shioriMessage: "そうだね。",
+      shioriLies: [lieClaim],
     });
+  });
+
+  it("としおに渡す「この返答の嘘」は、最終的なシオリの返答の claims のうち grounding=fabricated のものだけ", async () => {
+    const canonClaim = { ...lieClaim, claim: "A は B が好き", grounding: "canon" as const, quote: "A は B が好き" };
+    const lie = { ...lieClaim, quote: "赤い帽子" };
+    await runToshioInterjection({
+      ...toshioParams,
+      generation: generation({ message: "A は B が好き。赤い帽子もね。", claims: [canonClaim, lie], strategy: "introduce_small_lie" }),
+    });
+    expect(mocks.generateToshioCommentary.mock.calls[0][0].shioriLies).toEqual([lie]);
   });
 
   it("[企画の制約] としおに渡る canonFacts に未視聴範囲の事実は含まれない（getAllCanonFacts は evaluate 専用）", async () => {

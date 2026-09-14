@@ -67,6 +67,7 @@ message の中で述べた「作品の設定に関する主張」を、真偽を
   did（過去にした行為・出来事）, related_to（家族・師弟・因縁などの関係）, secret（隠している事実）, other
 - negated は「〜ではない」「〜していない」のような否定の主張なら true
 - claim は主張を一文にしたもの
+- quote は message の中でその主張を述べている部分を、message から一字一句変えずに抜き出したもの（要約・言い換えはしない）
 message で設定に触れていなければ claims は空配列で構いません。記録漏れは後で矛盾を生むので、迷ったら入れてください。
 
 ## としおについて
@@ -139,8 +140,9 @@ const generationResponseSchema = {
           claim: { type: Type.STRING },
           grounding: { type: Type.STRING, enum: ["canon", "fabricated"] },
           sourceCanonFactIds: { type: Type.ARRAY, items: { type: Type.STRING } },
+          quote: { type: Type.STRING },
         },
-        required: ["subject", "relation", "object", "negated", "claim", "grounding", "sourceCanonFactIds"],
+        required: ["subject", "relation", "object", "negated", "claim", "grounding", "sourceCanonFactIds", "quote"],
       },
     },
     usedExistingFactIds: { type: Type.ARRAY, items: { type: Type.STRING } },

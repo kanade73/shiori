@@ -165,6 +165,7 @@ export async function runToshioInterjection(params: {
       fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,
+      shioriLies: generation.claims.filter(isFabricated),
     });
     if (commentary.shouldComment && commentary.message.trim().length > 0) return commentary.message;
     return null;
