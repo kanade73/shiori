@@ -50,3 +50,66 @@ describe("generateToshioCommentary: Gemini の JSON 出力を ToshioCommentary �
     await expect(generateToshioCommentary(baseParams)).rejects.toThrow();
   });
 });
+
+describe("generateToshioCommentary: シオリの語った内容を「前提」として渡す", () => {
+  const canonFact = {
+    id: "cf-1",
+    workId: "w",
+    episodeFrom: 2,
+    subject: "A",
+    relation: "likes",
+    object: "B",
+    description: "A は B が好き",
+  };
+  const lie = {
+    id: "ff-1",
+    sessionId: "s1",
+    subject: "C",
+    relation: "lives_in" as const,
+    object: "D",
+    negated: false,
+    claim: "C は D に住んでいる",
+    sourceCanonFactIds: [],
+    introducedMessageId: "m0",
+    confidence: 0.9,
+    status: "active" as const,
+    createdAt: "2026-01-01T00:00:00Z",
+  };
+
+  it("作品名・視聴話数・本物の設定・シオリの嘘・ユーザー発言・シオリの返答が contents に入る", async () => {
+    generateContent.mockResolvedValue({ text: JSON.stringify({ shouldComment: false, message: "" }) });
+    await generateToshioCommentary({
+      ...baseParams,
+      canonFacts: [canonFact],
+      fabricatedFacts: [lie],
+      userMessage: "Cってどこに住んでるの？",
+      shioriMessage: "Dだよ。前にも言ったけど。",
+    });
+    const call = generateContent.mock.calls[0][0];
+    const text: string = call.contents[0].parts[0].text;
+    expect(text).toContain("テスト作品");
+    expect(text).toContain("第3話まで");
+    expect(text).toContain("A は B が好き");
+    expect(text).toContain("C は D に住んでいる");
+    expect(text).toContain("Cってどこに住んでるの？");
+    expect(text).toContain("Dだよ。前にも言ったけど。");
+  });
+
+  it("シオリの嘘は「否定・訂正しない」指示つきで列挙し、ペルソナは systemInstruction に載せる", async () => {
+    generateContent.mockResolvedValue({ text: JSON.stringify({ shouldComment: false, message: "" }) });
+    await generateToshioCommentary({ ...baseParams, fabricatedFacts: [lie] });
+    const call = generateContent.mock.calls[0][0];
+    const text: string = call.contents[0].parts[0].text;
+    const lieSectionStart = text.indexOf("否定・訂正しない");
+    expect(lieSectionStart).toBeGreaterThan(-1);
+    expect(text.indexOf("C は D に住んでいる")).toBeGreaterThan(lieSectionStart);
+    const system: string = call.config.systemInstruction;
+    expect(system).toContain("としお");
+    expect(system).toContain("shouldComment");
+  });
+
+  it("text が空でも例外にして握りつぶさない（pipeline 側で「今回は割り込まない」に落とす）", async () => {
+    generateContent.mockResolvedValue({ text: "" });
+    await expect(generateToshioCommentary(baseParams)).rejects.toThrow();
+  });
+});

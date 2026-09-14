@@ -38,6 +38,10 @@ export function turnsSinceLastToshio(history: Message[]): number {
 
 /** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
 export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
+  // としおは evaluate を通らない。シオリがネタバレ域と判断して逸らした話題や、
+  // 分からないふりで主張を避けた話題（差し戻し2回後の定型文もここに落ちる）に
+  // 検査の無い経路で乗せない。
+  if (generation.strategy === "avoid_spoiler" || generation.strategy === "admit_uncertainty") return false;
   if (generation.claims.length > 0) return true;
   return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
 }
