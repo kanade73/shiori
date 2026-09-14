@@ -8,15 +8,7 @@ vi.mock("./client", () => ({
   GENERATION_MODEL: "test-model",
 }));
 
-import { generateResponse } from "./generate";
-
-const okResult = {
-  message: "そうだね。",
-  strategy: "no_new_lie",
-  claims: [],
-  usedExistingFactIds: [],
-  spoilerRisk: 0.1,
-};
+import { generateReply } from "./generate";
 
 function msg(role: Message["role"], content: string): Message {
   return { id: `m-${content}`, sessionId: "s1", role, content, createdAt: "2026-01-01T00:00:00Z" } as Message;
@@ -33,55 +25,31 @@ const baseParams = {
 
 beforeEach(() => {
   generateContent.mockReset();
-  generateContent.mockResolvedValue({ text: JSON.stringify(okResult) });
+  generateContent.mockResolvedValue({ text: "そうだね。" });
 });
 
-describe("generateResponse: Gemini の JSON 出力を GenerationResult として返す", () => {
-  it("responseMimeType を JSON にして構造化出力を要求する", async () => {
-    await generateResponse(baseParams);
+describe("generateReply: 会話だけをさせ、返答文をそのまま返す", () => {
+  it("構造化出力は要求しない（主張の分解は extract、検査は evaluate に分けてある）", async () => {
+    await generateReply(baseParams);
     const config = generateContent.mock.calls[0][0].config;
-    expect(config.responseMimeType).toBe("application/json");
-    expect(config.responseSchema).toBeDefined();
+    expect(config.responseMimeType).toBeUndefined();
+    expect(config.responseSchema).toBeUndefined();
   });
 
-  it("返ってきた JSON を zod で検証して返す", async () => {
-    const result = await generateResponse(baseParams);
-    expect(result).toEqual(okResult);
+  it("返ってきた本文を trim して返す", async () => {
+    generateContent.mockResolvedValue({ text: "  そうだね。\n" });
+    expect(await generateReply(baseParams)).toBe("そうだね。");
   });
 
-  it("スキーマに合わない JSON（spoilerRisk が範囲外）は例外にする", async () => {
-    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, spoilerRisk: 3 }) });
-    await expect(generateResponse(baseParams)).rejects.toThrow(/Failed to parse generation output/);
-  });
-
-  it("各 claim に返答文からの抜き出し（quote）を必須で要求し、返ってきた quote は保持する", async () => {
-    const lie = {
-      subject: "A",
-      relation: "has",
-      object: "B",
-      negated: false,
-      claim: "A は B を持っている",
-      grounding: "fabricated",
-      sourceCanonFactIds: [],
-      quote: "B を持ってる",
-    };
-    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, message: "A は B を持ってるよ。", claims: [lie] }) });
-    const result = await generateResponse(baseParams);
-    expect(result.claims[0].quote).toBe("B を持ってる");
-
-    const claimSchema = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items;
-    expect(claimSchema.required).toContain("quote");
-  });
-
-  it("text が空でも例外になり、握りつぶさない（pipeline 側の catch に任せる）", async () => {
+  it("text が空なら例外にし、握りつぶさない（pipeline 側の catch に任せる）", async () => {
     generateContent.mockResolvedValue({ text: "" });
-    await expect(generateResponse(baseParams)).rejects.toThrow();
+    await expect(generateReply(baseParams)).rejects.toThrow();
   });
 });
 
-describe("generateResponse: ペルソナと材料は systemInstruction に載せる", () => {
-  it("作品名・視聴話数・canonFacts・既存の嘘・差し戻し理由が system に入る", async () => {
-    await generateResponse({
+describe("generateReply: ペルソナと材料は systemInstruction に載せる", () => {
+  it("作品名・視聴話数・canonFacts の説明・既存の嘘・差し戻し理由が system に入る", async () => {
+    await generateReply({
       ...baseParams,
       canonFacts: [
         { id: "cf-1", workId: "w", episodeFrom: 1, subject: "A", relation: "likes", object: "B", description: "A は B が好き" },
@@ -94,15 +62,30 @@ describe("generateResponse: ペルソナと材料は systemInstruction に載せ
     const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
     expect(system).toContain("テスト作品");
     expect(system).toContain("第3話まで");
-    expect(system).toContain("cf-1");
-    expect(system).toContain("ff-1");
+    expect(system).toContain("A は B が好き");
+    expect(system).toContain("C は D に住んでいる");
     expect(system).toContain("既存の嘘と矛盾している");
+  });
+
+  it("[プロンプトを短く保つ] strategy の選択肢・claims の記録規則・id はプロンプトに載せない", async () => {
+    await generateReply({
+      ...baseParams,
+      canonFacts: [
+        { id: "cf-1", workId: "w", episodeFrom: 1, subject: "A", relation: "likes", object: "B", description: "A は B が好き" },
+      ],
+    });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).not.toContain("strategy");
+    expect(system).not.toContain("claims");
+    expect(system).not.toContain("cf-1");
+    expect(system).not.toContain("としお");
+    expect(system.length).toBeLessThan(1500);
   });
 });
 
-describe("generateResponse: 会話履歴を Gemini の contents 形式に変換する", () => {
+describe("generateReply: 会話履歴を Gemini の contents 形式に変換する", () => {
   it("assistant は model に、user は user に写し、最後に今回の発言を user として足す", async () => {
-    await generateResponse({
+    await generateReply({
       ...baseParams,
       history: [msg("user", "こんにちは"), msg("assistant", "……どうも")],
     });
@@ -115,7 +98,7 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
   });
 
   it("連続する同一ロールは 1 つの parts にまとめる", async () => {
-    await generateResponse({
+    await generateReply({
       ...baseParams,
       history: [msg("user", "a"), msg("user", "b")],
     });
@@ -125,7 +108,7 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
   });
 
   it("履歴が model から始まるときはダミーの user を先頭に挿入する", async () => {
-    await generateResponse({
+    await generateReply({
       ...baseParams,
       history: [msg("assistant", "先に話しかける")],
     });
@@ -135,8 +118,8 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
     expect(contents[contents.length - 1].role).toBe("user");
   });
 
-  it("としおの発話（speaker=toshio）は model に畳まれるが、【としお】の印でシオリ自身の発言と区別する", async () => {
-    await generateResponse({
+  it("としおの発話（speaker=toshio）はシオリの会話ではないので履歴から落とす", async () => {
+    await generateReply({
       ...baseParams,
       history: [
         msg("user", "これって伏線じゃない？"),
@@ -145,14 +128,15 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
       ],
     });
     const contents = generateContent.mock.calls[0][0].contents;
-    expect(contents[1]).toEqual({ role: "model", parts: [{ text: "そうだね。\n【としお】結論から言うとね……" }] });
-    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
-    expect(system).toContain("【としお】");
-    expect(system).toContain("あなたの発言ではありません");
+    expect(contents).toEqual([
+      { role: "user", parts: [{ text: "これって伏線じゃない？" }] },
+      { role: "model", parts: [{ text: "そうだね。" }] },
+      { role: "user", parts: [{ text: "1話どうだった？" }] },
+    ]);
   });
 
   it("履歴が空なら今回の発言だけを user として送る", async () => {
-    await generateResponse(baseParams);
+    await generateReply(baseParams);
     expect(generateContent.mock.calls[0][0].contents).toEqual([
       { role: "user", parts: [{ text: "1話どうだった？" }] },
     ]);

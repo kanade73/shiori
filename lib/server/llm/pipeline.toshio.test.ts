@@ -5,17 +5,21 @@ import type { CanonFact, FabricatedFact, GenerationResult, Message, UserMessageA
 // Gemini を叩く generate / toshio と、data/ を読む works / retrieval は差し替え、
 // analyze（正規表現）と evaluate（決定的検査）は本物を通す。
 const mocks = vi.hoisted(() => ({
-  generateResponse: vi.fn(),
+  generateReply: vi.fn(),
+  extractClaims: vi.fn(),
   generateToshioCommentary: vi.fn(),
   retrieveCanonFacts: vi.fn(),
   retrieveFabricatedFacts: vi.fn(),
+  getActiveFabricatedFacts: vi.fn(),
   getAllCanonFacts: vi.fn(),
 }));
-vi.mock("./generate", () => ({ generateResponse: mocks.generateResponse }));
+vi.mock("./generate", () => ({ generateReply: mocks.generateReply }));
+vi.mock("./extract", () => ({ extractClaims: mocks.extractClaims }));
 vi.mock("./toshio", () => ({ generateToshioCommentary: mocks.generateToshioCommentary }));
 vi.mock("../retrieval", () => ({
   retrieveCanonFacts: mocks.retrieveCanonFacts,
   retrieveFabricatedFacts: mocks.retrieveFabricatedFacts,
+  getActiveFabricatedFacts: mocks.getActiveFabricatedFacts,
 }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
@@ -57,7 +61,7 @@ function msg(overrides: Partial<Message>): Message {
 }
 
 function generation(overrides: Partial<GenerationResult> = {}): GenerationResult {
-  return { message: "そうだね。", strategy: "no_new_lie", claims: [], usedExistingFactIds: [], spoilerRisk: 0, ...overrides };
+  return { message: "そうだね。", strategy: "no_new_lie", claims: [], ...overrides };
 }
 
 function analysis(overrides: Partial<UserMessageAnalysis> = {}): UserMessageAnalysis {
@@ -94,8 +98,10 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.retrieveCanonFacts.mockReturnValue([visibleFact]);
   mocks.retrieveFabricatedFacts.mockReturnValue([existingLie]);
+  mocks.getActiveFabricatedFacts.mockReturnValue([existingLie]);
   mocks.getAllCanonFacts.mockReturnValue([visibleFact, hiddenFact]);
-  mocks.generateResponse.mockResolvedValue(generation({ claims: [lieClaim], strategy: "introduce_small_lie" }));
+  mocks.generateReply.mockResolvedValue("そうだね。");
+  mocks.extractClaims.mockResolvedValue([lieClaim]);
   mocks.generateToshioCommentary.mockResolvedValue({ shouldComment: true, message: "結論から言うとね……" });
 });
 
@@ -125,18 +131,17 @@ describe("runToshioInterjection: シオリの返答が確定した後に、材�
       fabricatedFacts: [existingLie],
       userMessage: "これって伏線じゃない？",
       shioriMessage: "そうだね。",
-      shioriLies: [lieClaim],
+      premises: [lieClaim],
     });
   });
 
-  it("としおに渡す「この返答の嘘」は、最終的なシオリの返答の claims のうち grounding=fabricated のものだけ", async () => {
-    const canonClaim = { ...lieClaim, claim: "A は B が好き", grounding: "canon" as const, quote: "A は B が好き" };
-    const lie = { ...lieClaim, quote: "赤い帽子" };
+  it("としおに渡す「題材」は、最終的なシオリの返答の claims のうち grounding=fabricated のものだけ", async () => {
+    const canonClaim = { ...lieClaim, claim: "A は B が好き", grounding: "canon" as const };
     await runToshioInterjection({
       ...toshioParams,
-      generation: generation({ message: "A は B が好き。赤い帽子もね。", claims: [canonClaim, lie], strategy: "introduce_small_lie" }),
+      generation: generation({ message: "A は B が好き。赤い帽子もね。", claims: [canonClaim, lieClaim], strategy: "introduce_small_lie" }),
     });
-    expect(mocks.generateToshioCommentary.mock.calls[0][0].shioriLies).toEqual([lie]);
+    expect(mocks.generateToshioCommentary.mock.calls[0][0].premises).toEqual([lieClaim]);
   });
 
   it("[企画の制約] としおに渡る canonFacts に未視聴範囲の事実は含まれない（getAllCanonFacts は evaluate 専用）", async () => {
@@ -219,8 +224,8 @@ describe("runToshioInterjection: 呼ばない条件", () => {
   });
 
   it("[企画の制約] evaluate に2回落ちて定型の濁し返答に差し替わったときも、としおを呼ばない", async () => {
-    // spoilerRisk が高いまま再生成も失敗 → SAFE_UNCERTAIN_MESSAGE に差し替わる
-    mocks.generateResponse.mockResolvedValue(generation({ strategy: "introduce_small_lie", spoilerRisk: 0.9, claims: [] }));
+    // 未視聴範囲の canonFact に依拠した主張が再生成でも消えない → SAFE_UNCERTAIN_MESSAGE に差し替わる
+    mocks.extractClaims.mockResolvedValue([{ ...lieClaim, grounding: "canon" as const, sourceCanonFactIds: ["cf-hidden"] }]);
     const pipeline = await runConversationPipeline(sessionParams);
     expect(pipeline.regenerated).toBe(true);
     expect(pipeline.generation.strategy).toBe("admit_uncertainty");
@@ -228,5 +233,45 @@ describe("runToshioInterjection: 呼ばない条件", () => {
     const result = await runToshioInterjection({ ...sessionParams, analysis: pipeline.analysis, generation: pipeline.generation });
     expect(mocks.generateToshioCommentary).not.toHaveBeenCalled();
     expect(result).toBeNull();
+  });
+});
+
+describe("runConversationPipeline: 生成と主張の分解を分け、守りは evaluate に寄せる", () => {
+  it("generateReply（会話）→ extractClaims（分解）の順に呼び、返答文を extract に渡す", async () => {
+    await runConversationPipeline(sessionParams);
+    expect(mocks.generateReply).toHaveBeenCalledTimes(1);
+    expect(mocks.extractClaims).toHaveBeenCalledWith({ workTitle: "テスト作品", message: "そうだね。", canonFacts: [visibleFact] });
+  });
+
+  it("生成には関係する数件の嘘（retrieveFabricatedFacts）を渡し、検査は全件（getActiveFabricatedFacts）に対して行う", async () => {
+    // 正規化は小文字化を含むので、固定値には大小の無い名前を使う
+    const other: FabricatedFact = { ...existingLie, id: "ff-2", subject: "ハチワレ", relation: "has", object: "青い帽子", claim: "ハチワレは青い帽子を持っている" };
+    mocks.retrieveFabricatedFacts.mockReturnValue([existingLie]);
+    mocks.getActiveFabricatedFacts.mockReturnValue([existingLie, other]);
+    // 「ハチワレは青い帽子を持っていない」は、プロンプトに載せていない ff-2 と矛盾する
+    mocks.extractClaims
+      .mockResolvedValueOnce([{ ...lieClaim, subject: "ハチワレ", object: "青い帽子", negated: true, claim: "ハチワレは青い帽子を持っていない" }])
+      .mockResolvedValueOnce([]);
+    const result = await runConversationPipeline(sessionParams);
+    expect(mocks.generateReply.mock.calls[0][0].fabricatedFacts).toEqual([existingLie]);
+    expect(result.regenerated).toBe(true);
+    expect(mocks.generateReply.mock.calls[1][0].feedback).toContain("ハチワレは青い帽子を持っている");
+  });
+
+  it("strategy はモデルに選ばせず、新しい嘘を保存するなら introduce_small_lie になる", async () => {
+    const result = await runConversationPipeline(sessionParams);
+    expect(result.generation.strategy).toBe("introduce_small_lie");
+    expect(result.newFabricatedClaims).toHaveLength(1);
+  });
+
+  it("既存の嘘を言い直しただけなら reinforce_existing_lie、主張が無ければ no_new_lie", async () => {
+    const stored: FabricatedFact = { ...existingLie, id: "ff-3", subject: "ハチワレ", relation: "lives_in", object: "洞窟", claim: "ハチワレは洞窟に住んでいる" };
+    mocks.getActiveFabricatedFacts.mockReturnValue([stored]);
+    mocks.extractClaims.mockResolvedValue([{ ...lieClaim, subject: "ハチワレ", relation: "lives_in" as const, object: "洞窟", claim: "ハチワレは洞窟に住んでいる" }]);
+    const reinforced = await runConversationPipeline(sessionParams);
+    expect(reinforced.generation.strategy).toBe("reinforce_existing_lie");
+    expect(reinforced.reusedFabricatedFactIds).toEqual(["ff-3"]);
+    mocks.extractClaims.mockResolvedValue([]);
+    expect((await runConversationPipeline(sessionParams)).generation.strategy).toBe("no_new_lie");
   });
 });

@@ -112,11 +112,6 @@ export type Claim = {
   claim: string;
   grounding: ClaimGrounding;
   sourceCanonFactIds: string[];
-  /**
-   * 返答文（message）の中でこの主張を述べている部分を、そのまま抜き出したもの。
-   * としおにシオリの返答のどこが嘘かを教えるのに使う（ユーザーには送らない）。
-   */
-  quote?: string;
 };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
@@ -163,13 +158,16 @@ export type ResponseStrategy =
   | "avoid_spoiler"
   | "admit_uncertainty";
 
+/**
+ * 返答文と、そこから別呼び出し（extract.ts）で取り出した主張。
+ * strategy はモデルが選ぶものではなく、保存された嘘の有無から事後に決まる
+ * （UI のバッジと、としおのゲーティングに使うだけ）。
+ */
 export type GenerationResult = {
   message: string;
   strategy: ResponseStrategy;
   /** Every setting-level claim in `message`, canon-grounded or not. */
   claims: Claim[];
-  usedExistingFactIds: string[];
-  spoilerRisk: number;
 };
 
 /**

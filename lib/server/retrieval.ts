@@ -3,10 +3,10 @@ import { getFabricatedFacts } from "./store";
 import type { CanonFact, FabricatedFact, UserMessageAnalysis } from "./types";
 
 const MAX_CANON_FACTS = 6;
-// Lies are never truncated by recency: a lie that drops out of the prompt is a
-// lie the character will contradict. A session has at most a few dozen, so the
-// whole active set goes in; the cap only guards against runaway sessions.
-const MAX_FABRICATED_FACTS = 120;
+// 生成に渡す既存の嘘の上限。矛盾の防止はプロンプトではなく evaluate（全件と照合）が
+// 担うので、ここは「話の続きを作る材料」として関係する数件だけ渡す。全件を渡すと
+// セッションが長くなるほどモデルが自己監視に寄り、嘘をつかなくなる。
+const MAX_FABRICATED_FACTS_FOR_PROMPT = 8;
 
 function textIncludesAny(text: string, needles: string[]): boolean {
   const lower = text.toLowerCase();
@@ -41,14 +41,21 @@ export function retrieveCanonFacts(workId: string, currentEpisode: number, analy
     .map((s) => s.fact);
 }
 
-/** Every active lie in the session, with the ones about mentioned entities first. */
+/** Every active lie in the session. This is what evaluate checks against. */
+export function getActiveFabricatedFacts(sessionId: string): FabricatedFact[] {
+  return getFabricatedFacts(sessionId).filter((fact) => fact.status === "active");
+}
+
+/**
+ * The few lies worth reminding the character of for this turn: the ones about
+ * mentioned entities, newest first, topped up with the most recent ones.
+ */
 export function retrieveFabricatedFacts(sessionId: string, analysis?: UserMessageAnalysis): FabricatedFact[] {
   const keywords = analysis ? [...analysis.mentionedCharacters, ...analysis.mentionedEvents] : [];
   const relevance = (fact: FabricatedFact) =>
     keywords.length > 0 && textIncludesAny(`${fact.subject} ${fact.object} ${fact.claim}`, keywords) ? 1 : 0;
 
-  return getFabricatedFacts(sessionId)
-    .filter((fact) => fact.status === "active")
+  return getActiveFabricatedFacts(sessionId)
     .sort((a, b) => relevance(b) - relevance(a) || b.createdAt.localeCompare(a.createdAt))
-    .slice(0, MAX_FABRICATED_FACTS);
+    .slice(0, MAX_FABRICATED_FACTS_FOR_PROMPT);
 }

@@ -2,9 +2,10 @@ import { findContradictions, isFabricated, normalizeTriple, type Normalizer } fr
 import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
 
 /**
- * Deterministic checker instead of a second LLM call. The generation step is
- * deliberately unconstrained (wild lies are the point); this is the only
- * place that says no, and it says no for exactly three reasons:
+ * Deterministic checker. The generation step is deliberately unconstrained
+ * (wild lies are the point) and is not even shown every lie it told; this is
+ * the only place that says no, checking against *all* stored lies, and it
+ * says no for exactly three reasons:
  *   1. a claim contradicts a lie the character already told this session
  *   2. a claim cites a canon fact beyond the user's viewing progress
  *   3. a fabricated claim directly overwrites a visible canon fact
@@ -33,7 +34,7 @@ export function evaluateGeneration(params: {
   const details: string[] = [];
   let canonConflicts = 0;
   let fabricatedConflicts = 0;
-  let spoilerRiskScore = result.spoilerRisk;
+  let spoilerRiskScore = 0;
 
   for (const claim of result.claims) {
     for (const id of claim.sourceCanonFactIds) {

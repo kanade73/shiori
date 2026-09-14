@@ -9,24 +9,14 @@ export const ClaimSchema = z.object({
   claim: z.string(),
   grounding: z.enum(["canon", "fabricated"]),
   sourceCanonFactIds: z.array(z.string()),
-  quote: z.string().optional(),
+});
+
+/** extract.ts の構造化出力 */
+export const ClaimsOutputSchema = z.object({
+  claims: z.array(ClaimSchema),
 });
 
 export const ToshioCommentarySchema = z.object({
   shouldComment: z.boolean(),
   message: z.string(),
-});
-
-export const GenerationResultSchema = z.object({
-  message: z.string(),
-  strategy: z.enum([
-    "no_new_lie",
-    "introduce_small_lie",
-    "reinforce_existing_lie",
-    "avoid_spoiler",
-    "admit_uncertainty",
-  ]),
-  claims: z.array(ClaimSchema),
-  usedExistingFactIds: z.array(z.string()),
-  spoilerRisk: z.number().min(0).max(1),
 });

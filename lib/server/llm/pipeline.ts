@@ -1,8 +1,9 @@
 import { analyzeUserMessage } from "./analyze";
-import { generateResponse } from "./generate";
+import { generateReply } from "./generate";
+import { extractClaims } from "./extract";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
-import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
+import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { getAllCanonFacts, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import type { Claim, GenerationResult, Message, ResponseEvaluation, UserMessageAnalysis } from "../types";
@@ -48,9 +49,10 @@ const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * analyze (local) -> retrieve -> generate -> evaluate -> regenerate once if
- * flagged. Generation is unconstrained; consistency is enforced only after
- * the fact, against what the character already said in this session.
+ * analyze (local) -> retrieve -> generate (会話だけ) -> extract (主張の分解) ->
+ * evaluate -> regenerate once if flagged. Generation is unconstrained and sees
+ * only a handful of relevant lies; consistency is enforced only after the fact,
+ * against everything the character already said in this session.
  */
 export async function runConversationPipeline(params: {
   workId: string;
@@ -64,7 +66,9 @@ export async function runConversationPipeline(params: {
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
   const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
-  const existingFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
+  // 生成には関係する数件、検査には全件。守りは evaluate に寄せる。
+  const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
+  const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const allCanonFacts = getAllCanonFacts(workId);
   const normalize = buildNormalizer(getEntities(workId));
 
@@ -72,9 +76,14 @@ export async function runConversationPipeline(params: {
     workTitle,
     currentEpisode,
     canonFacts: visibleCanonFacts,
-    fabricatedFacts: existingFabricatedFacts,
+    fabricatedFacts: promptFabricatedFacts,
     history,
     userMessage,
+  };
+  const generate = async (feedback?: string): Promise<GenerationResult> => {
+    const message = await generateReply({ ...genArgs, feedback });
+    const claims = await extractClaims({ workTitle, message, canonFacts: visibleCanonFacts });
+    return { message, claims, strategy: "no_new_lie" };
   };
   const evaluate = (result: GenerationResult) =>
     evaluateGeneration({
@@ -86,33 +95,28 @@ export async function runConversationPipeline(params: {
       normalize,
     });
 
-  let generation = await generateResponse(genArgs);
+  let generation = await generate();
   let evaluation = evaluate(generation);
 
   let regenerated = false;
+  let gaveUp = false;
   if (evaluation.shouldRegenerate) {
     regenerated = true;
     const feedback = [evaluation.reason, ...evaluation.details.map((d) => `- ${d}`)].filter(Boolean).join("\n");
-    generation = await generateResponse({ ...genArgs, feedback });
+    generation = await generate(feedback);
     evaluation = evaluate(generation);
 
     // Still flagged after one retry: don't trust the generated *text* either
     // (it may have been written around the very lie we're discarding), so
     // replace the whole reply with a safe non-answer rather than looping.
     if (evaluation.shouldRegenerate) {
-      generation = {
-        ...generation,
-        message: SAFE_UNCERTAIN_MESSAGE,
-        claims: [],
-        usedExistingFactIds: [],
-        strategy: "admit_uncertainty",
-        spoilerRisk: 0,
-      };
+      gaveUp = true;
+      generation = { message: SAFE_UNCERTAIN_MESSAGE, claims: [], strategy: "admit_uncertainty" };
     }
   }
 
   const newFabricatedClaims: Claim[] = [];
-  const reused = new Set<string>(generation.usedExistingFactIds);
+  const reused = new Set<string>();
   for (const claim of generation.claims) {
     if (!isFabricated(claim)) continue;
     const normalized = normalizeTriple(claim, normalize);
@@ -122,6 +126,12 @@ export async function runConversationPipeline(params: {
     } else if (!newFabricatedClaims.some((c) => c.subject === normalized.subject && c.relation === normalized.relation && c.object === normalized.object && c.negated === normalized.negated)) {
       newFabricatedClaims.push(normalized);
     }
+  }
+
+  // strategy はモデルに選ばせない。何を保存したかから事後に決める（表示・ゲーティング用）。
+  if (!gaveUp) {
+    generation.strategy =
+      newFabricatedClaims.length > 0 ? "introduce_small_lie" : reused.size > 0 ? "reinforce_existing_lie" : "no_new_lie";
   }
 
   return {
@@ -165,7 +175,7 @@ export async function runToshioInterjection(params: {
       fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,
-      shioriLies: generation.claims.filter(isFabricated),
+      premises: generation.claims.filter(isFabricated),
     });
     if (commentary.shouldComment && commentary.message.trim().length > 0) return commentary.message;
     return null;

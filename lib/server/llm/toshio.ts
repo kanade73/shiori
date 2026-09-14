@@ -4,13 +4,6 @@ import { ToshioCommentarySchema } from "./schemas";
 import type { CanonFact, Claim, FabricatedFact } from "../types";
 
 /**
- * シオリの返答のうち嘘の部分を囲む印。としおへの入力にだけ使い、ユーザーには見せない。
- * としおが出力に写してしまっても、返す前に取り除く（stripLieMarks）。
- */
-export const LIE_OPEN = "【嘘】";
-export const LIE_CLOSE = "【/嘘】";
-
-/**
  * issue #6: シオリとの会話の途中に、たまに割り込んで「深い考察」を語る2人目の
  * キャラクター「としお」。モデルは岡田斗司夫（issueコメント参照）。
  *
@@ -53,13 +46,11 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 シオリが語った内容（本物の設定・シオリがこれまでについた嘘の両方）を前提として扱い、
 それを否定・訂正せず、むしろそこにさらに一枚かぶせる形で考察を組み立ててください。
 
-## シオリの嘘の見分け方
-あなたにだけ、シオリの返答のどこが嘘なのかが知らされています。
-- 「直前のシオリの返答」で ${LIE_OPEN}〜${LIE_CLOSE} で囲まれた部分は、シオリが作った嘘（本当の設定ではない）です。囲まれていない部分は本物の設定か、ただの会話です
-- 同じ嘘を「シオリがこの返答でついた嘘」にも一覧にしています。本文中の位置が分からなかったものは一覧にだけ載っています
-- ユーザーには印は見えておらず、嘘の部分も本当の設定だと思っています
-- どこが嘘かを知ったうえで、嘘だと明かしたり、疑ったり、訂正したりしないでください。印（${LIE_OPEN}・${LIE_CLOSE}）も出力に書かないでください
-- 嘘の部分は本作の事実として扱ってください。嘘に乗って考察を重ねると、ユーザーにとってその嘘がいっそう本当らしくなります
+## 考察の題材
+「今回の題材」として渡される設定は、シオリがこの返答で語った（本当かどうかは問わない）設定です。
+題材があるときは、それを本作の事実として前提に置き、その上に考察を重ねてください。
+題材を疑ったり、訂正したり、出典を問うたりしないでください。乗ることでユーザーにとってその設定がいっそう本当らしくなります。
+題材が無いときは、シオリの返答とユーザーの発言そのものを材料にしてください。
 
 ## 割り込むかどうか（shouldComment）
 何にでも割り込むと五月蝿いキャラになります。以下のときだけ shouldComment=true にしてください。
@@ -83,46 +74,9 @@ function formatFabricatedFacts(facts: FabricatedFact[]): string {
   return facts.map((f) => `- ${f.claim}`).join("\n");
 }
 
-/**
- * シオリの返答文のうち、嘘の主張（grounding=fabricated）の quote に当たる部分を印で囲む。
- * quote が返答文に見つからない嘘は unlocated に返す（一覧でだけとしおに伝える）。
- */
-export function markLies(message: string, lies: Claim[]): { marked: string; unlocated: Claim[] } {
-  const spans: { start: number; end: number }[] = [];
-  const unlocated: Claim[] = [];
-  for (const lie of lies) {
-    const quote = lie.quote?.trim() ?? "";
-    const start = quote ? message.indexOf(quote) : -1;
-    if (start < 0) unlocated.push(lie);
-    else spans.push({ start, end: start + quote.length });
-  }
-
-  // 重なる・接する抜き出しは1つの印にまとめる（印が入れ子にならないように）
-  spans.sort((a, b) => a.start - b.start);
-  const merged: { start: number; end: number }[] = [];
-  for (const span of spans) {
-    const last = merged[merged.length - 1];
-    if (last && span.start <= last.end) last.end = Math.max(last.end, span.end);
-    else merged.push({ ...span });
-  }
-
-  let marked = "";
-  let cursor = 0;
-  for (const { start, end } of merged) {
-    marked += message.slice(cursor, start) + LIE_OPEN + message.slice(start, end) + LIE_CLOSE;
-    cursor = end;
-  }
-  marked += message.slice(cursor);
-  return { marked, unlocated };
-}
-
-function formatShioriLies(lies: Claim[], unlocated: Claim[]): string {
-  if (lies.length === 0) return "（この返答では嘘をついていません）";
-  return lies.map((l) => `- ${l.claim}${unlocated.includes(l) ? "（本文中の位置は不明）" : ""}`).join("\n");
-}
-
-export function stripLieMarks(text: string): string {
-  return text.replaceAll(LIE_OPEN, "").replaceAll(LIE_CLOSE, "");
+function formatPremises(premises: Claim[]): string {
+  if (premises.length === 0) return "（特になし。返答と発言そのものを材料にする）";
+  return premises.map((p) => `- ${p.claim}`).join("\n");
 }
 
 const toshioResponseSchema = {
@@ -141,11 +95,10 @@ export async function generateToshioCommentary(params: {
   fabricatedFacts: FabricatedFact[];
   userMessage: string;
   shioriMessage: string;
-  /** シオリがこの返答でついた嘘（grounding=fabricated の claims）。quote で本文中の位置を示す。 */
-  shioriLies: Claim[];
+  /** シオリがこの返答で作った設定（grounding=fabricated の claims）。としおが乗る題材 */
+  premises: Claim[];
 }) {
-  const { workTitle, currentEpisode, canonFacts, fabricatedFacts, userMessage, shioriMessage, shioriLies } = params;
-  const { marked, unlocated } = markLies(shioriMessage, shioriLies);
+  const { workTitle, currentEpisode, canonFacts, fabricatedFacts, userMessage, shioriMessage, premises } = params;
 
   const contextBlock = `# 作品
 ${workTitle}（ユーザーは第${currentEpisode}話まで視聴済み）
@@ -159,11 +112,11 @@ ${formatFabricatedFacts(fabricatedFacts)}
 # 直前のユーザーの発言
 ${userMessage}
 
-# 直前のシオリの返答（${LIE_OPEN}〜${LIE_CLOSE} は嘘の部分。ユーザーには印の無い文章が見えている）
-${marked}
+# 直前のシオリの返答
+${shioriMessage}
 
-# シオリがこの返答でついた嘘
-${formatShioriLies(shioriLies, unlocated)}`;
+# 今回の題材（シオリがこの返答で語った設定。本作の事実として乗ること）
+${formatPremises(premises)}`;
 
   const response = await ai.models.generateContent({
     model: GENERATION_MODEL,
@@ -178,6 +131,5 @@ ${formatShioriLies(shioriLies, unlocated)}`;
 
   const text = response.text || "{}";
   const json = JSON.parse(text);
-  const commentary = ToshioCommentarySchema.parse(json);
-  return { ...commentary, message: stripLieMarks(commentary.message) };
+  return ToshioCommentarySchema.parse(json);
 }
