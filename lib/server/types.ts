@@ -59,14 +59,62 @@ export type Message = {
   createdAt: string;
 };
 
+/**
+ * A named thing in the work (character, place, item, group). `aliases` are the
+ * surface forms a user or the model might use; lies are normalized to `name`
+ * before they are stored so that contradiction checks compare like with like.
+ */
+export type Entity = {
+  id: string;
+  workId: string;
+  name: string;
+  aliases: string[];
+};
+
+/**
+ * Closed vocabulary for the relation of a claim the model makes about the
+ * work. Keeping this closed (instead of free text) is what makes the
+ * deterministic contradiction check in lib/server/claims.ts possible.
+ */
+export type ClaimRelation =
+  | "is" // 性質・属性（複数あってよい）
+  | "identity" // 正体・本名・種族。1つに決まる
+  | "origin" // 由来・元ネタ・モチーフ。1つに決まる
+  | "lives_in" // 住んでいる場所。1つに決まる
+  | "first_appeared" // 初登場の場面・時期。1つに決まる
+  | "has" // 所有・所持
+  | "likes"
+  | "dislikes"
+  | "fears"
+  | "can"
+  | "cannot"
+  | "did" // 過去にした行為・起きた出来事
+  | "related_to" // 関係性（家族・師弟・因縁など）
+  | "secret" // 隠している事実
+  | "other";
+
+export type ClaimGrounding = "canon" | "fabricated";
+
+/** One setting-level claim the assistant made in a reply, as extracted by the model. */
+export type Claim = {
+  subject: string;
+  relation: ClaimRelation;
+  object: string;
+  negated: boolean;
+  claim: string;
+  grounding: ClaimGrounding;
+  sourceCanonFactIds: string[];
+};
+
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 
 export type FabricatedFact = {
   id: string;
   sessionId: string;
   subject: string;
-  relation: string;
+  relation: ClaimRelation;
   object: string;
+  negated: boolean;
   claim: string;
   sourceCanonFactIds: string[];
   introducedMessageId: string;
@@ -86,7 +134,7 @@ export type FabricatedRelation = {
 
 // --- LLM pipeline types (docs/specs/mvp-docs/specs/mvp-spec.md sections 8-9) ---
 
-export type QuestionType = "impression" | "memory_check" | "theory" | "fact_question" | "other";
+export type QuestionType = "impression" | "memory_check" | "theory" | "fact_question" | "doubt" | "other";
 
 export type UserMessageAnalysis = {
   mentionedCharacters: string[];
@@ -102,18 +150,11 @@ export type ResponseStrategy =
   | "avoid_spoiler"
   | "admit_uncertainty";
 
-export type NewFactDraft = {
-  subject: string;
-  relation: string;
-  object: string;
-  claim: string;
-  sourceCanonFactIds: string[];
-};
-
 export type GenerationResult = {
   message: string;
   strategy: ResponseStrategy;
-  newFacts: NewFactDraft[];
+  /** Every setting-level claim in `message`, canon-grounded or not. */
+  claims: Claim[];
   usedExistingFactIds: string[];
   spoilerRisk: number;
 };
@@ -125,6 +166,8 @@ export type ResponseEvaluation = {
   believabilityScore: number;
   shouldRegenerate: boolean;
   reason?: string;
+  /** Human-readable description of each detected problem, fed back to the model on regeneration. */
+  details: string[];
 };
 
 // --- Viewing-progress resolution ---

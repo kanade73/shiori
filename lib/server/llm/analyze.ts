@@ -1,26 +1,73 @@
-import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
-import { anthropic, GENERATION_MODEL } from "./client";
-import { UserMessageAnalysisSchema } from "./schemas";
-import type { UserMessageAnalysis } from "../types";
+import { getArcs, getEntities, getEpisodesUpTo } from "../works";
+import { normalizeText } from "../claims";
+import type { QuestionType, UserMessageAnalysis } from "../types";
 
-const SYSTEM_PROMPT = `あなたはアニメ視聴者のチャット発言を解析するアシスタントです。
-発言から、言及されているキャラクター名・出来事・感情の傾向・質問の種類を構造化して抽出してください。
-キャラクター名や出来事が明示されていない場合は空配列にしてください。`;
+/**
+ * Local, deterministic analysis of the user's message. This used to be an
+ * LLM call; keyword matching against the work's entities/arcs is enough for
+ * what the pipeline does with the result (retrieval keywords + a coarse
+ * question type), and it removes one billed request per turn.
+ *
+ * Only data visible at the user's viewing progress is used for event
+ * matching so that no future episode title can leak through here.
+ */
 
-export async function analyzeUserMessage(userMessage: string): Promise<UserMessageAnalysis> {
-  const response = await anthropic.messages.parse({
-    model: GENERATION_MODEL,
-    max_tokens: 1024,
-    system: SYSTEM_PROMPT,
-    output_config: {
-      effort: "low",
-      format: zodOutputFormat(UserMessageAnalysisSchema),
-    },
-    messages: [{ role: "user", content: userMessage }],
-  });
+const DOUBT = /嘘|うそ|ウソ|ほんと(う)?[にか？?]|本当[にか？?]|マジ[で？?]|でたらめ|デタラメ|捏造|適当(に|なこと)|そんな(の|こと)(ない|なかった|あった[？?])|違う(よ|でしょ|んじゃ)|ソース|出典|どこ情報|見た覚え|記憶にない|覚えてない/;
+const MEMORY_CHECK = /覚えて|だっけ|だったよね|あったよね|してたよね/;
+const THEORY = /と思う|んじゃない|説|考察|伏線|かもしれない|気がする|なのでは/;
+const FACT_QUESTION = /[？?]|なんで|なぜ|どうして|どういう|誰|何|いつ|どこ|教えて/;
+const IMPRESSION = /好き|良かった|よかった|泣|面白|おもしろ|かわい|可愛|最高|つらい|辛い|怖|しんどい|感動|嫌い|苦手/;
 
-  if (!response.parsed_output) {
-    return { mentionedCharacters: [], mentionedEvents: [], sentiment: "neutral", questionType: "other" };
+const POSITIVE = /好き|良かった|よかった|面白|おもしろ|かわい|可愛|最高|感動|笑|癒/;
+const NEGATIVE = /嫌い|苦手|つらい|辛い|怖|しんどい|微妙|退屈|嫌/;
+
+function classify(text: string): QuestionType {
+  if (DOUBT.test(text)) return "doubt";
+  if (MEMORY_CHECK.test(text)) return "memory_check";
+  if (THEORY.test(text)) return "theory";
+  if (FACT_QUESTION.test(text)) return "fact_question";
+  if (IMPRESSION.test(text)) return "impression";
+  return "other";
+}
+
+function sentimentOf(text: string): string {
+  const pos = POSITIVE.test(text);
+  const neg = NEGATIVE.test(text);
+  if (pos && !neg) return "positive";
+  if (neg && !pos) return "negative";
+  if (pos && neg) return "mixed";
+  return "neutral";
+}
+
+export function analyzeUserMessage(params: {
+  workId: string;
+  currentEpisode: number;
+  userMessage: string;
+}): UserMessageAnalysis {
+  const { workId, currentEpisode, userMessage } = params;
+  const text = normalizeText(userMessage);
+
+  const mentionedCharacters: string[] = [];
+  for (const entity of getEntities(workId)) {
+    const forms = [entity.name, ...entity.aliases].map(normalizeText).filter((f) => f.length > 0);
+    if (forms.some((form) => text.includes(form))) mentionedCharacters.push(entity.name);
   }
-  return response.parsed_output;
+
+  const mentionedEvents: string[] = [];
+  for (const arc of getArcs(workId)) {
+    if (arc.episodeFrom > currentEpisode) continue;
+    const forms = [arc.title, ...arc.aliases].map(normalizeText).filter((f) => f.length >= 2);
+    if (forms.some((form) => text.includes(form))) mentionedEvents.push(arc.title);
+  }
+  for (const episode of getEpisodesUpTo(workId, currentEpisode)) {
+    const title = episode.title ? normalizeText(episode.title) : "";
+    if (title.length >= 2 && text.includes(title)) mentionedEvents.push(episode.title!);
+  }
+
+  return {
+    mentionedCharacters,
+    mentionedEvents: Array.from(new Set(mentionedEvents)),
+    sentiment: sentimentOf(userMessage),
+    questionType: classify(userMessage),
+  };
 }

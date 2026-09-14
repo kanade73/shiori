@@ -1,10 +1,11 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Arc, CanonFact, Episode, Work } from "./types";
+import type { Arc, CanonFact, Entity, Episode, Work } from "./types";
 
 type WorkFile = {
   work: Work;
   arcs?: Arc[];
+  entities?: Entity[];
   episodes: Episode[];
   canonFacts: CanonFact[];
 };
@@ -72,4 +73,9 @@ export function getAllEpisodes(workId: string): Episode[] {
 
 export function getArcs(workId: string): Arc[] {
   return loadAll().get(workId)?.arcs ?? [];
+}
+
+/** Named entities (characters, places, items) with aliases, used to normalize lies before storing them. */
+export function getEntities(workId: string): Entity[] {
+  return loadAll().get(workId)?.entities ?? [];
 }

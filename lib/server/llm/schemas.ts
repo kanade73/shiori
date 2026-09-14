@@ -1,17 +1,13 @@
 import { z } from "zod";
+import { CLAIM_RELATIONS } from "../claims";
 
-export const UserMessageAnalysisSchema = z.object({
-  mentionedCharacters: z.array(z.string()),
-  mentionedEvents: z.array(z.string()),
-  sentiment: z.string(),
-  questionType: z.enum(["impression", "memory_check", "theory", "fact_question", "other"]),
-});
-
-export const NewFactDraftSchema = z.object({
+export const ClaimSchema = z.object({
   subject: z.string(),
-  relation: z.string(),
+  relation: z.enum(CLAIM_RELATIONS),
   object: z.string(),
+  negated: z.boolean(),
   claim: z.string(),
+  grounding: z.enum(["canon", "fabricated"]),
   sourceCanonFactIds: z.array(z.string()),
 });
 
@@ -24,7 +20,7 @@ export const GenerationResultSchema = z.object({
     "avoid_spoiler",
     "admit_uncertainty",
   ]),
-  newFacts: z.array(NewFactDraftSchema),
+  claims: z.array(ClaimSchema),
   usedExistingFactIds: z.array(z.string()),
   spoilerRisk: z.number().min(0).max(1),
 });

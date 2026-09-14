@@ -3,7 +3,10 @@ import { getFabricatedFacts } from "./store";
 import type { CanonFact, FabricatedFact, UserMessageAnalysis } from "./types";
 
 const MAX_CANON_FACTS = 6;
-const MAX_FABRICATED_FACTS = 8;
+// Lies are never truncated by recency: a lie that drops out of the prompt is a
+// lie the character will contradict. A session has at most a few dozen, so the
+// whole active set goes in; the cap only guards against runaway sessions.
+const MAX_FABRICATED_FACTS = 120;
 
 function textIncludesAny(text: string, needles: string[]): boolean {
   const lower = text.toLowerCase();
@@ -38,9 +41,14 @@ export function retrieveCanonFacts(workId: string, currentEpisode: number, analy
     .map((s) => s.fact);
 }
 
-export function retrieveFabricatedFacts(sessionId: string): FabricatedFact[] {
+/** Every active lie in the session, with the ones about mentioned entities first. */
+export function retrieveFabricatedFacts(sessionId: string, analysis?: UserMessageAnalysis): FabricatedFact[] {
+  const keywords = analysis ? [...analysis.mentionedCharacters, ...analysis.mentionedEvents] : [];
+  const relevance = (fact: FabricatedFact) =>
+    keywords.length > 0 && textIncludesAny(`${fact.subject} ${fact.object} ${fact.claim}`, keywords) ? 1 : 0;
+
   return getFabricatedFacts(sessionId)
     .filter((fact) => fact.status === "active")
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .sort((a, b) => relevance(b) - relevance(a) || b.createdAt.localeCompare(a.createdAt))
     .slice(0, MAX_FABRICATED_FACTS);
 }

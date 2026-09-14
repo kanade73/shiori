@@ -46,6 +46,7 @@
 - `canonFacts` が「本物の設定」。`subject / relation / object` の三つ組 + 一文の説明
 - `episodeFrom` がネタバレ境界。ユーザーの視聴話数以下のものしかモデルに渡さない
 - `arcs.aliases` は「パジャマパーティーズ編まで見た」のような自由記述を話数に解決するためのもの（`lib/server/progress-resolver.ts`）
+- `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
 
 同じディレクトリに `cards.jsonl`（命題カード）も置いてあるが、これは `docs/specs/spec.md` の構想用で**現状コードは読んでいない**。
 
@@ -53,13 +54,17 @@
 
 `lib/server/llm/pipeline.ts`。1発話ごとに以下を回す。
 
-1. **analyze** — 発話から言及キャラ・出来事・質問種別を構造化抽出
-2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の既存の嘘
-3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy`（嘘を入れる/既存の嘘を補強する/濁す 等）と新しい嘘 `newFacts` を構造化出力で得る
-4. **evaluate** — ヒューリスティック検査。未視聴範囲への言及、既存の嘘・本物の設定との直接矛盾を検出
-5. flagged なら差し戻し理由付きで**1回だけ再生成**。それでもダメなら定型の濁し返答に差し替える
+1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
+2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
+3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)`
+4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、未視聴範囲の canonFact への依拠、本物の設定の直接上書きを検出
+5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**。それでもダメなら定型の濁し返答に差し替える
 
-生成された嘘は `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。
+`grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。
+
+**設計上の原則: 発想は縛らず、整合だけ縛る。** generate に候補選別やスコアリングを噛ませない。LLM が突飛なことを言うのが面白さの源で、構造化はあくまで事後の整合性チェックに限る。矛盾以外の理由で嘘を棄却しないこと。
+
+矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。テストは `npm test`（`node --test`、テストランナー追加なし）。
 
 ### 永続化
 
@@ -78,11 +83,11 @@
 | 永続化 | JSONファイル（`.data/db.json`） |
 | デプロイ | Vercel |
 
-### LLM 呼び出しは現在 無効化されている
+### LLM 呼び出しの ON/OFF は API キーの有無で決まる
 
-`lib/server/llm/client.ts` が空の `apiKey` で SDK を初期化しており、**全リクエストが 401 で落ちる**（課金防止）。パイプラインは catch して定型文にフォールバックするので、UI は動くが嘘は生成されない。
+`lib/server/llm/client.ts` は `process.env.ANTHROPIC_API_KEY` だけを SDK に渡す（ログイン済みプロファイル等の周辺認証には落ちない）。キーが無ければ SDK が送信前に認証エラーを投げ、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り課金は発生しない**。
 
-有効化するには `client.ts` を `new Anthropic()` に戻し、`.env.local` に `ANTHROPIC_API_KEY` を置く。
+モデルは `ANTHROPIC_MODEL` で差し替え可能。既定は Sonnet 5（開発中のコスト抑制のため）。デモでは Opus 5 に上げる。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）。Console 側の月額上限も別途設定しておくこと。
 
 ### 意図的に選んでいない技術
 
@@ -147,7 +152,8 @@ pictures/                           デザイン素材・スケッチ
 ### 環境変数
 
 ```
-ANTHROPIC_API_KEY=       # .env.example をコピーして .env.local に
+ANTHROPIC_API_KEY=       # .env.example をコピーして .env.local に。無ければ LLM は動かない（課金なし）
+ANTHROPIC_MODEL=         # 省略可。既定 claude-sonnet-5
 ```
 
 Vercel 側の環境変数登録を忘れないこと（`.env.local` はデプロイに含まれない）。

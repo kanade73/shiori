@@ -1,15 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 
-// Intentionally disabled to avoid incurring API cost. Passing an explicit
-// (even empty) `apiKey` stops the SDK from falling back to
-// ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, an `ant auth login` profile, or
-// Workload Identity Federation - so this always sends an empty credential
-// and every request fails with 401 before anything is billed, regardless of
-// what auth might otherwise be available in the environment.
-//
-// To re-enable real calls: replace the line below with
-//   export const anthropic = new Anthropic();
-// and set ANTHROPIC_API_KEY (see .env.local.example).
-export const anthropic = new Anthropic({ apiKey: "" });
+// The SDK is given ONLY the key from the environment - never a login profile
+// or other ambient credential - so nothing is billed unless someone has
+// deliberately put ANTHROPIC_API_KEY in .env.local (or the host's secrets).
+// Without a key the SDK throws before sending and the pipeline falls back to
+// a canned reply, which keeps the UI usable offline.
+export const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY ?? "" });
 
-export const GENERATION_MODEL = "claude-opus-5";
+export const llmEnabled = Boolean(process.env.ANTHROPIC_API_KEY);
+
+// Override with ANTHROPIC_MODEL. Sonnet is the default because it is the
+// cheaper choice for iterating on prompts; switch to claude-opus-5 for demos.
+export const GENERATION_MODEL = process.env.ANTHROPIC_MODEL || "claude-sonnet-5";
