@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { getFabricatedFacts, getMessageClaims, getMessages, getSession, revealSession } from "@/lib/server/store";
-import { getCanonFactsUpTo } from "@/lib/server/works";
+import { getCanonFactsUpTo, getEntities } from "@/lib/server/works";
 import { buildReveal, toRevealData } from "@/lib/server/reveal";
 import type { ChatSession, Verdict } from "@/lib/server/types";
 
@@ -20,7 +20,7 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
-  return NextResponse.json(toRevealData(build(session), session.reveal));
+  return NextResponse.json(toRevealData(build(session), session.reveal, getEntities(session.workId)));
 }
 
 /**
@@ -51,5 +51,5 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   if (!revealed) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
-  return NextResponse.json(toRevealData(built, revealed.reveal));
+  return NextResponse.json(toRevealData(built, revealed.reveal, getEntities(session.workId)));
 }

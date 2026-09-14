@@ -94,7 +94,7 @@ describe("buildReveal", () => {
       ["lie1", "lie"],
     ]);
     // 視聴済み範囲に無い ID（unseen）は根拠に出さない
-    expect(built.statements[0].sources).toEqual([{ episodeFrom: 7, description: "ちいかわは草むしり検定に合格した" }]);
+    expect(built.statements[0].sources).toEqual([{ id: "c1", episodeFrom: 7, description: "ちいかわは草むしり検定に合格した" }]);
     expect(built.messages[1].statementIds).toEqual(["true1", "lie1"]);
     expect(built.messages[0].segments).toEqual([{ text: "資格の話して" }]);
     expect(built.hasUntrackedMessages).toBe(false);
@@ -149,8 +149,12 @@ describe("buildReveal", () => {
         messageId: "old",
         verdict: "lie",
         claim: "資格証の裏にレシピがある",
+        subject: "ちいかわ",
+        relation: "has",
+        object: "レシピ",
+        negated: false,
         quote: null,
-        sources: [{ episodeFrom: 7, description: "ちいかわは草むしり検定に合格した" }],
+        sources: [{ id: "c1", episodeFrom: 7, description: "ちいかわは草むしり検定に合格した" }],
       },
     ]);
     expect(built.messages[0].segments).toEqual([{ text: "裏にレシピがあるよ。" }]);
@@ -185,5 +189,8 @@ describe("toRevealData", () => {
     if (data.status !== "revealed") return;
     expect(data.reveal).toEqual(reveal);
     expect(data.statements.map((s) => s.verdict)).toEqual(["lie", "true"]);
+    // 嘘の構造図も一緒に返す（主張2件 + 主語1件）
+    expect(data.graph.nodes.map((n) => n.kind)).toEqual(["statement", "entity", "statement"]);
+    expect(data.graph.edges.map((e) => e.kind)).toEqual(["subject", "subject"]);
   });
 });

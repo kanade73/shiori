@@ -30,9 +30,46 @@ function revealed(guesses: Record<string, "true" | "lie">): RevealData {
     reveal: { revealedAt: at, guesses },
     hasUntrackedMessages: false,
     statements: [
-      { id: "t1", messageId: "m1", verdict: "true", claim: "資格を取った", quote: "資格を取った", sources: [{ episodeFrom: 7, description: "検定に合格した" }] },
-      { id: "l1", messageId: "m1", verdict: "lie", claim: "資格証の裏にレシピがある", quote: "裏にレシピがある", sources: [] },
+      {
+        id: "t1",
+        messageId: "m1",
+        verdict: "true",
+        claim: "資格を取った",
+        subject: "ちいかわ",
+        relation: "has",
+        object: "資格",
+        negated: false,
+        quote: "資格を取った",
+        sources: [{ id: "c1", episodeFrom: 7, description: "検定に合格した" }],
+      },
+      {
+        id: "l1",
+        messageId: "m1",
+        verdict: "lie",
+        claim: "資格証の裏にレシピがある",
+        subject: "ちいかわ",
+        relation: "has",
+        object: "レシピ",
+        negated: false,
+        quote: "裏にレシピがある",
+        sources: [],
+      },
     ],
+    graph: {
+      nodes: [
+        { id: "statement:t1", kind: "statement", statementId: "t1", verdict: "true", label: "資格を取った", number: 1 },
+        { id: "entity:ちいかわ", kind: "entity", label: "ちいかわ", known: true },
+        { id: "canon:c1", kind: "canon", label: "検定に合格した", episodeFrom: 7 },
+        { id: "statement:l1", kind: "statement", statementId: "l1", verdict: "lie", label: "資格証の裏にレシピがある", number: 2 },
+        { id: "toshio:x1", kind: "toshio", messageId: "x1", label: "としおの考察 1" },
+      ],
+      edges: [
+        { id: "subject:t1", from: "entity:ちいかわ", to: "statement:t1", kind: "subject", label: "持つ" },
+        { id: "based_on:t1:c1", from: "statement:t1", to: "canon:c1", kind: "based_on" },
+        { id: "subject:l1", from: "entity:ちいかわ", to: "statement:l1", kind: "subject", label: "持つ" },
+        { id: "rode_on:x1:l1", from: "toshio:x1", to: "statement:l1", kind: "rode_on" },
+      ],
+    },
     messages: [
       { id: "u1", role: "user", content: "資格の話して", createdAt: at, segments: [{ text: "資格の話して" }], statementIds: [] },
       {
@@ -122,5 +159,33 @@ describe("RevealView", () => {
     const marks = shiori.querySelectorAll("mark");
     expect(Array.from(marks).map((m) => m.textContent)).toEqual(["資格を取った1", "裏にレシピがある2"]);
     expect(screen.queryByRole("button", { name: /答えを見る/ })).toBeNull();
+  });
+
+  it("結果には嘘の構造図が付き、主張のノードを押すとふりかえりの該当箇所へ飛ぶ", async () => {
+    mocks.getReveal.mockResolvedValue(revealed({}));
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("嘘の構造図")).toBeTruthy();
+    const graph = screen.getByTestId("reveal-graph");
+    expect(graph.querySelectorAll("[data-node-kind='statement']").length).toBe(2);
+    expect(graph.querySelectorAll("[data-node-kind='entity']").length).toBe(1);
+    expect(graph.querySelectorAll("[data-node-kind='canon']").length).toBe(1);
+    expect(graph.querySelectorAll("[data-node-kind='toshio']").length).toBe(1);
+    expect(graph.querySelector("svg text")?.closest("svg")?.textContent).toContain("持つ");
+
+    const scrollIntoView = vi.fn();
+    const target = document.getElementById("statement-l1")!;
+    expect(target).toBeTruthy();
+    target.scrollIntoView = scrollIntoView;
+    fireEvent.click(within(graph).getByRole("button", { name: /2\. 嘘: 資格証の裏にレシピがある/ }));
+    expect(scrollIntoView).toHaveBeenCalled();
+  });
+
+  it("主張が無ければ構造図は出さない", async () => {
+    const data = revealed({});
+    if (data.status !== "revealed") throw new Error("unreachable");
+    mocks.getReveal.mockResolvedValue({ ...data, statements: [], graph: { nodes: [], edges: [] } });
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect(screen.queryByText("嘘の構造図")).toBeNull();
   });
 });

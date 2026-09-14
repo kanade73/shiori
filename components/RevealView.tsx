@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { Mascot } from "./Mascot";
+import { RevealGraph, statementAnchorId, toshioAnchorId } from "./RevealGraph";
 import { getReveal, getSessionData, submitReveal } from "@/lib/client/api";
 import { formatTime } from "@/lib/client/types";
 import type {
@@ -306,7 +307,7 @@ function StatementRow({
   const sources = statement.sources.map((s) => `第${s.episodeFrom}話〜 ${s.description}`).join(" / ");
 
   return (
-    <li className="flex gap-xs rounded-md bg-surface-soft px-sm py-xs">
+    <li id={statementAnchorId(statement.id)} className="flex gap-xs rounded-md bg-surface-soft px-sm py-xs scroll-mt-lg target:ring-2 target:ring-primary">
       <span className="w-4 shrink-0 pt-[2px] text-right text-[11px] font-medium text-muted">{number}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-xs">
@@ -380,7 +381,12 @@ function Transcript({ data }: { data: Revealed }) {
         const isToshio = m.speaker === "toshio";
         const located = new Set(m.segments.flatMap((s) => (s.statementId ? [s.statementId] : [])));
         return (
-          <article key={m.id} data-testid="reveal-message" className="flex gap-sm py-xs">
+          <article
+            key={m.id}
+            id={isToshio ? toshioAnchorId(m.id) : undefined}
+            data-testid="reveal-message"
+            className="flex gap-sm py-xs scroll-mt-lg"
+          >
             <Mascot size={32} animated={false} character={m.speaker} name={speakerName(m.speaker)} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-xs">
@@ -424,6 +430,7 @@ function ResultPhase({ sessionId, data }: { sessionId: string; data: Revealed })
   return (
     <>
       <ScoreSummary data={data} />
+      <RevealGraph graph={data.graph} />
       <Legend hasUntrackedMessages={data.hasUntrackedMessages} />
       <h2 className="mt-lg text-title-sm font-medium text-ink">会話をふりかえる</h2>
       <Transcript data={data} />

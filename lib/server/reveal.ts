@@ -1,5 +1,7 @@
+import { buildRevealGraph } from "./reveal-graph";
 import type {
   CanonFact,
+  Entity,
   FabricatedFact,
   Message,
   RevealData,
@@ -61,7 +63,7 @@ export function segmentContent(
 function sourcesFor(ids: string[], canonById: Map<string, CanonFact>): RevealStatement["sources"] {
   return ids.flatMap((id) => {
     const fact = canonById.get(id);
-    return fact ? [{ episodeFrom: fact.episodeFrom, description: fact.description }] : [];
+    return fact ? [{ id: fact.id, episodeFrom: fact.episodeFrom, description: fact.description }] : [];
   });
 }
 
@@ -111,6 +113,10 @@ export function buildReveal(params: {
         messageId: message.id,
         verdict: c.grounding === "fabricated" ? "lie" : "true",
         claim: c.claim,
+        subject: c.subject,
+        relation: c.relation,
+        object: c.object,
+        negated: c.negated,
         quote: c.quote?.trim() || null,
         sources: sourcesFor(c.sourceCanonFactIds, canonById),
       }));
@@ -124,6 +130,10 @@ export function buildReveal(params: {
           messageId: message.id,
           verdict: "lie",
           claim: f.claim,
+          subject: f.subject,
+          relation: f.relation,
+          object: f.object,
+          negated: f.negated,
           quote: null,
           sources: sourcesFor(f.sourceCanonFactIds, canonById),
         }));
@@ -140,7 +150,7 @@ export function buildReveal(params: {
   return { messages: revealMessages, statements, hasUntrackedMessages };
 }
 
-export function toRevealData(built: BuiltReveal, reveal: RevealState | undefined): RevealData {
+export function toRevealData(built: BuiltReveal, reveal: RevealState | undefined, entities: Entity[] = []): RevealData {
   if (!reveal) {
     const speakerOf = new Map(built.messages.map((m) => [m.id, m.speaker ?? "shiori"] as const));
     const createdAtOf = new Map(built.messages.map((m) => [m.id, m.createdAt]));
@@ -154,5 +164,5 @@ export function toRevealData(built: BuiltReveal, reveal: RevealState | undefined
       })),
     };
   }
-  return { status: "revealed", reveal, ...built };
+  return { status: "revealed", reveal, ...built, graph: buildRevealGraph(built, entities) };
 }

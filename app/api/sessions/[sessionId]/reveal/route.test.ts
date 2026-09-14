@@ -17,7 +17,7 @@ vi.mock("@/lib/server/store", () => ({
   getFabricatedFacts: mocks.getFabricatedFacts,
   revealSession: mocks.revealSession,
 }));
-vi.mock("@/lib/server/works", () => ({ getCanonFactsUpTo: mocks.getCanonFactsUpTo }));
+vi.mock("@/lib/server/works", () => ({ getCanonFactsUpTo: mocks.getCanonFactsUpTo, getEntities: () => [] }));
 
 import { GET, POST } from "./route";
 
@@ -90,8 +90,21 @@ describe("POST /api/sessions/[id]/reveal", () => {
     const data = await res.json();
     expect(data.status).toBe("revealed");
     expect(data.statements).toEqual([
-      { id: "claim1", messageId: "m1", verdict: "lie", claim: "A の裏にレシピがある", quote: "裏にレシピがある", sources: [] },
+      {
+        id: "claim1",
+        messageId: "m1",
+        verdict: "lie",
+        claim: "A の裏にレシピがある",
+        subject: "A",
+        relation: "has",
+        object: "レシピ",
+        negated: false,
+        quote: "裏にレシピがある",
+        sources: [],
+      },
     ]);
+    // 嘘の構造図（主張 + 主語）も返る
+    expect(data.graph.nodes.map((n: { kind: string }) => n.kind)).toEqual(["statement", "entity"]);
     expect(data.reveal.guesses).toEqual({ claim1: "lie" });
   });
 
