@@ -62,10 +62,24 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   const historyBefore: Message[] = getMessages(sessionId).slice(-HISTORY_LIMIT);
   appendMessage(sessionId, "user", content);
 
+  // クライアントが切断（タブを閉じる/リロード等）すると controller は自動で
+  // close されるが、その後も generate 等の await が続いていれば send() が
+  // 呼ばれうる。enqueue-after-close は例外になり、握りつぶさないとサーバー
+  // ログにエラーが残るだけでなく catch 側のフォールバック送信も同じ理由で
+  // 失敗し、ユーザーには何も返らないまま消える（"問いかけに返事がない"）。
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(sseEvent(event, data)));
+      const send = (event: string, data: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(sseEvent(event, data)));
+        } catch {
+          // クライアント切断等で controller が既に閉じていた。以降は送らない。
+          closed = true;
+        }
+      };
 
       try {
         const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds, toshioMessage } =
@@ -135,8 +149,19 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         send("message-end", {});
         send("done", {});
       } finally {
-        controller.close();
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // 既に閉じられていた（クライアント切断）。何もすることはない。
+          }
+        }
       }
+    },
+    cancel() {
+      // クライアントが切断した。以降の send() を黙って無視させる。
+      closed = true;
     },
   });
 
