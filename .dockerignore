@@ -1,0 +1,14 @@
+node_modules
+.next
+out
+.data
+.env
+.env.*
+!.env.example
+pictures
+.git
+.vercel
+*.log
+.DS_Store
+docs
+CLAUDE.local.md

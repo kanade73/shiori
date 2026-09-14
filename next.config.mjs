@@ -1,5 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // Docker 用。.next/standalone に最小の server.js + 依存だけを出す
+  output: "standalone",
   // dev サーバーは distDir 単位でロックファイルを持つため、同じディレクトリで
   // 複数の `next dev` を並行起動する場合は NEXT_DIST_DIR で distDir をずらす。
   // 例: NEXT_DIST_DIR=.next-3001 npm run dev -- -p 3001
