@@ -68,7 +68,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(sseEvent(event, data)));
 
       try {
-        const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+        const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds, toshioMessage } =
           await runConversationPipeline({
           workId: session.workId,
           workTitle: work.title,
@@ -78,12 +78,13 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           userMessage: content,
         });
 
+        send("message-start", { speaker: "shiori" });
         for (const chunk of chunkText(generation.message)) {
           send("token", { text: chunk });
           await sleep(18);
         }
 
-        const assistantMessage = appendMessage(sessionId, "assistant", generation.message);
+        const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
 
         const newFactIds: string[] = [];
         for (const claim of newFabricatedClaims) {
@@ -106,16 +107,32 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           strategy: generation.strategy,
           regenerated,
         });
+        send("message-end", {});
+
+        // issue #6: シオリの返答の後、材料が揃っているときだけ「としお」が割り込む。
+        if (toshioMessage) {
+          send("message-start", { speaker: "toshio" });
+          for (const chunk of chunkText(toshioMessage)) {
+            send("token", { text: chunk });
+            await sleep(18);
+          }
+          appendMessage(sessionId, "assistant", toshioMessage, "toshio");
+          send("metadata", { fabricatedFactIds: [], strategy: generation.strategy, regenerated: false });
+          send("message-end", {});
+        }
+
         send("done", {});
       } catch (error) {
         console.error(`[sessions/${sessionId}/messages] pipeline failed:`, error);
         const fallback = fallbackMessage();
+        send("message-start", { speaker: "shiori" });
         for (const chunk of chunkText(fallback)) {
           send("token", { text: chunk });
           await sleep(18);
         }
-        appendMessage(sessionId, "assistant", fallback);
+        appendMessage(sessionId, "assistant", fallback, "shiori");
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
+        send("message-end", {});
         send("done", {});
       } finally {
         controller.close();

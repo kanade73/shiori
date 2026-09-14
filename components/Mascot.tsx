@@ -10,6 +10,8 @@ interface MascotProps {
   animated?: boolean;
   delay?: number;
   className?: string;
+  /** alt テキストに使う表示名。としお用の画像はまだ無く、シオリの画像を代用しているため既定は「ムラサキ」のまま。 */
+  name?: string;
 }
 
 const AVATAR_SOURCES = [
@@ -29,7 +31,7 @@ function pickAvatarSource(size: number) {
  * whole-image tilt — no per-feature animation (no blink rig) is attempted
  * on this level of detail.
  */
-export function Mascot({ size = 36, variant = "avatar", animated = true, delay = 0, className = "" }: MascotProps) {
+export function Mascot({ size = 36, variant = "avatar", animated = true, delay = 0, className = "", name = "ムラサキ" }: MascotProps) {
   const isAvatar = variant === "avatar";
   const src = useMemo(() => (isAvatar ? pickAvatarSource(size) : "/character/display-512.png"), [isAvatar, size]);
 
@@ -41,7 +43,7 @@ export function Mascot({ size = 36, variant = "avatar", animated = true, delay =
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
         src={src}
-        alt="ムラサキ"
+        alt={name}
         draggable={false}
         className={`block h-full w-full select-none object-cover ${animated ? "animate-tilt" : ""}`}
         style={animated ? { animationDelay: `${delay}s` } : undefined}

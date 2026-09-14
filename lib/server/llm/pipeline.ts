@@ -1,6 +1,7 @@
 import { analyzeUserMessage } from "./analyze";
 import { generateResponse } from "./generate";
 import { evaluateGeneration } from "./evaluate";
+import { generateToshioCommentary } from "./toshio";
 import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { getAllCanonFacts, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
@@ -15,7 +16,31 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
+  /** としお（issue #6）の割り込みコメント。無ければ今回は割り込まない。 */
+  toshioMessage: string | null;
 };
+
+// としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない
+// （「まとまる」の定義はissue #6で実装者判断としている単純なクールダウン方式）。
+const TOSHIO_COOLDOWN_TURNS = 2;
+
+/** 直近のとしお発話から何ターン（シオリの返答）経ったか。一度も話していなければ Infinity。 */
+export function turnsSinceLastToshio(history: Message[]): number {
+  let turns = 0;
+  for (let i = history.length - 1; i >= 0; i--) {
+    const m = history[i];
+    if (m.role !== "assistant") continue;
+    if (m.speaker === "toshio") return turns;
+    turns += 1;
+  }
+  return Infinity;
+}
+
+/** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
+export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
+  if (generation.claims.length > 0) return true;
+  return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
+}
 
 const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一度言って。";
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
@@ -97,6 +122,27 @@ export async function runConversationPipeline(params: {
     }
   }
 
+  let toshioMessage: string | null = null;
+  if (turnsSinceLastToshio(history) >= TOSHIO_COOLDOWN_TURNS && worthAskingToshio(generation, analysis)) {
+    try {
+      const commentary = await generateToshioCommentary({
+        workTitle,
+        currentEpisode,
+        canonFacts: visibleCanonFacts,
+        fabricatedFacts: existingFabricatedFacts,
+        userMessage,
+        shioriMessage: generation.message,
+      });
+      if (commentary.shouldComment && commentary.message.trim().length > 0) {
+        toshioMessage = commentary.message;
+      }
+    } catch (error) {
+      // としおの割り込みは演出であって本筋ではない。失敗してもシオリの返答は
+      // 既に確定しているので、単に今回は割り込まなかったことにする。
+      console.error("としおの割り込み生成に失敗:", error);
+    }
+  }
+
   return {
     analysis,
     generation,
@@ -104,6 +150,7 @@ export async function runConversationPipeline(params: {
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
+    toshioMessage,
   };
 }
 

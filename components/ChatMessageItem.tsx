@@ -42,13 +42,19 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
   }
 
   const hasFacts = (message.fabricatedFactIds?.length ?? 0) > 0;
+  const isToshio = message.speaker === "toshio";
+  // としお専用の見た目はまだ用意していないので、プロフ画像は一旦シオリのもので代用する。
+  const speakerName = isToshio ? "としお" : "シオリ";
 
   return (
     <div className="group animate-fade-up flex gap-sm px-md py-xs">
-      <Mascot size={32} delay={0.4} />
+      <Mascot size={32} delay={0.4} name={speakerName} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
-          <span className="text-[14px] font-medium text-ink">シオリ</span>
+          <span className="text-[14px] font-medium text-ink">{speakerName}</span>
+          {isToshio && (
+            <span className="rounded-pill border border-hairline px-xs py-[1px] text-[10px] text-muted-soft">考察</span>
+          )}
           <span className="text-[12px] text-muted-soft">{formatTime(message.createdAt)}</span>
         </div>
         <p className="mt-xxs whitespace-pre-wrap text-[15px] leading-[1.55] text-body">

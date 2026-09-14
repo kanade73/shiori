@@ -59,8 +59,9 @@
 3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)`
 4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、未視聴範囲の canonFact への依拠、本物の設定の直接上書きを検出
 5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**。それでもダメなら定型の濁し返答に差し替える
+6. **としお割り込み**（`llm/toshio.ts`、issue #6）— シオリの返答の後、材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、かつ直近2ターン以内に割り込んでいなければ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない。シオリが語った本物の設定・嘘を前提に、それを否定せず「深い考察」を重ねる。失敗してもシオリの返答自体は確定済みなので、単に今回は割り込まなかったことにする
 
-`grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。
+`grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。としおの発言はこの仕組みにまだ乗せていない（`FabricatedFact`化・シオリとの嘘共有は別issue）。
 
 **設計上の原則: 発想は縛らず、整合だけ縛る。** generate に候補選別やスコアリングを噛ませない。LLM が突飛なことを言うのが面白さの源で、構造化はあくまで事後の整合性チェックに限る。矛盾以外の理由で嘘を棄却しないこと。
 
@@ -123,7 +124,7 @@ lib/
     progress-resolver.ts            自由記述 → 話数
     rate-limit.ts
     types.ts                        データモデル
-    llm/                            analyze → generate → evaluate → pipeline
+    llm/                            analyze → generate → evaluate → pipeline（+ toshio: としおの割り込み）
   client/                           fetch ラッパー・SSE パーサ・表示用型
 data/
   chiikawa/work.json                ← コードはこの中身を知らない

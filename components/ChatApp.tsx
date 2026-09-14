@@ -24,6 +24,7 @@ function toViewMessage(message: Message, factIdsByMessage: Map<string, string[]>
     content: message.content,
     createdAt: message.createdAt,
     fabricatedFactIds: factIdsByMessage.get(message.id),
+    speaker: message.speaker,
   };
 }
 
@@ -104,31 +105,48 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
       content: text,
       createdAt: new Date().toISOString(),
     };
-    const assistantId = `local-assistant-${crypto.randomUUID()}`;
-    const assistantMessage: ViewMessage = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      createdAt: new Date().toISOString(),
-      isStreaming: true,
-    };
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    setMessages((prev) => [...prev, userMessage]);
+
+    // 1回の送信でシオリ→（ときどき）としお、と複数の発話が届きうる。
+    // message-start が来るたびに新しい吹き出しを積み、以降の token/metadata は
+    // それに紐づける。
+    let currentId: string | null = null;
 
     try {
       await sendMessage(sessionId, text, {
+        onMessageStart: (speaker) => {
+          currentId = `local-assistant-${crypto.randomUUID()}`;
+          const message: ViewMessage = {
+            id: currentId,
+            role: "assistant",
+            content: "",
+            createdAt: new Date().toISOString(),
+            isStreaming: true,
+            speaker,
+          };
+          setMessages((prev) => [...prev, message]);
+        },
         onToken: (chunk) => {
-          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)));
+          const id = currentId;
+          if (!id) return;
+          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: m.content + chunk } : m)));
         },
         onMetadata: (data) => {
+          const id = currentId;
+          if (!id) return;
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
+              m.id === id ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
             ),
           );
         },
-        onDone: () => {
-          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
+        onMessageEnd: () => {
+          const id = currentId;
+          if (!id) return;
+          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
+          currentId = null;
         },
+        onDone: () => {},
       });
 
       if (work) {
@@ -137,13 +155,16 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           .catch(() => {});
       }
     } catch (e) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
-            : m,
-        ),
-      );
+      const id = currentId;
+      if (id) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id
+              ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
+              : m,
+          ),
+        );
+      }
       setSendError(e instanceof Error ? e.message : "送信に失敗しました。回線を確認してもう一度試して。");
     } finally {
       setIsSending(false);

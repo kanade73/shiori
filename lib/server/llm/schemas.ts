@@ -11,6 +11,11 @@ export const ClaimSchema = z.object({
   sourceCanonFactIds: z.array(z.string()),
 });
 
+export const ToshioCommentarySchema = z.object({
+  shouldComment: z.boolean(),
+  message: z.string(),
+});
+
 export const GenerationResultSchema = z.object({
   message: z.string(),
   strategy: z.enum([

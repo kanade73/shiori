@@ -51,12 +51,20 @@ export type ChatSession = {
   updatedAt: string;
 };
 
+/**
+ * Which bot persona spoke. Only meaningful when role === "assistant";
+ * absent (undefined) on older stored messages means "shiori" - it was the
+ * only persona before としお (issue #6).
+ */
+export type Speaker = "shiori" | "toshio";
+
 export type Message = {
   id: string;
   sessionId: string;
   role: "user" | "assistant";
   content: string;
   createdAt: string;
+  speaker?: Speaker;
 };
 
 /**
@@ -157,6 +165,16 @@ export type GenerationResult = {
   claims: Claim[];
   usedExistingFactIds: string[];
   spoilerRisk: number;
+};
+
+/**
+ * としお（issue #6）の割り込み判定つき出力。プロンプト制御のみの単純実装
+ * （分類器・シオリとの嘘共有は別issueで扱う）。shouldComment=false のとき
+ * message は無視してよい。
+ */
+export type ToshioCommentary = {
+  shouldComment: boolean;
+  message: string;
 };
 
 export type ResponseEvaluation = {
