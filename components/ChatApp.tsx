@@ -214,7 +214,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           <div className="mx-auto max-w-[760px] py-md">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
-                <TypingIndicator key={message.id} />
+                <TypingIndicator key={message.id} speaker={message.speaker} />
               ) : (
                 <ChatMessageItem key={message.id} message={message} sessionId={sessionId} />
               ),

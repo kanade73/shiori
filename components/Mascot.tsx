@@ -1,15 +1,15 @@
 "use client";
 
 import { useMemo } from "react";
+import type { Speaker } from "@/lib/server/types";
 
 type MascotVariant = "avatar" | "display";
-export type MascotCharacter = "shiori" | "toshio";
 
 interface MascotProps {
   size?: number;
   variant?: MascotVariant;
   /** 話者。画像の出し分けに使う。既定はシオリ。 */
-  character?: MascotCharacter;
+  character?: Speaker;
   animated?: boolean;
   delay?: number;
   className?: string;
@@ -17,7 +17,7 @@ interface MascotProps {
   name?: string;
 }
 
-const AVATAR_SOURCES: Record<MascotCharacter, { maxSize: number; src: string }[]> = {
+const AVATAR_SOURCES: Record<Speaker, { maxSize: number; src: string }[]> = {
   shiori: [
     { maxSize: 80, src: "/character/avatar-64.png" },
     { maxSize: 180, src: "/character/avatar-128.png" },
@@ -30,12 +30,12 @@ const AVATAR_SOURCES: Record<MascotCharacter, { maxSize: number; src: string }[]
   ],
 };
 
-const DISPLAY_SOURCES: Record<MascotCharacter, string> = {
+const DISPLAY_SOURCES: Record<Speaker, string> = {
   shiori: "/character/display-512.png",
   toshio: "/character/toshio-display-512.png",
 };
 
-function pickAvatarSource(size: number, character: MascotCharacter) {
+function pickAvatarSource(size: number, character: Speaker) {
   const sources = AVATAR_SOURCES[character];
   return sources.find((entry) => size <= entry.maxSize)?.src ?? sources[sources.length - 1].src;
 }

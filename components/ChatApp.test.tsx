@@ -67,6 +67,18 @@ describe("ChatApp: 1回の送信で複数の吹き出しを積む", () => {
     expect(within(toshio).getByText("考察")).toBeTruthy();
   });
 
+  // issue #10: プロフ画像も話者ごとに出し分ける（以前はとしおにもシオリの画像を代用していた）
+  it("としおの吹き出しにはとしおの、シオリの吹き出しにはシオリのプロフ画像が出る", async () => {
+    mocks.sendMessage.mockImplementation(streamed([["shiori", "そうだね。"], ["toshio", "結論から言うとね。"]]));
+    await renderAndSend("これって伏線じゃない？");
+
+    await waitFor(() => expect(assistantBubbles()).toHaveLength(2));
+    const [shiori, toshio] = assistantBubbles();
+    expect(shiori.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-64.png");
+    expect(toshio.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-64.png");
+    expect(within(toshio).getByAltText("としお")).toBeTruthy();
+  });
+
   it("としおが割り込まなければ吹き出しはシオリの1つだけ", async () => {
     mocks.sendMessage.mockImplementation(streamed([["shiori", "そうだね。"]]));
     await renderAndSend("1話面白かった");
@@ -123,6 +135,32 @@ describe("ChatApp: 返答を待つ間の表示", () => {
     release();
     await waitFor(() => expect(assistantBubbles()).toHaveLength(1));
     expect(screen.queryByText("入力中")).toBeNull();
+  });
+
+  it("としおの message-start の後、本文が届くまでの入力中表示はとしおの画像で出る", async () => {
+    let release!: () => void;
+    mocks.sendMessage.mockImplementation(
+      (_s: string, _c: string, h: SendMessageHandlers) =>
+        new Promise<void>((resolve) => {
+          h.onMessageStart("shiori");
+          h.onToken("そうだね。");
+          h.onMessageEnd();
+          h.onMessageStart("toshio");
+          release = () => {
+            h.onToken("結論から言うとね。");
+            h.onMessageEnd();
+            h.onDone();
+            resolve();
+          };
+        }),
+    );
+    await renderAndSend("これって伏線じゃない？");
+
+    const typing = (await screen.findByText("入力中")).parentElement!.parentElement!;
+    expect(typing.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-64.png");
+
+    release();
+    await screen.findByText("結論から言うとね。");
   });
 });
 

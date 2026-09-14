@@ -47,7 +47,7 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
 
   return (
     <div className="group animate-fade-up flex gap-sm px-md py-xs">
-      <Mascot size={32} delay={0.4} name={speakerName} character={isToshio ? "toshio" : "shiori"} />
+      <Mascot size={32} delay={0.4} name={speakerName} character={message.speaker} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
           <span className="text-[14px] font-medium text-ink">{speakerName}</span>
