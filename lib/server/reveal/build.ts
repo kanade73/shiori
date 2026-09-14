@@ -1,16 +1,6 @@
-import { buildRevealGraph } from "./reveal-graph";
-import type {
-  CanonFact,
-  Entity,
-  FabricatedFact,
-  Message,
-  RevealData,
-  RevealMessage,
-  RevealSegment,
-  RevealState,
-  RevealStatement,
-  StoredClaim,
-} from "./types";
+import { buildRevealGraph } from "./graph";
+import type { CanonFact, Entity, FabricatedFact, Message, StoredClaim } from "../types";
+import type { RevealData, RevealMessage, RevealSegment, RevealState, RevealStatement } from "./types";
 
 /**
  * 答え合わせ: 会話の終わりに、シオリの発話のどこが本当でどこが嘘だったかを明かす。

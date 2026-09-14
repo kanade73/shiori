@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { isForwardEdge, layoutGraph } from "./graph-layout";
-import type { RevealGraph } from "@/lib/server/types";
+import type { RevealGraph } from "@/lib/server/reveal/types";
 
 // 嘘の構造図は左から右へ一方向: 本物の設定 → キャラ・物 → 主張（会話順に上から下） → としお
 

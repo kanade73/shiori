@@ -1,4 +1,4 @@
-import type { RevealGraph, RevealGraphEdge, RevealGraphNode } from "@/lib/server/types";
+import type { RevealGraph, RevealGraphEdge, RevealGraphNode } from "@/lib/server/reveal/types";
 
 /**
  * 嘘の構造図のレイアウト。左から右へ一方向に流れる層状の図にする。

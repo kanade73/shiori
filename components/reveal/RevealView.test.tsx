@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { RevealData } from "@/lib/server/types";
+import type { RevealData } from "@/lib/server/reveal/types";
 
 // 答え合わせ画面: 予想 → 答えを見る → 真偽つきの会話、の流れを固定する。API は差し替える。
 const mocks = vi.hoisted(() => ({

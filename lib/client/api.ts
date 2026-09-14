@@ -1,16 +1,6 @@
 import { readSse } from "./sse";
-import type {
-  CanonFact,
-  ChatSession,
-  FabricatedFact,
-  Message,
-  ProgressResolution,
-  ResponseStrategy,
-  RevealData,
-  Speaker,
-  Verdict,
-  Work,
-} from "@/lib/server/types";
+import type { CanonFact, ChatSession, FabricatedFact, Message, ProgressResolution, ResponseStrategy, Speaker, Work } from "@/lib/server/types";
+import type { RevealData, Verdict } from "@/lib/server/reveal/types";
 
 export type SessionSummary = ChatSession & { fabricatedFactCount: number };
 

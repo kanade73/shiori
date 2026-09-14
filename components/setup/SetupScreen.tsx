@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mascot } from "./Mascot";
+import { Mascot } from "@/components/ui/Mascot";
 import {
   createSession,
   listSessions,

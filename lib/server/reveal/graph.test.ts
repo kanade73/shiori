@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { buildRevealGraph, relationLabel, shortLabel } from "./reveal-graph";
-import type { Entity, RevealMessage, RevealStatement } from "./types";
+import { buildRevealGraph, relationLabel, shortLabel } from "./graph";
+import type { Entity } from "../types";
+import type { RevealMessage, RevealStatement } from "./types";
 
 // 嘘の構造図: 主張・主語・目的語・本物の設定・としお、のつなぎ方を固定する。
 

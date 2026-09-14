@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { layoutGraph, type LaidOutEdge, type LaidOutNode } from "@/lib/client/graph-layout";
-import type { RevealGraph as RevealGraphData, RevealGraphEdge, RevealGraphNode, Verdict } from "@/lib/server/types";
+import type { RevealGraph as RevealGraphData, RevealGraphEdge, RevealGraphNode, Verdict } from "@/lib/server/reveal/types";
 
 /**
  * 嘘の構造図。左から右へ「本物の設定 → キャラ・物 → シオリの主張 → としお」と一方向に流れる。

@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { Mascot } from "./Mascot";
-import { PlusIcon, XIcon } from "./icons";
+import { Mascot } from "@/components/ui/Mascot";
+import { PlusIcon, XIcon } from "@/components/ui/icons";
 import type { SessionSummary } from "@/lib/client/api";
 import type { Work } from "@/lib/server/types";
 

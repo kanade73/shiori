@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { Mascot } from "./Mascot";
-import { CopyIcon } from "./icons";
-import { formatTime, type ViewMessage } from "@/lib/client/types";
+import { Mascot } from "@/components/ui/Mascot";
+import { CopyIcon } from "@/components/ui/icons";
+import { formatTime } from "@/lib/client/format";
+import type { ViewMessage } from "@/lib/client/types";
 
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);

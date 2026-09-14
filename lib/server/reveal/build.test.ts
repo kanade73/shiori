@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildReveal, segmentContent, toRevealData } from "./reveal";
-import type { CanonFact, FabricatedFact, Message, StoredClaim } from "./types";
+import { buildReveal, segmentContent, toRevealData } from "./build";
+import type { CanonFact, FabricatedFact, Message, StoredClaim } from "../types";
 
 function msg(id: string, role: Message["role"], content: string, speaker?: Message["speaker"]): Message {
   return { id, sessionId: "s1", role, content, createdAt: "2026-09-14T12:00:00.000Z", ...(speaker ? { speaker } : {}) };
