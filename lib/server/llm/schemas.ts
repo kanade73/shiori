@@ -11,8 +11,9 @@ export const ClaimSchema = z.object({
   sourceCanonFactIds: z.array(z.string()),
 });
 
-/** extract.ts の構造化出力 */
-export const ClaimsOutputSchema = z.object({
+/** generate.ts の構造化出力（strategy はモデルに出させない） */
+export const GenerationResultSchema = z.object({
+  message: z.string(),
   claims: z.array(ClaimSchema),
 });
 

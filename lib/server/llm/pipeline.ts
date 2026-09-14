@@ -1,17 +1,19 @@
 import { analyzeUserMessage } from "./analyze";
-import { generateReply } from "./generate";
-import { extractClaims } from "./extract";
+import { generateResponse } from "./generate";
+import { decideDirective } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { getAllCanonFacts, getEntities } from "../works";
+import { getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
-import type { Claim, GenerationResult, Message, ResponseEvaluation, UserMessageAnalysis } from "../types";
+import type { Claim, GenerationResult, Message, ResponseEvaluation, TurnDirective, UserMessageAnalysis } from "../types";
 
 export type PipelineResult = {
   analysis: UserMessageAnalysis;
   generation: GenerationResult;
   evaluation: ResponseEvaluation;
+  /** バックエンドがこのターンに決めた「今回の指示」。 */
+  directive: TurnDirective;
   regenerated: boolean;
   /** Fabricated claims from the final reply, normalized, that are not already stored. */
   newFabricatedClaims: Claim[];
@@ -37,10 +39,9 @@ export function turnsSinceLastToshio(history: Message[]): number {
 
 /** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
 export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
-  // としおは evaluate を通らない。シオリがネタバレ域と判断して逸らした話題や、
-  // 分からないふりで主張を避けた話題（差し戻し2回後の定型文もここに落ちる）に
-  // 検査の無い経路で乗せない。
-  if (generation.strategy === "avoid_spoiler" || generation.strategy === "admit_uncertainty") return false;
+  // としおは evaluate を通らない。シオリが分からないふりで主張を避けた話題
+  // （差し戻し2回後の定型文もここに落ちる）に、検査の無い経路で乗せない。
+  if (generation.strategy === "admit_uncertainty") return false;
   if (generation.claims.length > 0) return true;
   return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
 }
@@ -49,10 +50,10 @@ const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * analyze (local) -> retrieve -> generate (会話だけ) -> extract (主張の分解) ->
- * evaluate -> regenerate once if flagged. Generation is unconstrained and sees
- * only a handful of relevant lies; consistency is enforced only after the fact,
- * against everything the character already said in this session.
+ * analyze (local) -> retrieve -> decide directive (local) -> generate
+ * (返答文 + claims を1回の構造化出力で) -> evaluate -> regenerate once if
+ * flagged. 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する
+ * 数件の嘘だけで、整合はこの後の evaluate が全件と照合して担保する。
  */
 export async function runConversationPipeline(params: {
   workId: string;
@@ -69,28 +70,29 @@ export async function runConversationPipeline(params: {
   // 生成には関係する数件、検査には全件。守りは evaluate に寄せる。
   const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
-  const allCanonFacts = getAllCanonFacts(workId);
   const normalize = buildNormalizer(getEntities(workId));
+
+  const directive = decideDirective({
+    analysis,
+    history,
+    fabricatedFacts: existingFabricatedFacts,
+    relevantFacts: promptFabricatedFacts,
+  });
 
   const genArgs = {
     workTitle,
     currentEpisode,
     canonFacts: visibleCanonFacts,
     fabricatedFacts: promptFabricatedFacts,
+    directive,
     history,
     userMessage,
   };
-  const generate = async (feedback?: string): Promise<GenerationResult> => {
-    const message = await generateReply({ ...genArgs, feedback });
-    const claims = await extractClaims({ workTitle, message, canonFacts: visibleCanonFacts });
-    return { message, claims, strategy: "no_new_lie" };
-  };
+  const generate = (feedback?: string): Promise<GenerationResult> => generateResponse({ ...genArgs, feedback });
   const evaluate = (result: GenerationResult) =>
     evaluateGeneration({
       result,
       visibleCanonFacts,
-      allCanonFacts,
-      currentEpisode,
       existingFabricatedFacts,
       normalize,
     });
@@ -138,6 +140,7 @@ export async function runConversationPipeline(params: {
     analysis,
     generation,
     evaluation,
+    directive,
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),

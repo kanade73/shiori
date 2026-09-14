@@ -114,6 +114,12 @@ export type Claim = {
   sourceCanonFactIds: string[];
 };
 
+/** バックエンドが1ターンごとに決める、シオリへの「今回の指示」。 */
+export type TurnDirective =
+  | { kind: "introduce" }
+  | { kind: "layer"; doubted: FabricatedFact[] }
+  | { kind: "plain" };
+
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 
 export type FabricatedFact = {
@@ -155,11 +161,10 @@ export type ResponseStrategy =
   | "no_new_lie"
   | "introduce_small_lie"
   | "reinforce_existing_lie"
-  | "avoid_spoiler"
   | "admit_uncertainty";
 
 /**
- * 返答文と、そこから別呼び出し（extract.ts）で取り出した主張。
+ * 返答文と、そこで述べた主張。
  * strategy はモデルが選ぶものではなく、保存された嘘の有無から事後に決まる
  * （UI のバッジと、としおのゲーティングに使うだけ）。
  */
@@ -183,7 +188,6 @@ export type ToshioCommentary = {
 export type ResponseEvaluation = {
   canonContradictionScore: number;
   fabricatedConsistencyScore: number;
-  spoilerRiskScore: number;
   believabilityScore: number;
   shouldRegenerate: boolean;
   reason?: string;

@@ -5,10 +5,9 @@ import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvalua
  * Deterministic checker. The generation step is deliberately unconstrained
  * (wild lies are the point) and is not even shown every lie it told; this is
  * the only place that says no, checking against *all* stored lies, and it
- * says no for exactly three reasons:
+ * says no for exactly two reasons:
  *   1. a claim contradicts a lie the character already told this session
- *   2. a claim cites a canon fact beyond the user's viewing progress
- *   3. a fabricated claim directly overwrites a visible canon fact
+ *   2. a fabricated claim directly overwrites a visible canon fact
  */
 
 function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer): boolean {
@@ -24,27 +23,16 @@ function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer)
 export function evaluateGeneration(params: {
   result: GenerationResult;
   visibleCanonFacts: CanonFact[];
-  allCanonFacts: CanonFact[];
-  currentEpisode: number;
   existingFabricatedFacts: FabricatedFact[];
   normalize: Normalizer;
 }): ResponseEvaluation {
-  const { result, visibleCanonFacts, allCanonFacts, currentEpisode, existingFabricatedFacts, normalize } = params;
+  const { result, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
 
   const details: string[] = [];
   let canonConflicts = 0;
   let fabricatedConflicts = 0;
-  let spoilerRiskScore = 0;
 
   for (const claim of result.claims) {
-    for (const id of claim.sourceCanonFactIds) {
-      const fact = allCanonFacts.find((f) => f.id === id);
-      if (fact && fact.episodeFrom > currentEpisode) {
-        spoilerRiskScore = 1;
-        details.push(`「${claim.claim}」は第${fact.episodeFrom}話以降の情報（${fact.id}）に基づいている`);
-      }
-    }
-
     const normalized = normalizeTriple(claim, normalize);
     const contradictions = findContradictions(normalized, existingFabricatedFacts);
     if (contradictions.length > 0) {
@@ -65,17 +53,15 @@ export function evaluateGeneration(params: {
   const canonContradictionScore = Math.min(1, canonConflicts / total);
   const fabricatedConsistencyScore = fabricatedConflicts > 0 ? 0 : 1;
 
-  const shouldRegenerate = spoilerRiskScore > 0.2 || fabricatedConflicts > 0 || canonContradictionScore > 0.3;
+  const shouldRegenerate = fabricatedConflicts > 0 || canonContradictionScore > 0.3;
 
   const reasons: string[] = [];
-  if (spoilerRiskScore > 0.2) reasons.push("視聴済み範囲を超えるネタバレの可能性がある");
   if (fabricatedConflicts > 0) reasons.push("既に語った設定と矛盾している");
   if (canonContradictionScore > 0.3) reasons.push("本物の設定と矛盾している");
 
   return {
     canonContradictionScore,
     fabricatedConsistencyScore,
-    spoilerRiskScore,
     believabilityScore,
     shouldRegenerate,
     reason: reasons.length > 0 ? reasons.join("、") : undefined,

@@ -8,7 +8,8 @@ const MAX_CANON_FACTS = 6;
 // セッションが長くなるほどモデルが自己監視に寄り、嘘をつかなくなる。
 const MAX_FABRICATED_FACTS_FOR_PROMPT = 8;
 
-function textIncludesAny(text: string, needles: string[]): boolean {
+/** 語のいずれかが text に含まれるか（大文字小文字を無視）。関連判定の共通ルール。 */
+export function textIncludesAny(text: string, needles: string[]): boolean {
   const lower = text.toLowerCase();
   return needles.some((needle) => needle.trim().length > 0 && lower.includes(needle.toLowerCase()));
 }
