@@ -154,6 +154,15 @@ Vercel 側の環境変数登録を忘れないこと（`.env.local` はデプロ
 
 ---
 
+## ブランチ運用
+
+- `main` — 提出・デプロイ用。直接コミットしない
+- `dev` — 統合ブランチ。**PR の向き先は必ず `dev`**（`gh pr create --base dev`）
+- 作業は `dev` から切ったブランチで行い、`dev` へ PR を出す
+- `dev` → `main` の取り込みは `/promote-to-main` スキルで行う。ビルド・Lint・AGENTS.md の制約チェックを通してから `main` に fast-forward する
+
+---
+
 ## 開発の進め方
 
 MVP は一通り動く（`npm run build` が通り、UI とセッション管理は動作する）。以降は**実装して触り、足りないところを埋める**進め方を取る。
