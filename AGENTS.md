@@ -74,15 +74,14 @@
 | フロント | Next.js (App Router) + TypeScript + Tailwind |
 | チャットUI | 自前。`POST /api/sessions/[id]/messages` の SSE を `lib/client/sse.ts` で読む |
 | バックエンド | Next.js Route Handlers（別サーバーを立てない） |
-| LLM | Anthropic SDK（`@anthropic-ai/sdk`）+ zod 構造化出力 |
+| LLM | Google Gen AI SDK（`@google/genai`）+ zod 構造化出力 |
 | 永続化 | JSONファイル（`.data/db.json`） |
 | デプロイ | Vercel |
 
-### LLM 呼び出しは現在 無効化されている
+### LLM 呼び出しの設定
 
-`lib/server/llm/client.ts` が空の `apiKey` で SDK を初期化しており、**全リクエストが 401 で落ちる**（課金防止）。パイプラインは catch して定型文にフォールバックするので、UI は動くが嘘は生成されない。
-
-有効化するには `client.ts` を `new Anthropic()` に戻し、`.env.local` に `ANTHROPIC_API_KEY` を置く。
+Google AI Studio の無料枠が利用可能な `gemini-3.6-flash` を使用しています（`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。
+`.env.local` に `GEMINI_API_KEY` を設定することで即座に有効化されます。
 
 ### 意図的に選んでいない技術
 
@@ -147,7 +146,7 @@ pictures/                           デザイン素材・スケッチ
 ### 環境変数
 
 ```
-ANTHROPIC_API_KEY=       # .env.example をコピーして .env.local に
+GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 ```
 
 Vercel 側の環境変数登録を忘れないこと（`.env.local` はデプロイに含まれない）。
@@ -163,6 +162,9 @@ MVP は一通り動く（`npm run build` が通り、UI とセッション管理
 1. **LLM 呼び出しの有効化と口調の検証**。「嘘を認めない」態度がプロンプトのみで保てるかを早期に確認する
 2. **`work.json` の中身**。canonFacts の量と質が体験に直結する。もう1作品を足して「データを足せば動く」を実証する
 3. `docs/specs/spec.md` の命題カード + 検証層は、上記が安定してから検討する
+
+Antigrabity,ClaudeCodeを並行して利用するため、作業をAIが終えた際にはこれまでの作業内容を、初見でAIが把握することができるようHANDOFF.mdにまとめること。
+また、AIがセッションを開始する際にはHANDOFF.mdを参照してこれまでの作業内容を把握すること。
 
 <!-- BEGIN:nextjs-agent-rules -->
 

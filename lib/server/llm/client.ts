@@ -1,15 +1,10 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI } from "@google/genai";
 
-// Intentionally disabled to avoid incurring API cost. Passing an explicit
-// (even empty) `apiKey` stops the SDK from falling back to
-// ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN, an `ant auth login` profile, or
-// Workload Identity Federation - so this always sends an empty credential
-// and every request fails with 401 before anything is billed, regardless of
-// what auth might otherwise be available in the environment.
-//
-// To re-enable real calls: replace the line below with
-//   export const anthropic = new Anthropic();
-// and set ANTHROPIC_API_KEY (see .env.local.example).
-export const anthropic = new Anthropic({ apiKey: "" });
+// GEMINI_API_KEY を環境変数から読み込む
+export const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY || "",
+});
 
-export const GENERATION_MODEL = "claude-opus-5";
+// 無料枠で利用可能な高速モデル
+// gemini-2.5-flash は新規ユーザー向けに廃止済み（404 NOT_FOUND）のため gemini-3.6-flash を使用
+export const GENERATION_MODEL = "gemini-3.6-flash";
