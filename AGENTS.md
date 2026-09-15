@@ -47,7 +47,7 @@
 - `canonFacts` が「本物の設定」。`subject / relation / object` の三つ組 + 一文の説明
 - `episodeFrom` がネタバレ境界。ユーザーの視聴話数以下のものしかモデルに渡さない
 - `sources` は会話の話題を調べにいく外部の知識源（下の「話題の場面」）。`sections` を書くとその章（と記事冒頭の導入）だけを使う。コラボ・グッズ・スタッフ一覧のような物語と関係ない章は外しておく
-- `arcs.aliases` は、話題の場面（外部資料の「『〇〇』編」などの見出し）を arc に対応づけて視聴済み話数を決めるのと、発話解析で arc の言及を拾うのに使う
+- `arcs.aliases` は、話題の場面（外部資料の「『〇〇』編」などの見出し）を arc に対応づけて視聴済み話数を決めるのと、発話解析で arc の言及を拾うのに使う。見出しの表記ゆれ（『』・前後編の <後>・（副題）・小書きの仮名・途中で切れた『シーサーの』編）は `topic.matchArc` が作品を問わず吸収するので、資料の見出しに合わせて別名を足す必要はない（issue #33）。呼び方がまるで違う見出し（『プリズン』編 = オデと牢獄編）は対応しない
 - `creators` は作り手（`{ "role": "原作", "name": "...", "source": { mediawiki の記事 }, "style"?: [...] }`）。としおが「この作者はこういう描き方をする人だから、あの細部は意図的で本当は〜」と作風を土台に考察を組むための材料。データ側に要るのは役割・名前・本人の記事名だけで、作風の要点は `lib/server/creator.ts` が記事から資料係（`llm/creator.ts`）に1回だけ抜かせて `DATA_DIR/creators/<workId>.json` に残す。`style` を手で書けば記事は読まない。実在の人物なので、抜くのは作品内の描き方の癖だけ（私生活・発言・経歴は入れない）。無ければとしおは作風なしで語る
 - `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）、外部資料の検索（別名で書かれても正式名で探す）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
 
@@ -60,6 +60,7 @@
 - `lib/server/sources.ts` — `sources` の MediaWiki 記事を TextExtracts で取り、段落に区切る（プロセス内キャッシュ）。発話との**文字 bigram の IDF 重み付き重なり**で段落を順位付けする（下のベクトル検索と併用）
 - `lib/server/topic.ts` の `lookupSessionTopic` — 上位の段落を資料係（`llm/topic.ts`、Gemini 1回・構造化出力）に渡し、場面の名前・要約・事実（`relation` は claims と同じ閉じた語彙）を**資料に書かれたことだけから**抜かせる。場面が `arcs` に対応すればその arc の最後の話を視聴済み話数にする
 - 結果は `ChatSession.topic` に保存し、事実は `topic-<何番目の話題>-<連番>` の id の canonFact として以後の retrieve / generate / evaluate / としお / 答え合わせに流れる（`retrieval.getVisibleCanonFacts`）。**話題が決まるまでは発話のたびに調べ、決まった後は下の「話題の切り替わり」を判定したときだけ引き直す**。挨拶のように文字でも意味でも資料と重ならない発話では資料係を呼ばない。失敗しても話題なしのままシオリは返事をする
+- 話題が決まらず視聴済み話数も分からない間（`directive.isSceneKnown` が false）は、本物の設定が1件も渡らない。この間は「今回の指示」が `ask_scene` になり、シオリは特定の場面を語らず・自分で場面を選ばずに、どの場面の話か聞き返す。としおも割り込まない（issue #32。本物の設定が無いまま場面を語ると、本筋を覆す嘘も evaluate を素通りするため）
 - 段落の検索は bigram とベクトルの2本立て（`topic.selectCandidates`）。ベクトルは言い換え（「大きい敵を倒しにいく話」→『おっきい討伐』編）や固有名詞の無い曖昧な言い方（「牢屋のとこ」→『プリズン』編）に強く、bigram は固有名詞に強い
   - 文字で十分に重なる（bigram の最高点が3以上）なら、両方の順位を Reciprocal Rank Fusion で混ぜて上位8段落
   - 文字でほとんど重ならなければ、コサイン類似度 0.66 以上の段落だけ（bigram の偶然の重なりは混ぜない）。挨拶・相づち15種の最も近い段落は 0.60〜0.65、文字では重ならない場面の言い換えは 0.66〜0.68 で、差は小さい（gemini-embedding-001・768次元で測った値。モデルを変えたら測り直すこと）。この経路で資料係に渡るのは1〜3段落程度で、文脈はむしろ小さい
@@ -99,11 +100,11 @@
    - としおには、そのターンの `grounding=fabricated` な claim を「題材（premises）」として本作の事実の顔で渡す。としおはどこが嘘かを知ったうえで、嘘を明かさずに乗る。この材料はバックエンド内だけのもので、SSE にも保存にも載せない
    - クールダウンは進行度（`SessionPhase`）でも動く。終盤（late）は 0 になり、毎ターン割り込めるようになる（`directive.ts` の `TOSHIO_COOLDOWN_TURNS`）
 
-`grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。としおの発言は主張として記録しない（記録するキャラはシオリ1人）。代わりに **ユーザーがとしおの考察について聞いたら、シオリがそれを支える細部（嘘）を足して整合させる**: `directive.ts` の `theoryInQuestion` が「としおの直後の発話（感想だけは除く）」か「としおの文の引用（bigram の重なり）」を拾い、`support_theory` の指示（否定も肯定もせず、成り立つように見える場面の細部を1つ足す）にする。履歴上のとしおの発言は直近1件だけ `generate.ts` が `【としお】` の印を付け 300 字に切ってシオリに渡す（それより古いものは落とす）。
+`grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。としおの発言は主張として記録しない（記録するキャラはシオリ1人）。代わりに **ユーザーがとしおの考察について聞いたら、シオリがそれを支える細部（嘘）を足して整合させる**: `directive.ts` の `theoryInQuestion` が「としおの文の引用（bigram の重なり）」「としおの名指し」「としおの直後の『考察』」だけを拾い（としおの直後というだけでは拾わない。普通の質問や「それ本当？」までとしおの話になるため。issue #30）、`support_theory` の指示（否定も肯定もせず、成り立つように見える場面の細部を1つ足す）にする。履歴上のとしおの発言は直近1件だけ `generate.ts` が `【としお】` の印を付け 300 字に切ってシオリに渡す（それより古いものは落とす）。
 
 **設計上の原則: 発想は縛らず、整合だけ縛る。** generate に候補選別やスコアリングを噛ませない。LLM が突飛なことを言うのが面白さの源で、構造化はあくまで事後の整合性チェックに限る。矛盾以外の理由で嘘を棄却しないこと。
 
-矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
+矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。本物の設定との照合にも同じルールを使う（`contradictionReason`）。「モモンガ did A」という本物の設定の横に「モモンガ did B」という嘘を足すのは上書きではない（issue #26。以前は主語と関係が同じだけで弾いていて、人物の話題で嘘が毎回差し戻されていた）。関係が自由記述の work.json の canonFacts とは照合しない。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
 
 ### 答え合わせ（会話の終わりに真偽を明かす）
 
@@ -137,9 +138,11 @@
 
 ### LLM 呼び出しの ON/OFF は API キーの有無で決まる
 
-`lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY` だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
+`lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY`（と2本目の `GEMINI_API_KEY_2`）だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
+**キーの切り替え（issue #11）**: `GEMINI_API_KEY_2`（先輩のキー）もあれば、無料枠の上限（429）に達したキーからもう1本に切り替え、同じリクエストをすぐ送り直す。以後はそちらを使い続け、そちらも尽きたら元のキーに戻る（`lib/server/llm/key-pool.ts`）。休ませるのは (キー, モデル) の組で、1日の上限なら太平洋時間の0時まで、1分の上限ならエラーに書かれた待ち時間だけ。両方休み中なら送らずに投げ、今の fallback に任せる。混雑（503）では切り替えない。無効なキーはプロセスの間ずっと外す。`client.ts` の `ai` がこれを包んでいるので、呼び出し側は SDK と同じ `ai.models.generateContent` / `embedContent` のまま使う（`ai` に他のメソッドを足すときは包みにも足すこと）。SDK の `retryOptions` は付けない（429 を待ってから投げるので切り替えが遅れる）。無料枠はプロジェクトごとなので、2本のキーは別アカウントで作ったものでないと意味がない。ログにはキーの文字列ではなく環境変数名を出す
+
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
 
 ### 意図的に選んでいない技術
 
@@ -219,7 +222,8 @@ pictures/                           デザイン素材・スケッチ
 
 ```
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
-GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.6-flash
+GEMINI_API_KEY_2=        # 省略可。2本目（先輩）のキー。上限に達したら1本目と切り替える
+GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.5-flash-lite
 EXTRACT_ENDPOINT=        # 必須。主張の取り出し（extract）を行う自前の LoRA 推論サーバ（例 http://localhost:8123）
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
@@ -228,7 +232,7 @@ DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）�
 
 `extract`（返答文 → 主張の三つ組）は `POST <EXTRACT_ENDPOINT>/extract` に向く（自前の LoRA 推論サーバ `ml/serve.py`。`{ text, workTitle, userMessage }` → `{ claims: [...] }`。学習・評価・起動手順は `ml/README.md`）。**抽出に Gemini は使わない**。未設定なら呼び出し時に例外、サーバが落ちていれば 10 秒で諦めて `console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
-本番の API キーは `fly secrets set GEMINI_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
+本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 
 ---
 

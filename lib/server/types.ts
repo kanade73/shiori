@@ -229,6 +229,8 @@ export type TurnDirective =
   | { kind: "layer"; phase: SessionPhase; doubted: FabricatedFact[]; detailCount: number }
   /** ユーザーがとしおの考察について聞いている。シオリはそれが成り立つように見える細部（嘘）を足して支える */
   | { kind: "support_theory"; phase: SessionPhase; theory: string }
+  /** どの場面の話かまだ分からない（話題が決まらず、見た範囲も分からない）。場面を語らず聞き返す（issue #32） */
+  | { kind: "ask_scene"; phase: SessionPhase }
   | { kind: "plain"; phase: SessionPhase };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";

@@ -1,7 +1,7 @@
 import { analyzeUserMessage } from "./analyze";
 import { generateReply } from "./generate";
 import { extractClaims } from "./extract";
-import { countUserMessages, decideDirective, decideSessionPhase, toshioCooldownTurns } from "./directive";
+import { countUserMessages, decideDirective, decideSessionPhase, isSceneKnown, toshioCooldownTurns } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
@@ -197,6 +197,7 @@ export async function runConversationPipeline(params: {
     fabricatedFacts: existingFabricatedFacts,
     relevantFacts: promptFabricatedFacts,
     phase,
+    sceneKnown: isSceneKnown(topic, currentEpisode),
   });
   emit({
     stage: "directive",
@@ -343,6 +344,12 @@ export async function runToshioInterjection(params: {
   const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation, phase } = params;
   const emit = createTurnEmitter(sessionId, params.turnId ?? crypto.randomUUID());
 
+  // どの場面か分からないうちは、シオリは場面を聞き返している。としおは evaluate を通らないので、
+  // 本物の設定が1件も無いまま場面の考察を語らせない（issue #32）
+  if (!isSceneKnown(topic, currentEpisode)) {
+    emit({ stage: "toshio", interjected: false, skipped: "material" });
+    return null;
+  }
   const turnsSince = turnsSinceLastToshio(history);
   if (turnsSince < toshioCooldownTurns(phase)) {
     emit({ stage: "toshio", interjected: false, skipped: "cooldown" });

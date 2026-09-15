@@ -163,6 +163,12 @@ describe("runConversationPipeline: 会話（generate）と主張の取り出し�
     expect(result.directive.kind).toBe("introduce");
   });
 
+  it("話題が特定できず話数も分からなければ、場面を聞き返させる（ask_scene、issue #32）", async () => {
+    const result = await runConversationPipeline({ ...sessionParams, currentEpisode: 0, userMessage: "泣ける話がしたい" });
+    expect(result.directive).toEqual({ kind: "ask_scene", phase: "early" });
+    expect(mocks.generateReply.mock.calls[0][0].directive).toEqual({ kind: "ask_scene", phase: "early" });
+  });
+
   it("生成には関係する数件の嘘（retrieveFabricatedFacts）を渡し、検査は全件（getActiveFabricatedFacts）に対して行う", async () => {
     // 正規化は小文字化を含むので、固定値には大小の無い名前を使う
     const other: FabricatedFact = { ...existingLie, id: "ff-2", subject: "ハチワレ", relation: "has", object: "青い帽子", claim: "ハチワレは青い帽子を持っている" };
@@ -335,6 +341,12 @@ describe("runToshioInterjection: 呼ばない条件", () => {
     const history = [msg({ role: "user", content: "a" }), msg({ content: "b" })];
     await runToshioInterjection({ ...toshioParams, history });
     expect(mocks.generateToshioCommentary).toHaveBeenCalledTimes(1);
+  });
+
+  it("[企画の制約] どの場面か分からない（話題なし・話数0）ときは、としおを呼ばない（issue #32）", async () => {
+    const result = await runToshioInterjection({ ...toshioParams, currentEpisode: 0, topic: null });
+    expect(mocks.generateToshioCommentary).not.toHaveBeenCalled();
+    expect(result).toBeNull();
   });
 
   it("[企画の制約] evaluate に2回落ちて定型の濁し返答に差し替わったときも、としおを呼ばない", async () => {

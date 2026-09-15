@@ -12,7 +12,8 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - このブランチに `feat/reveal-no-explanation`（= origin/dev の取り込み済み）と `feat/lora-extractor`（`ml/` 一式）をマージ済み。**`ml/` がリポジトリに入った**
 - `.env.example` / `AGENTS.md` を「`EXTRACT_ENDPOINT` は必須・抽出は `ml/` のサーバ・Gemini は使わない」に統一。`GEMINI_EXTRACT_MODEL` と `client.ts` の `EXTRACTION_MODEL` は消えている
 - `ml/README.md` / `ml/HANDOFF.md` の冒頭に採用を明記。既定の起動は 1.7B マージ済み（`$SCRATCH/out/lora/merged`）をポート 8123、4B は別ポート（8124）の比較用
-- **PR は `dev` 向きで、PR #27（`feat/reveal-no-explanation` → dev）に依存している。#27 がマージされれば差分は抽出と `ml/` だけに縮む**
+- **PR は `dev` 向き（#37）。依存していた PR #27（`feat/reveal-no-explanation` → dev）は `be08761` でマージ済み**なので、いまの差分は claims 抽出（Gemini 版の削除）と `ml/` 一式だけ
+- **2026-09-15: `origin/dev` を再取り込みした**（#27 がマージ前に dev を再取り込みしていて、このブランチはその前の #27 を土台にしていたため衝突していた）。衝突は `.env.example` と `AGENTS.md` の2ファイルだけで、**dev の記述（`GEMINI_API_KEY_2` の2本キー・既定モデル `gemini-3.5-flash-lite`・`fly secrets` 2本）を採り、`GEMINI_EXTRACT_MODEL` は消したまま `EXTRACT_ENDPOINT` 必須の記述を残した**。`client.ts` は自動マージで dev のキー切り替えが入り、`EXTRACTION_MODEL` は消えたまま（下の dev 側の節には「`EXTRACTION_MODEL` を残して自動マージ」とあるが、それは #27 側の記録でこのブランチには当てはまらない）。`extract.ts` / `extract.test.ts` は dev が触っていないのでこのブランチの版がそのまま残った
 
 ### 現在つながっている推論サーバ（手元）
 
@@ -94,13 +95,45 @@ nohup npm run dev -- -p 3004 > /tmp/local-extract-dev.log 2>&1 &
 - `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
 - 検証: `npm test` 212件・`tsc`・`eslint`・`next build` 通過。パイプラインと開発者モードの SSE は **実 API（3002 の dev サーバー）で通しで確認済み**（generate → extract → evaluate → saved → graph → としお まで流れ、嘘が7件まで育つところまで見た）。ブラウザでの見た目の確認だけは未実施（Chrome 拡張が繋がらなかった）
 - **2026-09-15: `origin/dev` をこのブランチに取り込んだ**（merge。#18 話題ごとの RAG / #20・#21 ドット絵テーマ / #23 ベクトルDB / #25 嘘を場面の細部に寄せる・としおの作風）。衝突の解消方針は「dev 側の中身、このブランチの構造」。generate は dev の #25 のプロンプトを採りつつ **返答文だけを返す**構造（claims の schema と記録規則は持たない）のまま、pipeline は dev の話題（topic）と履歴クレンジング（`historyForTopic`）の流れに generate → extract → evaluate と phase / directive / イベント emit を重ねた。としおのクールダウンは dev の材料別（質問 2 ターン / 嘘だけ 5 ターン）に進行度を掛け合わせ、late では 0 になる
+- **2026-09-15: `origin/dev` を再度取り込んだ**（2回目の merge。#28 issue #26 の上書き誤判定 + issue #11 の API キー2本切り替え / #34 issue #30 としお直後の扱い / #35 issue #32(a) 場面が決まるまで聞き返す / #36 issue #33 見出しの表記ゆれ）。方針は前回と同じ「dev 側の中身、このブランチの構造」。evaluate は dev の `contradictionReason` による判定を採りつつ引数は `claims`（extract 由来）+ 視聴済み canonFacts 全件のまま、directive は dev の `theoryInQuestion`（`analysis` 無し）と `ask_scene` を採ってどの directive にも `phase` を載せる形に揃え、pipeline は `isSceneKnown` のゲートをとしおのクールダウン判定の前に置いた（開発者モードには `skipped: "material"` として出る）。client.ts は dev の2本キー切り替えに `EXTRACTION_MODEL` を残して自動マージ
 
 ## 取り込み前の dev 側のセッション記録
+
+- **dev に PR #28・#36・#34・#35 をこの順でマージ済み**（ユーザー指示「マージまでやっていい」）。main への取り込み（`/promote-to-main`）はまだ
+  - PR #28（`fix/issue-26`）: issue #26 の上書き誤判定 + issue #11 の API キー2本の切り替え。下の「API キー2本の自動切り替え」「嘘が本物の設定の『上書き』と誤判定される問題」の節
+  - PR #36（`fix/issue-33-arc-aliases`、Refs #33。一部）・PR #34（`fix/issue-30-toshio-trigger`、Closes #30）・PR #35（`fix/issue-32-no-topic-canon`、Refs #32。(a) だけ）: 下の「issue #30・#32(a)・#33」の節
+  - #35 は #34 の後で `decideDirective` の同じ行（`theoryInQuestion` の引数から `analysis` を外した行と `ask_scene` の追加）が衝突したので、dev を取り込んで解いてからマージした
+- 開いたままの issue: #32 の (b)（根拠の id が無い canon の主張の扱い）、#33 の残り（『プリズン』編・『小さな友達』編）、#29・#31（方針未定）、#24、#16、#9
+- dev サーバーは 3000〜3003 番をこのツリーで起動中（ユーザー指示。3001〜3003 は `NEXT_DIST_DIR=.next-300X`）。調査・動作確認は 3004 番をスクラッチの `DATA_DIR` で使った（停止済み）
 
 - **作業ブランチ: `feat/vectorDB`**（dev `47d6378` から切った）。issue #22「初回話題特定の RAG にベクトルDBを追加」を実装済み・**未コミット**（コミット・PR はユーザー判断）
 - dev には #18（話題の切り替わり・RAG の引き直し）、#20/#21（ドット絵ダークテーマ・字の大きさ）までマージ済み
 
-## 直近のセッション: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、`feat/vectorDB`、未コミット）
+## 直近のセッション: issue #30・#32(a)・#33（3ブランチ）
+- 選び方: 方針が決まっている #30・#32(a) と、制約（作品ごとに別名を足さない）の範囲で汎用に直せる #33 の一部。#29（嘘の回数を縛る案は不採用で方針未定）・#31（方針未定）・#32(b)（方針未定）・#24（本文なし）・#16/#9（調査・大きい機能）は触っていない
+- **#30**（`directive.ts` の `theoryInQuestion`）: としおの直後というだけでは「としおの考察への質問」にしない。拾うのは としおの文の引用（従来の `quotesMessage`）・「としお／トシオ」の名指し（いつでも）・としおの直後の「考察」だけ。「考察」をとしおの直後に限ったのは、何ターンも後の「その考察って本当？」まで古い考察に結びつけないため。引数から `analysis` を外した。テストは issue の例文（「怖かったシーンある？」ほか）と、としおの直後の「それ本当？」が layer になること
+- **#32(a)**: `directive.isSceneKnown(topic, currentEpisode)`（話題の場面か視聴済み話数のどちらかが分かっている）が false の間は、`decideDirective` が質問の種類を問わず新しい指示 `ask_scene` を返す（`TurnDirective` に追加）。文面は「特定の場面の出来事や細部を語らず、自分で場面を選ばず、どの場面の話か聞き返す」。ペルソナの「聞き返してかまいません」も「聞き返します」+「自分で場面を選んで語り始めない」に強めた。この間は `runToshioInterjection` もとしおを呼ばない（evaluate を通らないため）。実 API（gemini-3.5-flash-lite、generate を直接6回。「泣ける話がしたい」「なんでもいいよ」「ハチワレってかわいいよね」×2）で 6/6 が場面を語らず聞き返し、claims は0件。旧データ（話数を聞いていたセッション）は `currentEpisode > 0` なので従来どおり
+  - (b)（`grounding=canon` なのに根拠の id が無い主張の扱い）は方針未定のまま
+- **#33**（`topic.ts` の `matchArc` + 新しい `arcNameCore`）: 編の名前の形（『』付きか「編」で終わる）の名前は、飾り（<後>・（擬態型）など）と「編」を除いた芯どうしで比べる。3文字以上の芯が arc の芯の頭と一致しても引く（途中で切れた『シーサーの』編）。小書きの仮名を並字に寄せる（三ッ星／三ツ星）。人物名などの編の形でない名前には芯の照合を使わない（「シーサー」がシーサーの資格編に吸い寄せられ、視聴済み話数を先まで開けるのを防ぐ）。ちいかわの資料の見出し（段落168件のラベル）で前後を比べ、新たに対応したのは『三ッ星』編・『黒い流れ星<前>/<後>』編・『シーサーの』編だけで、既存の対応は変わらない
+  - 残り: 『プリズン』編（オデと牢獄編）・『小さな友達』編（カブトムシ編）は呼び方がまるで違い、文字の照合では対応しない。段落の本文で arc の名前を探す案は、『やりたいことリスト』編（シーサーの資格編より前）の本文に「お酒の資格」が出てくるなど、先の arc に対応してネタバレ側に倒れるので採らなかった。やるなら埋め込みでの対応づけ（要計測）か、資料の並び順から「少なくともここまで」の下限を取る案
+- 検証: 各ブランチで `npm test`（262〜266件）・`tsc`・`eslint` 通過
+
+## その前: API キー2本の自動切り替え（issue #11、`fix/issue-26` の2つ目のコミット）
+- ユーザー指示: issue #11 を「3.5-flash-lite + 無料枠の上限で2人のキーを自動で切り替える」に書き換えて計画をコメントに（済み）→「先輩の API を入力できる場所をつくり、2個使えるように。自分のが切れたら先輩の、先輩のが切れたら自分のに」
+- 実装: `lib/server/llm/key-pool.ts`（新規）+ `client.ts`。設計は AGENTS.md「LLM 呼び出しの ON/OFF」節。要点: モデルごとに今のキーを持ち、429 で同じリクエストをもう1本で送り直して以後そちらを使う（元のキーへは、今のキーが切れたときに戻る）。(キー, モデル) 単位で休ませ、1日の上限は quotaId の `PerDay` で見分けて太平洋時間0時まで。無効なキー（400 API_KEY_INVALID / 401 / 403）は外す。状態は `globalThis.__geminiKeyRotation`（キーは sha256 の指紋で識別）。`ai` を包んだので呼び出し側6か所とそのテストのモックは変えていない
+- 既定の `GEMINI_MODEL` を `gemini-3.6-flash` → `gemini-3.5-flash-lite` に（issue #11 の合意）。`.env.example` / AGENTS.md を更新。`.env.local` の末尾に空の `GEMINI_API_KEY_2=` を追記した（中身は読んでいない）
+- 検証: `npm test` 283件（`key-pool.test.ts` 13件・`client.test.ts` 2件追加）・`tsc`・`eslint`。実 API: 1本目に偽のキー・2本目に本物のキーで `ai.models.generateContent` → 1本目を無効として外し、2本目で応答が返った。**本物の 429 での切り替えは未確認**（本文の形はテストで再現。1分15回を超えて流すか、日次の上限に当たったときにログ `[gemini] ... に切り替えた` を見ること）
+- issue #11 のコメントに書いた利用規約の注意（Google APIs 利用規約の「利用上限を回避しない」）は未解決のまま
+
+## その前: 嘘が本物の設定の「上書き」と誤判定される問題（issue #26、`fix/issue-26` の1つ目のコミット）
+- 症状:「モモンガ」と打つと、話題は特定できるのに毎回「……そこはちょっとうまく思い出せない。別のところの話、聞かせて。」（evaluate に2回弾かれて `SAFE_UNCERTAIN_MESSAGE`）
+- 原因: `evaluate.ts` の `contradictsCanon` が「主語・関係が同じで目的語が違う」だけで上書きとみなしていた（本物の設定の関係が自由記述だった頃の前提）。話題の事実は閉じた語彙なので、「モモンガ did 無茶振り」があると「モモンガ did 尻尾を叩く」のような嘘が全部弾かれる。#25 で嘘が「誰が何をしていたか」（did）に寄ったので、資料係が did で事実を抜いた人物（モモンガ）では毎回起きた。ハチワレ・うさぎは事実が is/has/can なので通っていた。本物の db の嘘35件のうち、話題の事実と主語・関係が重なるものは0件（黙って落とされていた）
+- 修正: `claims.ts` に `contradictionReason`（2つの三つ組の矛盾理由）と `isClaimRelation` を切り出し、`findContradiction` と evaluate の本物の設定との照合の両方で使う。本物の設定との照合でも、1つに決まる関係の別の値・肯定と否定・likes/dislikes と can/cannot の反転だけを矛盾とする（否定と反転は以前は本物の設定に対して見ていなかったので、そこは厳しくなった）。関係が自由記述の work.json の canonFacts は照合しない（以前も実質一致しなかった）。差し戻し理由に本物の設定の説明文を入れた
+- テスト: `lib/server/llm/evaluate.test.ts`（新規7件。修正前のコードでは4件落ちる）。`npm test` 267件・`tsc`・`eslint` 通過
+- 実際に動かして確認（3004 番、スクラッチの `DATA_DIR`）:「モモンガ」3セッションとも差し戻しなしで返事し、保存された嘘（「モモンガ｜did｜尻尾を三回巻き直す」など）は3件とも修正前なら弾かれていた形だった
+- issue #26 に書いた別件（未着手）: 15:43〜15:45 の「……ちょっと分からなくなった。」は API キーまわりの一時的な失敗と思われる（`.env.local` の書き換え後は正常）。話題の切り替え直後にシオリが冒頭の問いかけを言い直すことがある。人物の段落からのネタバレ（「でかつよから何かを奪った」）。`components/reveal/ResultPhase.tsx:218` の `data.reveal` undefined の例外
+
+## その前: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、PR #23 で dev にマージ済み）
 - ユーザー指示:「issue#22 を実行して。必要に応じて AGENTS.md の方針も書き換えて。ベクトルDBを使うのが優先」。issue の目的は「曖昧なワードを初回の話題特定で拾えるように」、補足は「コンテキストの逼迫に注視」
 - 選んだ DB: **sqlite-vec**（`node:sqlite` に拡張として読み込む組み込み型）。`DATA_DIR/vectors/<モデル>-<次元>.sqlite` のファイル1本、作品ごとの partition key、近傍探索も DB 内。サーバーを立てる DB（Chroma・Qdrant・pgvector）はコンテナ1台・Route Handler だけの構成を崩すので外した。AGENTS.md の「意図的に選んでいない技術」を書き換え済み（ベクトルDBは外部資料の段落の検索にだけ使う。db.json は据え置き）
 - 変更点:
@@ -272,7 +305,8 @@ nohup npm run dev -- -p 3004 > /tmp/local-extract-dev.log 2>&1 &
 
 ## 環境メモ
 
-- `gemini-3.6-flash` の無料枠は 1日20リクエスト程度。使い切ったら `.env.local` に `GEMINI_MODEL=gemini-3.5-flash-lite`（gitignore 対象）。2.x 系は新規ユーザー向けに廃止済み（404）
+- 既定モデルは `gemini-3.5-flash-lite`（issue #11）。`gemini-3.6-flash` の無料枠は 1日20リクエスト程度。2.x 系は新規ユーザー向けに廃止済み（404）
+- 先輩のキーは `.env.local` の `GEMINI_API_KEY_2=` に入れる（空欄の行を用意済み）。本番は `fly secrets set GEMINI_API_KEY_2=...`
 - dev サーバーの並行起動: `NEXT_DIST_DIR=.next-3001 npm run dev -- -p 3001`（`next.config.mjs` で distDir を切り替える）。別 distDir で起動すると `tsconfig.json` の include に `.next-XXXX` が自動追加されるので、コミット前に戻すこと
 - 実画面の確認は本物の `.data/db.json` を汚さないよう `DATA_DIR` をスクラッチに向けた別サーバーでデモセッションを作って行う（答え合わせすると会話が終わるため）
 - ユーザー環境に Herdr の Claude 連携（`~/.claude/hooks/herdr-agent-state.sh`）が入っている。リポジトリの実装とは無関係
