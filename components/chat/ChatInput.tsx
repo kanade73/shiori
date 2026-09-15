@@ -35,7 +35,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
   return (
     <div className="border-t border-hairline bg-canvas px-md py-sm">
       <div className="mx-auto max-w-[760px]">
-        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-canvas px-sm py-xs shadow-sm transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(107,84,150,0.15)]">
+        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-surface-soft px-sm py-xs transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgb(var(--color-primary)_/_0.2)]">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -66,7 +66,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
             シオリは本物の設定に時々小さな嘘を混ぜて話す、娯楽目的のフィクションです。内容を事実として扱わないでください。
           </p>
           <div className="flex shrink-0 items-center gap-xxs text-[12px] text-muted-soft">
-            <span className="h-[6px] w-[6px] rounded-full bg-success" />
+            <span className="h-[6px] w-[6px] bg-success" />
             シオリ・オンライン
           </div>
         </div>
