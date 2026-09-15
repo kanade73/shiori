@@ -4,6 +4,10 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: hotfix — Gemini 経路の claims 抽出が 503 で落ちて嘘が記録されない（`hotfix/extract-gemini-503`）
+
+手元の推論を設定していない環境（本番・`.env.local` に EXTRACT_* が無い手元）では extract が Gemini `gemini-3.1-flash-lite` に投げるが、混雑（503 UNAVAILABLE）のたびに再試行なしで claims 空になり、ついた嘘が1件も記録されなかった（答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。`extract.ts` の Gemini 経路にだけ 503 の再試行（1s / 2s / 4s の3回、`GEMINI_UNAVAILABLE_RETRY_DELAYS_MS`）を入れた。429 と無効なキーは key-pool の領分なので触らない。経路をまたぐフォールバックも入れていない。dev と main の両方に PR を出した。手元での実 API の確認は generate 側が 429（無料枠）で止まり未検証。ユニットテストは通っている。
+
 ## 2026-09-15: 答え合わせで本文に位置を付けられなかった主張を表示（dev に直コミット）
 
 dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。
