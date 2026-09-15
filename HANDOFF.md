@@ -4,6 +4,34 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出をローカルの LoRA 専用にした（worktree `../chat-local-extract` / `feat/local-extract`）
+
+**LoRA 抽出の検証用ブランチ**。`feat/reveal-no-explanation` から分岐。抽出が Gemini に落ちて「動いてしまう」と LoRA の出来が測れないので、**この 1 ブランチだけ Gemini 版の抽出を消して `EXTRACT_ENDPOINT` 必須にしてある**（本流にそのまま持っていくものではない。取り込むなら 2 実装のままの `feat/reveal-no-explanation` 側が正）。
+
+- `lib/server/llm/extract.ts`: `extractViaGemini` とそのプロンプト・構造化出力のスキーマを削除。`extractEndpoint()` は未設定なら**呼び出し時に**例外（起動時には落とさない）。pipeline は既存の try/catch で握り、claims 空のまま返答文は返す
+- 推論サーバが落ちている・遅い・形が違うときは `console.warn` 1行 + claims 空（`ExtractResult.failed = true`）。**Gemini へのフォールバックは無い**
+- `client.ts` の `EXTRACTION_MODEL` と `GEMINI_EXTRACT_MODEL` を削除。`.env.example` / `AGENTS.md` は `EXTRACT_ENDPOINT` 必須の記述に直した。`ExtractBackend` は `"local"` のみ（イベントの型は他ブランチと揃えて残す）
+- テストは Gemini 経路を削除し、失敗系は「warn 1行 + claims 空」を確認するものに置き換え（`npm test` 206件）
+
+### 起動方法
+
+```
+cd ../chat-local-extract
+npm install                      # node_modules は worktree ごとに要る
+cp ../chat-checking/.env.local .env.local
+echo 'EXTRACT_ENDPOINT=http://localhost:8123' >> .env.local   # 大学の GPU サーバへの SSH トンネル
+nohup npm run dev -- -p 3004 > /tmp/local-extract-dev.log 2>&1 &
+```
+
+3000〜3003 は他の worktree が使っていることが多いので空きポートを確認してから。通しの確認は
+`POST /api/sessions` → `POST /api/sessions/<id>/messages`、抽出の様子は
+`GET /api/sessions/<id>/events`（開発者モードのパネルと同じ SSE）の `stage: "extract"` に
+`backend: "local"` が載る。
+
+**推論サーバは初回リクエストが遅い**（コールドスタート。1回目は 10 秒の `EXTRACT_TIMEOUT_MS` を
+超えて abort → claims 空になった。温まった後は 7 秒前後で返り、3件の claims が fabricated として
+保存されるところまで確認済み）。デモ前に1発叩いて温めること。
+
 ## 2026-09-15: claims 抽出のバックエンドを差し替え可能にした（`EXTRACT_ENDPOINT`）
 
 `extractClaims`（`lib/server/llm/extract.ts`）の「モデルに三つ組を出させる」部分だけを 2 実装にした。**`EXTRACT_ENDPOINT` が未設定なら今までどおり Gemini**（flash-lite）、設定されていれば `POST <endpoint>/extract` に投げる（`feat/lora-extractor` ブランチの `ml/serve.py`。FastAPI、`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。
