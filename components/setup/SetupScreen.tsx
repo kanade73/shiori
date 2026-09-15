@@ -113,7 +113,7 @@ export function SetupScreen() {
                   className="pixel-frame flex w-full items-center justify-between px-sm py-xs text-left text-[15px] text-body hover:bg-surface-card hover:text-ink"
                 >
                   <span>{sessionLabel(s)}</span>
-                  <span className="font-pixel text-[16px] text-muted-soft">{formatDateTime(s.updatedAt)}・嘘{s.fabricatedFactCount}件</span>
+                  <span className="font-pixel text-[16px] text-muted-soft">{formatDateTime(s.updatedAt)}</span>
                 </button>
               ))}
             </div>

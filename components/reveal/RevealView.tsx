@@ -1,30 +1,33 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getReveal, getSessionData, submitReveal } from "@/lib/client/api";
+import { createSession, getSessionData, revealSession } from "@/lib/client/api";
 import { formatTime } from "@/lib/client/format";
+import { sessionLabel } from "@/lib/client/types";
 import type { ChatSession, Work } from "@/lib/server/types";
-import type { RevealData, Verdict } from "@/lib/server/reveal/types";
-import { GuessPhase } from "./GuessPhase";
 import { ResultPhase } from "./ResultPhase";
+import type { Revealed } from "./verdict";
 
-function Shell({ children, wide = false }: { children: React.ReactNode; wide?: boolean }) {
+function Shell({ children }: { children: React.ReactNode }) {
   return (
     <div className="min-h-dvh bg-canvas px-md pb-section pt-lg">
-      <div className={`mx-auto ${wide ? "max-w-[800px]" : "max-w-[760px]"}`}>{children}</div>
+      <div className="mx-auto max-w-[800px]">{children}</div>
     </div>
   );
 }
 
+/** 開いた時点で答え合わせを済ませ（予想は取らない）、真偽つきの会話を出す */
 export function RevealView({ sessionId }: { sessionId: string }) {
+  const router = useRouter();
   const [work, setWork] = useState<Work | null>(null);
   const [session, setSession] = useState<ChatSession | null>(null);
-  const [data, setData] = useState<RevealData | null>(null);
-  const [guesses, setGuesses] = useState<Record<string, Verdict>>({});
+  const [data, setData] = useState<Revealed | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [newSessionError, setNewSessionError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -32,7 +35,7 @@ export function RevealView({ sessionId }: { sessionId: string }) {
       setLoading(true);
       setError(null);
       try {
-        const [sessionData, reveal] = await Promise.all([getSessionData(sessionId), getReveal(sessionId)]);
+        const [sessionData, reveal] = await Promise.all([getSessionData(sessionId), revealSession(sessionId)]);
         if (cancelled) return;
         setWork(sessionData.work);
         setSession(sessionData.session);
@@ -49,16 +52,17 @@ export function RevealView({ sessionId }: { sessionId: string }) {
     };
   }, [sessionId]);
 
-  async function handleSubmit() {
-    setSubmitting(true);
-    setError(null);
+  /** スタート画面の「シオリと話す」と同じく、同じ作品で新しいセッションを作ってそのチャットに移る */
+  async function startNewSession() {
+    if (!work || creatingSession) return;
+    setCreatingSession(true);
+    setNewSessionError(null);
     try {
-      setData(await submitReveal(sessionId, guesses));
-      window.scrollTo({ top: 0 });
+      const { sessionId: newSessionId } = await createSession(work.id);
+      router.push(`/chat/${newSessionId}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "答え合わせに失敗しました");
-    } finally {
-      setSubmitting(false);
+      setNewSessionError(e instanceof Error ? e.message : "セッションの作成に失敗しました");
+      setCreatingSession(false);
     }
   }
 
@@ -78,37 +82,23 @@ export function RevealView({ sessionId }: { sessionId: string }) {
   }
 
   return (
-    <Shell wide={data.status === "revealed"}>
+    <Shell>
       <Link href={`/chat/${sessionId}`} className="text-[13px] text-primary hover:underline">
         ← チャットに戻る
       </Link>
       <h1 className="mt-sm font-display text-display-sm font-medium text-ink">答え合わせ</h1>
       <p className="mt-xxs text-[13px] text-muted">
-        {work.title} ・ {session.progressDescription ?? `第${session.currentEpisode}話まで`}
-        {data.status === "revealed" && ` ・ ${formatTime(data.reveal.revealedAt)} に答え合わせ済み`}
+        {work.title} ・ {sessionLabel(session)} ・{" "}
+        {formatTime(data.reveal.revealedAt)} に答え合わせ済み
       </p>
 
-      {error && <p className="mt-sm rounded-md bg-[#c6435a1a] px-sm py-xs text-[13px] text-error">{error}</p>}
-
-      {data.status === "pending" ? (
-        <GuessPhase
-          sessionId={sessionId}
-          questions={data.questions}
-          guesses={guesses}
-          onGuess={(id, v) =>
-            setGuesses((prev) => {
-              const next = { ...prev };
-              if (v) next[id] = v;
-              else delete next[id];
-              return next;
-            })
-          }
-          onSubmit={handleSubmit}
-          submitting={submitting}
-        />
-      ) : (
-        <ResultPhase sessionId={sessionId} data={data} />
-      )}
+      <ResultPhase
+        sessionId={sessionId}
+        data={data}
+        onNewSession={startNewSession}
+        creatingSession={creatingSession}
+        newSessionError={newSessionError}
+      />
     </Shell>
   );
 }

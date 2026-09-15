@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useState } from "react";
 import { Mascot } from "@/components/ui/Mascot";
 import { CopyIcon } from "@/components/ui/icons";
@@ -30,7 +29,7 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; sessionId: string }) {
+export function ChatMessageItem({ message }: { message: ViewMessage }) {
   if (message.role === "user") {
     return (
       <div className="animate-fade-up flex justify-end px-md py-xxs">
@@ -42,9 +41,7 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
     );
   }
 
-  const hasFacts = (message.fabricatedFactIds?.length ?? 0) > 0;
-  const isToshio = message.speaker === "toshio";
-  const speakerName = isToshio ? "としお" : "シオリ";
+  const speakerName = message.speaker === "toshio" ? "としお" : "シオリ";
 
   return (
     <div className="group animate-fade-up flex gap-sm px-md py-xxs">
@@ -52,9 +49,6 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
           <span className="font-pixel text-[16px] text-ink">{speakerName}</span>
-          {isToshio && (
-            <span className="border-2 border-hairline px-xs py-[1px] font-pixel text-[16px] leading-none text-muted-soft">考察</span>
-          )}
           <span className="font-pixel text-[16px] text-muted-soft">{formatTime(message.createdAt)}</span>
         </div>
         <p className="mt-xxs whitespace-pre-wrap text-[17px] leading-[1.7] text-body">
@@ -64,14 +58,6 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
         {!message.isStreaming && (
           <div className="mt-xs flex items-center gap-xs opacity-0 transition-opacity group-hover:opacity-100">
             <CopyButton text={message.content} />
-            {hasFacts && (
-              <Link
-                href={`/debug/${sessionId}`}
-                className="border-2 border-hairline px-xs py-[2px] font-pixel text-[16px] text-muted hover:bg-surface-card hover:text-ink"
-              >
-                設定を確認
-              </Link>
-            )}
           </div>
         )}
       </div>

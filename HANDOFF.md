@@ -4,6 +4,20 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: 画面の整理（`fix/feature-tweaks`、最新の dev `be08761` から切った・**未コミット**）
+
+ユーザー指示の4点 + 追加の8点（結果画面の考察バッジ・話数の表示・結果画面の「話の答え」・嘘の件数と印の番号・サイドバーの「生成された嘘」・削除の確認ダイアログ・セッション一覧の件数・「新しいセッション」と「別の会話を始める」の遷移先）。コミット・PR（`dev` 向き）はユーザーの判断待ち。
+
+- **セッションの削除**: サイドバーの各セッションの右にゴミ箱（`components/ui/icons.tsx` の `TrashIcon`）。確認は `components/chat/DeleteSessionDialog.tsx`（画面中央にシオリの絵と吹き出し「ほんとうに消しちゃうの...?」+ 対象の見出し。はい/いいえの2択で、「いいえ」は「はい」の1.5倍 = 144×60px・24px 対 96×40px・16px。開いたときのフォーカスは「いいえ」、Esc・背景のクリックも「いいえ」扱い。失敗したら閉じずにエラーを出す）→ `DELETE /api/sessions/[sessionId]` → `store.deleteSession`（sessions・messages・fabricatedFacts・fabricatedRelations・messageClaims をまとめて消す）。開いているセッションを消したら `/` へ移る。ダイアログの開閉と削除は `ChatApp`（`requestDeleteSession` / `confirmDeleteSession`）、`Sidebar` は `onDeleteSession` を呼ぶだけ
+- **「新しいセッション」**: サイドバーのボタンと、答え合わせ済みの会話の下のボタンは、スタート画面（`/`）へのリンクをやめ、`ChatApp.startNewSession` で今の作品のセッションを作ってそのチャットに移る（スタート画面の「シオリと話す」と同じ `createSession` → `router.push`）。同じ `ChatApp` のまま別セッションに移るので、作成中の状態（`creatingSession`）は読み込みの effect で戻す。失敗したら入力欄の上のエラー欄に出す。答え合わせの結果画面の「別の会話を始める」も同じ（`RevealView.startNewSession` → `ResultPhase` の `onNewSession`。失敗したらボタンの下にエラー）。新しいセッションを作る処理は SetupScreen・ChatApp・RevealView に同じ形で3つある
+- **サイドバーの嘘の件数**: 「作品」欄の「生成された嘘 N件」の行と、セッション一覧の各行の「N件」を削除（答え合わせ済みの印は残した）。スタート画面（`SetupScreen.tsx`）の「続きから」の一覧の「・嘘N件」も削除（`SetupScreen.test.tsx` を新設）。ユーザー向けの画面で嘘の件数を出す所はもう無い。開発者モードのパネルの「嘘」の件数だけは残している（API の `fabricatedFactCount` もそのため残す）
+- **としおの「考察」バッジ**: チャット画面（`ChatMessageItem`）と答え合わせの結果画面（`ResultPhase.tsx` の Transcript）の両方から外した
+- **話数の表示をやめた**: 答え合わせ画面の見出しは `sessionLabel`（話題の名前）を出す（以前は話題のセッションでも「第0話まで」と出ていた）。`sessionLabel` の「第N話まで」の fallback も削除し、話題も旧データの進捗の入力も無ければ「話題はこれから」。開発者モードのパネルの図（`RevealGraph`）の「第N話〜」は本物の設定が明かされる話数なので残した
+- **偽設定の確認画面を廃止**: ヘッダーの「偽設定を確認」、メッセージにカーソルを乗せると出た「設定を確認」、`app/debug/`・`components/debug/`、その画面専用の API（`canon-facts` / `fabricated-facts` / `fabricated-graph`）と client 関数を削除。ChatApp が嘘の一覧を読むのもやめた（`ViewMessage.fabricatedFactIds` は削除。SSE の `metadata` にはまだ載っている）。`store.getFabricatedRelations`・`works.getAllCanonFacts` は本番のコードから呼ばれなくなったが残してある
+- **答え合わせの予想画面を廃止**: `RevealView` は開いた時点で `revealSession`（client。`POST .../reveal` に空の guesses）を呼び、いきなり結果を出す。`GuessPhase.tsx` と client の `getReveal` / `submitReveal` を削除。サーバー側（GET の pending・POST の guesses）は変えていない。旧セッションに記録された予想は保存したまま、画面には出さない
+- **結果画面を会話だけに**: `ResultPhase` から「話の答え」（主張ごとの本当/嘘のラベル・引用・予想の当たり外れの一覧、`StatementRow`）、「会話をふりかえる」の見出し、嘘の件数の概要（`ResultSummary`。「会話に混ざっていた嘘 N件／確認できる話 M件」と旧セッションの正解数）、本文の印の右上の番号を外した。残るのは凡例 → 印付きの会話 → 戻る/新しい会話のボタン。`verdict.ts` の `VERDICT_LABEL` / `PILL_CLASS` / `outcomeOf` は使われなくなったので削除
+- 検証: `npm test` 398件・eslint 通過。削除のダイアログは headless Chrome を CDP（`--remote-debugging-port` + Node の WebSocket、スクラッチの `cdp.mjs`）で操作してゴミ箱を押し、見た目・ボタンの実寸・フォーカスを確かめた。`tsc` は `.next/types/validator.ts`（12:52 の古いビルド出力。3000 番の dev サーバーと同じ distDir なので触っていない）が消したページを参照して4件落ちるので、それを除いた設定で通した。スクラッチの `DATA_DIR` と 3004 番で API（削除 → 404、答え合わせ後の送信 → 409、消したページ → 404）を確認し、headless Chrome でチャット画面（ゴミ箱）と答え合わせ画面（予想なしで結果）を目視した
+
 ## 2026-09-15: claims 抽出のバックエンドを差し替え可能にした（`EXTRACT_ENDPOINT`）
 
 `extractClaims`（`lib/server/llm/extract.ts`）の「モデルに三つ組を出させる」部分だけを 2 実装にした。**`EXTRACT_ENDPOINT` が未設定なら今までどおり Gemini**（flash-lite）、設定されていれば `POST <endpoint>/extract` に投げる（`feat/lora-extractor` ブランチの `ml/serve.py`。FastAPI、`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。
@@ -21,7 +35,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 2026-09-15: 開発者モードの右パネル（リアルタイム可視化）
 
-デモ・審査向けに「チャットの裏で何が起きているか」をその場で見せる。**チャット画面の右側のパネル**で、ヘッダーの「開発者モード」ボタンで開閉（localStorage に記憶。1024px 未満では出さない）。閉じれば今までのチャットの見た目に戻る。既存の `/debug/[sessionId]` 画面はそのまま残してある。
+デモ・審査向けに「チャットの裏で何が起きているか」をその場で見せる。**チャット画面の右側のパネル**で、ヘッダーの「開発者モード」ボタンで開閉（localStorage に記憶。1024px 未満では出さない）。閉じれば今までのチャットの見た目に戻る。既存の `/debug/[sessionId]` 画面は当時は残したが、`fix/feature-tweaks` で削除した。
 
 - **イベントバス**: `lib/server/events.ts`。セッション ID ごとの in-process な EventEmitter（HMR で切れないよう globalThis に1本）。`lib/server/llm/pipeline.ts` の各段の直後で emit するだけで、**パイプラインのロジックは変えていない**。購読者が居なければ no-op
 - **SSE**: `GET /api/sessions/[sessionId]/events`（debug 専用。**チャットの SSE には載せない**）。接続時に `init`（進行度・その段階の上限値・嘘の件数・グラフ）、以降は各段を `stage` として中継、`saved` のときだけ `graph`（描き直した図 + 増えたノード）を足す
@@ -32,7 +46,8 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル + claims 抽出の `EXTRACT_ENDPOINT` 切り替え
+- **いまの作業ブランチ: `fix/feature-tweaks`**（上の「画面の整理」節）。以下はそれ以前の記録
+- `feat/reveal-no-explanation` は PR #27 で dev にマージ済み（当時の記録: worktree `../chat-checking`、`feat/checking_mockup` から分岐）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル + claims 抽出の `EXTRACT_ENDPOINT` 切り替え
 - LoRA 一式（`ml/`。合成・学習・評価・推論サーバ）は別ブランチ **`feat/lora-extractor`** にある。本ブランチはそれを**叩く側**だけを持つ（`ml/` は含めていない）
 - 親ブランチ: **`feat/checking_mockup`**。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
