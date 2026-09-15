@@ -27,7 +27,7 @@ export type TraceClaim = {
 export type PipelineEvent = { turnId: string; at: string } & (
   | { stage: "user"; text: string }
   | { stage: "analyze"; mentionedCharacters: string[]; mentionedEvents: string[]; questionType: QuestionType }
-  | { stage: "directive"; kind: "introduce" | "layer" | "support_theory" | "plain"; phase: SessionPhase; doubted: string[]; detailCount?: number }
+  | { stage: "directive"; kind: "introduce" | "layer" | "support_theory" | "ask_scene" | "plain"; phase: SessionPhase; doubted: string[]; detailCount?: number }
   | { stage: "generate"; attempt: number; message: string }
   | { stage: "extract"; attempt: number; claims: TraceClaim[]; backend?: ExtractBackend; failed?: boolean }
   | { stage: "evaluate"; attempt: number; flagged: boolean; reason?: string; details: string[] }

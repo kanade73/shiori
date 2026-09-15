@@ -1,6 +1,6 @@
 import { textIncludesAny } from "../retrieval";
 import { normalizeText } from "../claims";
-import type { FabricatedFact, Message, SessionPhase, TurnDirective, UserMessageAnalysis } from "../types";
+import type { FabricatedFact, Message, SessionPhase, SessionTopic, TurnDirective, UserMessageAnalysis } from "../types";
 
 /**
  * 「今回どう答えるか」はプロンプトではなくここで決める（量と頻度はコード、
@@ -136,18 +136,35 @@ export function quotesMessage(userMessage: string, message: string): boolean {
   return hit / user.size >= QUOTE_OVERLAP_THRESHOLD;
 }
 
+/** 発話がとしおを名指ししているか。 */
+const TOSHIO_NAME = /としお|トシオ/;
+/** としおの直後にこれを言ったら、としおの考察のことを聞いているとみなす。 */
+const THEORY_WORD = /考察/;
+
 /**
- * ユーザーがとしおの考察について聞いているか。としおの直後の発話（感想だけの相槌を除く）か、
- * としおの文を引用しているとき。としおの考察はシオリの嘘の仕組みに乗っていないので、
- * ここで拾ってシオリに「支える細部を足す」指示にする。
+ * ユーザーがとしおの考察について聞いているか。としおの文を引用したとき・としおを名指ししたとき・
+ * としおの直後に「考察」と言ったときだけ。としおの直後というだけでは拾わない（普通の質問や
+ * 「それ本当？」までとしおの話にされ、質問に答えず・疑いの layer も出なくなるため。issue #30）。
+ * としおの考察はシオリの嘘の仕組みに乗っていないので、ここで拾ってシオリに「支える細部を足す」指示にする。
  */
-export function theoryInQuestion(params: { userMessage: string; analysis: UserMessageAnalysis; history: Message[] }): string | null {
-  const { userMessage, analysis, history } = params;
+export function theoryInQuestion(params: { userMessage: string; history: Message[] }): string | null {
+  const { userMessage, history } = params;
   const toshio = lastToshioMessage(history);
   if (!toshio) return null;
   if (quotesMessage(userMessage, toshio.content)) return toshio.content;
-  if (toshioSpokeLast(history) && analysis.questionType !== "impression") return toshio.content;
+  const text = normalizeText(userMessage);
+  if (TOSHIO_NAME.test(text)) return toshio.content;
+  if (toshioSpokeLast(history) && THEORY_WORD.test(text)) return toshio.content;
   return null;
+}
+
+/**
+ * どの場面の話か分かっているか。話題の場面が決まっているか、どこまで見たか（話数）が分かっていれば、
+ * 本物の設定を材料にできる。どちらも無いと本物の設定が1件も渡らず、シオリが自分で選んだ場面を
+ * 語ると本筋を覆す嘘も素通りするので、場面を聞き返させる（issue #32）。
+ */
+export function isSceneKnown(topic: SessionTopic | null | undefined, currentEpisode: number): boolean {
+  return Boolean(topic) || currentEpisode > 0;
 }
 
 export function decideDirective(params: {
@@ -160,10 +177,13 @@ export function decideDirective(params: {
   /** retrieveFabricatedFacts の結果（言及キャラ関連が先頭） */
   relevantFacts: FabricatedFact[];
   phase: SessionPhase;
+  /** どの場面の話か分かっているか（isSceneKnown）。分からなければ場面を聞き返させる */
+  sceneKnown?: boolean;
 }): TurnDirective {
-  const { analysis, history, fabricatedFacts, relevantFacts, phase, userMessage = "" } = params;
+  const { analysis, history, fabricatedFacts, relevantFacts, phase, userMessage = "", sceneKnown = true } = params;
+  if (!sceneKnown) return { kind: "ask_scene", phase };
 
-  const theory = theoryInQuestion({ userMessage, analysis, history });
+  const theory = theoryInQuestion({ userMessage, history });
   if (theory) return { kind: "support_theory", phase, theory };
 
   if (analysis.questionType === "doubt") {
