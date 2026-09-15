@@ -50,3 +50,40 @@ describe("store: 答え合わせ", () => {
     expect(store.revealSession("missing", {})).toBeNull();
   });
 });
+
+describe("store: セッションの削除", () => {
+  it("セッションと、そのメッセージ・嘘・主張の記録を消す。他のセッションは残す", () => {
+    const target = store.createSession("w");
+    const other = store.createSession("w");
+    for (const s of [target, other]) {
+      const msg = store.appendMessage(s.id, "assistant", "裏にレシピがある", "shiori");
+      store.saveMessageClaims(s.id, msg.id, [lie]);
+      store.addFabricatedFact({
+        sessionId: s.id,
+        claim: lie.claim,
+        subject: lie.subject,
+        relation: lie.relation,
+        object: lie.object,
+        negated: false,
+        sourceCanonFactIds: [],
+        introducedMessageId: msg.id,
+        confidence: 1,
+      });
+    }
+
+    expect(store.deleteSession(target.id)).toBe(true);
+    expect(store.getSession(target.id)).toBeNull();
+    expect(store.getMessages(target.id)).toEqual([]);
+    expect(store.getFabricatedFacts(target.id)).toEqual([]);
+    expect(store.getMessageClaims(target.id)).toEqual({});
+    expect(store.listSessions("w").map((s) => s.id)).not.toContain(target.id);
+
+    expect(store.getSession(other.id)).not.toBeNull();
+    expect(store.getMessages(other.id)).toHaveLength(1);
+    expect(store.getFabricatedFacts(other.id)).toHaveLength(1);
+  });
+
+  it("無いセッションは false", () => {
+    expect(store.deleteSession("missing")).toBe(false);
+  });
+});

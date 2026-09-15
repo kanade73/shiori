@@ -111,7 +111,7 @@
 `/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
 
 - 真偽の出どころは extract の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
-- 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
+- 予想は取らない。画面を開いた時点で POST して答え合わせ済みにし、いきなり真偽つきの会話を出す（以前の「どれが嘘だったと思う？」の予想画面は廃止）。結果は本文の嘘/本当の部分に印を付けた会話だけ（主張ごとの「話の答え」の一覧・嘘の件数・正解数・印の番号は廃止）。旧セッションに記録された予想（`reveal.guesses`）は保存したまま、画面には出さない。答え合わせ前の GET は問題文だけで真偽を返さない（画面からはもう使っていない）
 - 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
 - としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
 - 記録を始める前の旧データは、`FabricatedFact` の嘘だけを本文の位置なしで出す
@@ -161,19 +161,19 @@
 app/
   page.tsx                          作品選択（SetupScreen。スタート画面は作り直し予定）
   chat/[sessionId]/page.tsx         チャット画面
-  debug/[sessionId]/page.tsx        管理画面。本物の設定と生成された嘘を並べて見る
-  reveal/[sessionId]/page.tsx       答え合わせ画面（ユーザー向け）。予想 → 真偽つきの会話
+  reveal/[sessionId]/page.tsx       答え合わせ画面（ユーザー向け）。開いたらすぐ真偽つきの会話
   api/
     works/                          作品一覧・詳細
-    sessions/                       セッション作成・取得
+    sessions/                       セッション作成・一覧
+    sessions/[sessionId]/           セッションの取得（GET）・削除（DELETE。サイドバーのゴミ箱）
     sessions/[sessionId]/messages/  チャット本体（SSE）。パイプラインはここから呼ぶ
-    sessions/[sessionId]/{canon-facts,fabricated-facts,fabricated-graph}/  debug 画面用
-    sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 予想を送って答え合わせ済みにする）
+    sessions/[sessionId]/events/    開発者モードのパネル用の SSE
+    sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 答え合わせ済みにして結果を返す）
 components/
   chat/                             チャット画面（ChatApp / Sidebar / ChatInput ほか）
-  reveal/                           答え合わせ画面（RevealView → GuessPhase / ResultPhase / RevealGraph、verdict.ts は表示ルール）
+  reveal/                           答え合わせ画面（RevealView → ResultPhase、RevealGraph は開発者モードのパネルで流用、verdict.ts は表示ルール）
+  devpanel/                         開発者モードの右パネル
   setup/SetupScreen.tsx             作品選択 + 視聴進捗入力
-  debug/DebugView.tsx               管理画面
   ui/                               画面をまたいで使うもの（Mascot, icons）
 lib/
   server/
@@ -210,7 +210,7 @@ pictures/                           デザイン素材・スケッチ
 - **作品名・キャラ名での条件分岐を書かない**。データとコードの分離が壊れる
 - **`NEXT_PUBLIC_` に API キーを置かない**。LLM 呼び出しは必ず Route Handler 側（`lib/server/` 配下は client から import しない。型だけは `import type` で可）
 - **抽象化を先回りしない**。プラグイン機構のようなものは、2作品目で実際に必要になるまで作らない
-- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts` は debug 画面と evaluate（ネタバレ検出）専用。生成に渡すのは `getCanonFactsUpTo` の結果と、話題の場面について外部資料で確かめた事実だけ
+- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts`（未視聴範囲も含む全件）を生成の経路で使わない。生成に渡すのは `getCanonFactsUpTo` の結果と、話題の場面について外部資料で確かめた事実だけ
 
 ### work.json を書くとき
 

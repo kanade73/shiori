@@ -1,8 +1,6 @@
 import { readSse } from "./sse";
 import type {
-  CanonFact,
   ChatSession,
-  FabricatedFact,
   Message,
   ResponseStrategy,
   SessionPhase,
@@ -10,7 +8,7 @@ import type {
   Speaker,
   Work,
 } from "@/lib/server/types";
-import type { RevealData, Verdict } from "@/lib/server/reveal/types";
+import type { RevealData } from "@/lib/server/reveal/types";
 
 export type SessionSummary = ChatSession & { fabricatedFactCount: number };
 
@@ -19,11 +17,6 @@ export type SessionData = {
   work: Work;
   messages: Message[];
   fabricatedFactCount: number;
-};
-
-export type EnrichedFabricatedFact = FabricatedFact & {
-  sourceCanonFacts: CanonFact[];
-  introducedMessage: Message | null;
 };
 
 async function asJson<T>(res: Response): Promise<T> {
@@ -61,40 +54,21 @@ export async function getSessionData(sessionId: string): Promise<SessionData> {
   return asJson(res);
 }
 
-export async function getFabricatedFacts(sessionId: string): Promise<EnrichedFabricatedFact[]> {
-  const res = await fetch(`/api/sessions/${sessionId}/fabricated-facts`);
-  const { fabricatedFacts } = await asJson<{ fabricatedFacts: EnrichedFabricatedFact[] }>(res);
-  return fabricatedFacts;
+/** セッションを履歴（メッセージ・嘘）ごと消す。元には戻せない */
+export async function deleteSession(sessionId: string): Promise<void> {
+  const res = await fetch(`/api/sessions/${sessionId}`, { method: "DELETE" });
+  await asJson(res);
 }
 
-export async function getSessionCanonFacts(sessionId: string): Promise<CanonFact[]> {
-  const res = await fetch(`/api/sessions/${sessionId}/canon-facts`);
-  const { canonFacts } = await asJson<{ canonFacts: CanonFact[] }>(res);
-  return canonFacts;
-}
-
-export type FabricatedGraph = {
-  nodes: { id: string; label: string }[];
-  edges: { from: string; to: string; relation: string }[];
-};
-
-export async function getFabricatedGraph(sessionId: string): Promise<FabricatedGraph> {
-  const res = await fetch(`/api/sessions/${sessionId}/fabricated-graph`);
-  return asJson(res);
-}
-
-/** 答え合わせ前は問題だけ、答え合わせ後は真偽つきの会話が返る */
-export async function getReveal(sessionId: string): Promise<RevealData> {
-  const res = await fetch(`/api/sessions/${sessionId}/reveal`);
-  return asJson(res);
-}
-
-/** 予想を送って答え合わせする。これでセッションは終わり（以後メッセージは送れない） */
-export async function submitReveal(sessionId: string, guesses: Record<string, Verdict>): Promise<RevealData> {
+/**
+ * 答え合わせをして、真偽つきの会話を受け取る。これでセッションは終わり（以後メッセージは送れない）。
+ * 予想は取らない。答え合わせ済みなら、そのときの結果が返る
+ */
+export async function revealSession(sessionId: string): Promise<Extract<RevealData, { status: "revealed" }>> {
   const res = await fetch(`/api/sessions/${sessionId}/reveal`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ guesses }),
+    body: JSON.stringify({ guesses: {} }),
   });
   return asJson(res);
 }

@@ -56,12 +56,6 @@ export function ChatHeader({
           開発者モード
         </button>
         <Link
-          href={`/debug/${sessionId}`}
-          className="hidden px-sm py-xxs font-pixel text-[16px] text-muted hover:bg-surface-card hover:text-ink sm:block"
-        >
-          偽設定を確認
-        </Link>
-        <Link
           href={`/reveal/${sessionId}`}
           className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[16px] text-on-primary hover:bg-primary-active"
         >

@@ -1,14 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { RevealData } from "@/lib/server/reveal/types";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import type { Revealed } from "./verdict";
 
-// 答え合わせ画面: 予想 → 答えを見る → 真偽つきの会話、の流れを固定する。API は差し替える。
+// 答え合わせ画面: 開いたらすぐ答え合わせをして（予想は取らない）、真偽つきの会話を出す。API は差し替える。
 const mocks = vi.hoisted(() => ({
   getSessionData: vi.fn(),
-  getReveal: vi.fn(),
-  submitReveal: vi.fn(),
+  revealSession: vi.fn(),
+  createSession: vi.fn(),
+  push: vi.fn(),
 }));
 vi.mock("@/lib/client/api", () => mocks);
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 
 import { RevealView } from "./RevealView";
 
@@ -16,15 +18,7 @@ const work = { id: "w", title: "テスト作品", createdAt: "" };
 const session = { id: "s1", workId: "w", currentEpisode: 3, createdAt: "", updatedAt: "" };
 const at = "2026-09-14T12:00:00.000Z";
 
-const pending: RevealData = {
-  status: "pending",
-  questions: [
-    { id: "t1", speaker: "shiori", text: "資格を取った", createdAt: at },
-    { id: "l1", speaker: "shiori", text: "裏にレシピがある", createdAt: at },
-  ],
-};
-
-function revealed(guesses: Record<string, "true" | "lie">): RevealData {
+function revealed(guesses: Record<string, "true" | "lie">): Revealed {
   return {
     status: "revealed",
     reveal: { revealedAt: at, guesses },
@@ -109,37 +103,58 @@ beforeEach(() => {
 });
 
 describe("RevealView", () => {
-  it("答え合わせ前は問題だけを出し、真偽は出さない", async () => {
-    mocks.getReveal.mockResolvedValue(pending);
+  it("開いたらすぐ答え合わせをして結果を出す。予想の画面は挟まない", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("どれが嘘だったと思う？")).toBeTruthy();
-    expect(screen.getByText("「裏にレシピがある」")).toBeTruthy();
-    expect(screen.getByText("2件中 0件 予想済み")).toBeTruthy();
-    expect(screen.getByRole("button", { name: "予想しないで答えを見る" })).toBeTruthy();
-    expect(screen.queryByText("見抜いた")).toBeNull();
+    expect((await screen.findAllByTestId("reveal-message")).length).toBeGreaterThan(0);
+    expect(mocks.revealSession).toHaveBeenCalledWith("s1");
+    expect(screen.queryByText("どれが嘘だったと思う？")).toBeNull();
+    expect(screen.queryByRole("button", { name: /答えを見る/ })).toBeNull();
   });
 
-  it("予想して答えを見ると、予想を送り、結果（正解数・見抜いた/疑いすぎ）を出す", async () => {
-    mocks.getReveal.mockResolvedValue(pending);
-    mocks.submitReveal.mockResolvedValue(revealed({ t1: "lie", l1: "lie" }));
+  it("見出しには話題の名前を出し、話数は出さない", async () => {
+    mocks.getSessionData.mockResolvedValue({
+      work,
+      session: {
+        ...session,
+        topic: { title: "草むしり検定編", summary: "", facts: [], sources: [], query: "", resolvedAt: at },
+      },
+      messages: [],
+      fabricatedFactCount: 0,
+    });
+    mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText(/草むしり検定編/)).toBeTruthy();
+    expect(screen.queryByText(/話まで/)).toBeNull();
+  });
 
-    fireEvent.click(within(await screen.findByRole("group", { name: "1番の予想" })).getByRole("button", { name: "嘘" }));
-    fireEvent.click(within(screen.getByRole("group", { name: "2番の予想" })).getByRole("button", { name: "嘘" }));
-    expect(screen.getByText("2件中 2件 予想済み")).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "答えを見る" }));
+  it("としおの発言に「考察」の印を付けない", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({}));
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("結論から言うとね。")).toBeTruthy();
+    expect(screen.getByText("としお")).toBeTruthy();
+    expect(screen.queryByText("考察")).toBeNull();
+  });
 
-    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
-    expect(mocks.submitReveal).toHaveBeenCalledWith("s1", { t1: "lie", l1: "lie" });
-    expect(screen.getByText("2件中 1件正解")).toBeTruthy();
-    expect(screen.getAllByText("見抜いた").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("嘘と予想").length).toBeGreaterThan(0);
+  it("嘘の件数の概要は出さない。予想が記録された旧セッションでも正解数は出さない", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({ t1: "lie", l1: "lie" }));
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("結論から言うとね。")).toBeTruthy();
+    expect(screen.queryByText("会話に混ざっていた嘘")).toBeNull();
+    expect(screen.queryByText(/確認できる話/)).toBeNull();
+    expect(screen.queryByText(/件正解/)).toBeNull();
+  });
+
+  it("答え合わせに失敗したらエラーを出す", async () => {
+    mocks.revealSession.mockRejectedValue(new Error("session not found"));
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("session not found")).toBeTruthy();
   });
 
   it("結果には解説・根拠・注釈を出さない（印と引用文だけ）", async () => {
-    mocks.getReveal.mockResolvedValue(revealed({}));
+    mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect((await screen.findAllByTestId("reveal-message")).length).toBeGreaterThan(0);
     for (const text of [
       /根拠/,
       /元にした本物の設定/,
@@ -154,42 +169,54 @@ describe("RevealView", () => {
     }
   });
 
-  it("同じボタンをもう一度押すと予想を取り消せる", async () => {
-    mocks.getReveal.mockResolvedValue(pending);
+  it("嘘の部分は本文中で印が付く。印に番号は付けない", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
-    const group = await screen.findByRole("group", { name: "1番の予想" });
-    const lie = within(group).getByRole("button", { name: "嘘" });
-    fireEvent.click(lie);
-    expect(lie.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(lie);
-    expect(lie.getAttribute("aria-pressed")).toBe("false");
-    expect(screen.getByText("2件中 0件 予想済み")).toBeTruthy();
-  });
-
-  it("答え合わせ済みなら、開いた時点で結果を出す（嘘の部分は本文中で印が付く）", async () => {
-    mocks.getReveal.mockResolvedValue(revealed({}));
-    render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect((await screen.findAllByTestId("reveal-message")).length).toBeGreaterThan(0);
     const [shiori] = screen.getAllByTestId("reveal-message");
     const marks = shiori.querySelectorAll("mark");
-    expect(Array.from(marks).map((m) => m.textContent)).toEqual(["資格を取った1", "裏にレシピがある2"]);
-    expect(screen.queryByRole("button", { name: /答えを見る/ })).toBeNull();
+    expect(Array.from(marks).map((m) => m.textContent)).toEqual(["資格を取った", "裏にレシピがある"]);
   });
 
   it("結果に構造図は出さない", async () => {
-    mocks.getReveal.mockResolvedValue(revealed({}));
+    mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect((await screen.findAllByTestId("reveal-message")).length).toBeGreaterThan(0);
     expect(screen.queryByText("嘘の構造図")).toBeNull();
     expect(screen.queryByTestId("reveal-graph")).toBeNull();
   });
 
-  it("主張が無ければ話の答えは出さない", async () => {
-    const data = revealed({});
-    if (data.status !== "revealed") throw new Error("unreachable");
-    mocks.getReveal.mockResolvedValue({ ...data, statements: [], graph: { nodes: [], edges: [] } });
+  it("「話の答え」の一覧と「会話をふりかえる」の見出しは出さず、会話の本文だけを出す", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({ t1: "lie", l1: "lie" }));
     render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect(await screen.findByText("結論から言うとね。")).toBeTruthy();
     expect(screen.queryByText("話の答え")).toBeNull();
+    expect(screen.queryByText("会話をふりかえる")).toBeNull();
+    // 一覧に付いていた真偽のラベルと、予想の当たり外れも出さない
+    expect(screen.queryByText("見抜いた")).toBeNull();
+    expect(screen.queryByText("嘘と予想")).toBeNull();
+    // 主張の引用は本文の印の中にだけ出る（一覧に同じ文を重ねて出さない）
+    expect(screen.getAllByText("裏にレシピがある")).toHaveLength(1);
+  });
+
+  it("「別の会話を始める」は、スタート画面に戻らず、同じ作品で新しいセッションを作ってそのチャットに移る", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({}));
+    mocks.createSession.mockResolvedValue({ sessionId: "s-new", openingMessage: "……今日は何について話したい?" });
+    render(<RevealView sessionId="s1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "別の会話を始める" }));
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/chat/s-new"));
+    expect(mocks.createSession).toHaveBeenCalledWith("w");
+    expect(screen.queryByRole("link", { name: "別の会話を始める" })).toBeNull();
+  });
+
+  it("新しいセッションの作成に失敗したら、画面を移らずにエラーを出す", async () => {
+    mocks.revealSession.mockResolvedValue(revealed({}));
+    mocks.createSession.mockRejectedValue(new Error("work not found"));
+    render(<RevealView sessionId="s1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "別の会話を始める" }));
+
+    expect(await screen.findByText("work not found")).toBeTruthy();
+    expect(mocks.push).not.toHaveBeenCalled();
   });
 });
