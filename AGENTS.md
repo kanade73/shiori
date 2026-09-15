@@ -92,7 +92,7 @@
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料（`directive` を含む）を渡し、**返答文（プレーンテキスト）だけ**を得る。記録の規則はここに書かない（書くとモデルが自己監視に寄って嘘をやめる）
-3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。`EXTRACT_ENDPOINT` を設定すれば自前の推論サーバに向き、失敗すれば Gemini に戻る。取り出しに失敗しても claims 空として返答文はそのまま返す
+3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。取り出しは**自前の LoRA 推論サーバ（`ml/`、Qwen3-1.7B + LoRA マージ済み）専用**で、`EXTRACT_ENDPOINT` は必須。**Gemini は使わず、フォールバックも無い**。取り出しに失敗しても claims 空として返答文はそのまま返す
 4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、本物の設定の直接上書きを検出（照合は視聴済み canonFacts 全件 + 話題の場面の事実）
 5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**（generate → extract → evaluate をもう一度）。それでもダメなら定型の濁し返答に差し替える
 6. **としお割り込み**（`pipeline.ts` の `runToshioInterjection` → `llm/toshio.ts`、issue #6）— Route Handler がシオリの返答を流し切って保存した後に呼ぶ（シオリのパイプラインには含めない。としお分の Gemini 待ちでシオリの表示を遅らせないため）。材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler` / `admit_uncertainty` で主張を避けていない場合だけ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない（だからシオリが逸らした話題には乗せない）。シオリが語った本物の設定・嘘（この発話でついた嘘も含む）を前提に、それを否定せず「深い考察」を重ねる。失敗しても単に今回は割り込まなかったことにする
@@ -194,6 +194,7 @@ lib/
 data/
   chiikawa/work.json                ← コードはこの中身を知らない
   momotaro/cards.jsonl              次段構想用（未使用）
+ml/                                 claims 抽出の LoRA（合成・学習・評価・推論サーバ serve.py）。アプリとは別プロセス
 public/character/                   シオリのドット絵（アバター各サイズ）
 docs/specs/                         仕様書
 pictures/                           デザイン素材・スケッチ
@@ -223,14 +224,13 @@ pictures/                           デザイン素材・スケッチ
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_API_KEY_2=        # 省略可。2本目（先輩）のキー。上限に達したら1本目と切り替える
 GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.5-flash-lite
-GEMINI_EXTRACT_MODEL=    # 省略可。主張の取り出し（extract）のモデル。既定 gemini-3.5-flash-lite
-EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の推論サーバに向ける（例 http://localhost:8123）
+EXTRACT_ENDPOINT=        # 必須。主張の取り出し（extract）を行う自前の LoRA 推論サーバ（例 http://localhost:8123）
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
 DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
-`EXTRACT_ENDPOINT` を設定すると、`extract`（返答文 → 主張の三つ組）だけが `POST <endpoint>/extract` に向く（自前の LoRA 推論サーバ。`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。**未設定なら今までどおり Gemini**で、設定していてもサーバが落ちていれば 10 秒で諦めて Gemini に切り替わる（`console.warn` が1行出る）。grounding はどちらの経路でもアプリ側の `groundClaims` が canonFacts と照合して付ける。
+`extract`（返答文 → 主張の三つ組）は `POST <EXTRACT_ENDPOINT>/extract` に向く（自前の LoRA 推論サーバ `ml/serve.py`。`{ text, workTitle, userMessage }` → `{ claims: [...] }`。学習・評価・起動手順は `ml/README.md`）。**抽出に Gemini は使わない**。未設定なら呼び出し時に例外、サーバが落ちていれば 10 秒で諦めて `console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 

@@ -4,6 +4,62 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出を自前の LoRA 推論サーバ（Qwen3-1.7B）に確定（`feat/local-extract`、PR 作成済み・未マージ）
+
+**検証用だった `feat/local-extract` を「これが正」に昇格させた。** claims 抽出は常に自前の LoRA 推論サーバ（`ml/`）で行い、**Gemini の抽出は使わない**。
+
+- **採用モデルは Qwen3-1.7B + LoRA（マージ済み）**。4B は精度は上（厳密F1 0.392 vs 0.267）だが 1件 6秒前後かかり、抽出は1発話ごとに逐次で走るので会話が止まる。1.7B は 1〜2秒。取りこぼした主張は「その嘘が保存されない」だけで矛盾は生まないため、速さを取った。4B に戻すなら `EXTRACT_ENDPOINT` のポートを差し替えるだけ
+- このブランチに `feat/reveal-no-explanation`（= origin/dev の取り込み済み）と `feat/lora-extractor`（`ml/` 一式）をマージ済み。**`ml/` がリポジトリに入った**
+- `.env.example` / `AGENTS.md` を「`EXTRACT_ENDPOINT` は必須・抽出は `ml/` のサーバ・Gemini は使わない」に統一。`GEMINI_EXTRACT_MODEL` と `client.ts` の `EXTRACTION_MODEL` は消えている
+- `ml/README.md` / `ml/HANDOFF.md` の冒頭に採用を明記。既定の起動は 1.7B マージ済み（`$SCRATCH/out/lora/merged`）をポート 8123、4B は別ポート（8124）の比較用
+- **PR は `dev` 向き（#37）。依存していた PR #27（`feat/reveal-no-explanation` → dev）は `be08761` でマージ済み**なので、いまの差分は claims 抽出（Gemini 版の削除）と `ml/` 一式だけ
+- **2026-09-15: `origin/dev` を再取り込みした**（#27 がマージ前に dev を再取り込みしていて、このブランチはその前の #27 を土台にしていたため衝突していた）。衝突は `.env.example` と `AGENTS.md` の2ファイルだけで、**dev の記述（`GEMINI_API_KEY_2` の2本キー・既定モデル `gemini-3.5-flash-lite`・`fly secrets` 2本）を採り、`GEMINI_EXTRACT_MODEL` は消したまま `EXTRACT_ENDPOINT` 必須の記述を残した**。`client.ts` は自動マージで dev のキー切り替えが入り、`EXTRACTION_MODEL` は消えたまま（下の dev 側の節には「`EXTRACTION_MODEL` を残して自動マージ」とあるが、それは #27 側の記録でこのブランチには当てはまらない）。`extract.ts` / `extract.test.ts` は dev が触っていないのでこのブランチの版がそのまま残った
+
+### 現在つながっている推論サーバ（手元）
+
+リモート gpu04 で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
+
+| ポート | モデル | リモートのパス |
+|---|---|---|
+| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
+| 8124 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+
+`../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8123`（= 1.7B）にしてある。サーバは `setsid nohup` だと SSH 切断で落ちたことがあるので tmux で起動する。
+
+### 通しの確認（3004 の dev サーバ）
+
+`npm install`（`sqlite-vec` など dev 由来の新しい依存が入る）→ `npm run dev -- -p 3004`。セッションを作って「ハチワレってなんで洞窟に住んでるの？」を1発話送り、`GET /api/sessions/<id>/events` の `stage: "extract"` が **`backend: "local"`・claims 6件**（`lives_in / 小さな洞窟` が canon、残り5件が fabricated）で返るところまで確認。`failed` は立たず、待ちも体感で 1〜2秒。
+
+検証: `npm test` 338件 / `tsc --noEmit` / `eslint` / `next build` すべて通過。
+
+## 2026-09-15: claims 抽出をローカルの LoRA 専用にした（worktree `../chat-local-extract` / `feat/local-extract`）
+
+**LoRA 抽出の検証用ブランチ**。`feat/reveal-no-explanation` から分岐。抽出が Gemini に落ちて「動いてしまう」と LoRA の出来が測れないので、**この 1 ブランチだけ Gemini 版の抽出を消して `EXTRACT_ENDPOINT` 必須にしてある**（本流にそのまま持っていくものではない。取り込むなら 2 実装のままの `feat/reveal-no-explanation` 側が正）。
+
+- `lib/server/llm/extract.ts`: `extractViaGemini` とそのプロンプト・構造化出力のスキーマを削除。`extractEndpoint()` は未設定なら**呼び出し時に**例外（起動時には落とさない）。pipeline は既存の try/catch で握り、claims 空のまま返答文は返す
+- 推論サーバが落ちている・遅い・形が違うときは `console.warn` 1行 + claims 空（`ExtractResult.failed = true`）。**Gemini へのフォールバックは無い**
+- `client.ts` の `EXTRACTION_MODEL` と `GEMINI_EXTRACT_MODEL` を削除。`.env.example` / `AGENTS.md` は `EXTRACT_ENDPOINT` 必須の記述に直した。`ExtractBackend` は `"local"` のみ（イベントの型は他ブランチと揃えて残す）
+- テストは Gemini 経路を削除し、失敗系は「warn 1行 + claims 空」を確認するものに置き換え（`npm test` 206件）
+
+### 起動方法
+
+```
+cd ../chat-local-extract
+npm install                      # node_modules は worktree ごとに要る
+cp ../chat-checking/.env.local .env.local
+echo 'EXTRACT_ENDPOINT=http://localhost:8123' >> .env.local   # 大学の GPU サーバへの SSH トンネル
+nohup npm run dev -- -p 3004 > /tmp/local-extract-dev.log 2>&1 &
+```
+
+3000〜3003 は他の worktree が使っていることが多いので空きポートを確認してから。通しの確認は
+`POST /api/sessions` → `POST /api/sessions/<id>/messages`、抽出の様子は
+`GET /api/sessions/<id>/events`（開発者モードのパネルと同じ SSE）の `stage: "extract"` に
+`backend: "local"` が載る。
+
+**推論サーバは初回リクエストが遅い**（コールドスタート。1回目は 10 秒の `EXTRACT_TIMEOUT_MS` を
+超えて abort → claims 空になった。温まった後は 7 秒前後で返り、3件の claims が fabricated として
+保存されるところまで確認済み）。デモ前に1発叩いて温めること。
+
 ## 2026-09-15: claims 抽出のバックエンドを差し替え可能にした（`EXTRACT_ENDPOINT`）
 
 `extractClaims`（`lib/server/llm/extract.ts`）の「モデルに三つ組を出させる」部分だけを 2 実装にした。**`EXTRACT_ENDPOINT` が未設定なら今までどおり Gemini**（flash-lite）、設定されていれば `POST <endpoint>/extract` に投げる（`feat/lora-extractor` ブランチの `ml/serve.py`。FastAPI、`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。

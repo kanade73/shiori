@@ -1,16 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildNormalizer } from "../claims";
 import type { CanonFact, Entity } from "../types";
+import { EXTRACT_TIMEOUT_MS, extractClaims, extractEndpoint, groundClaims, matchCanonFacts, type ExtractedClaim } from "./extract";
 
-// 実 API は叩かない。generateContent を差し替えて、渡した引数と返り値の扱いを検証する
-const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
-vi.mock("./client", () => ({
-  ai: { models: { generateContent } },
-  GENERATION_MODEL: "test-generation-model",
-  EXTRACTION_MODEL: "test-extraction-model",
-}));
-
-import { EXTRACT_TIMEOUT_MS, extractClaims, groundClaims, matchCanonFacts, type ExtractedClaim } from "./extract";
+// このブランチの抽出はローカルの推論サーバ専用。Gemini は経路ごと無いので、
+// 実 API のモック（generateContent）も持たない。叩くのは fetch だけ。
 
 const entities: Entity[] = [
   { id: "e-1", workId: "w", name: "ハチワレ", aliases: ["はちわれ", "八割れ"] },
@@ -107,129 +101,69 @@ const params = {
   userMessage: "ハチワレってどこに住んでるの？",
 };
 
-describe("extractClaims", () => {
-  beforeEach(() => {
-    generateContent.mockReset();
-    generateContent.mockResolvedValue({
-      text: JSON.stringify({
-        claims: [
-          { subject: "ハチワレ", relation: "lives_in", object: "洞窟", negated: false, claim: "ハチワレは洞窟に住んでいる", quote: "ハチワレは洞窟に住んでる" },
-          { subject: "ハチワレ", relation: "did", object: "屋台の看板を書いた", negated: false, claim: "ハチワレが屋台の看板を書いた", quote: "屋台の看板を自分で書いたらしい" },
-        ],
-      }),
-    });
+describe("extractEndpoint", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
-  it("会話とは別のモデル（GEMINI_EXTRACT_MODEL）を使い、構造化出力で受け取る", async () => {
-    await extractClaims(params);
-    const call = generateContent.mock.calls[0][0];
-    expect(call.model).toBe("test-extraction-model");
-    expect(call.config.responseMimeType).toBe("application/json");
+  it("末尾の / を落とした URL を返す", () => {
+    vi.stubEnv("EXTRACT_ENDPOINT", "http://localhost:8123/");
+    expect(extractEndpoint()).toBe("http://localhost:8123");
   });
 
-  it("grounding / sourceCanonFactIds はモデルのスキーマに含めない（コードが決めるため）", async () => {
-    await extractClaims(params);
-    const props = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items.properties;
-    expect(Object.keys(props).sort()).toEqual(["claim", "negated", "object", "quote", "relation", "subject"]);
-  });
-
-  it("返答文とユーザー発言を渡すが、本物の設定はプロンプトに載せない（返答文に無いことを補わせない）", async () => {
-    await extractClaims(params);
-    const input: string = generateContent.mock.calls[0][0].contents[0].parts[0].text;
-    expect(input).toContain(params.text);
-    expect(input).toContain(params.userMessage);
-    expect(input).not.toContain("cf-1");
-    expect(input).not.toContain(canon().description);
-  });
-
-  it("取り出した三つ組に、canonFacts との照合で grounding を付けて返す", async () => {
-    const { claims, backend } = await extractClaims(params);
-    expect(backend).toBe("gemini");
-    expect(claims).toHaveLength(2);
-    expect(claims[0].grounding).toBe("canon");
-    expect(claims[0].sourceCanonFactIds).toEqual(["cf-1"]);
-    expect(claims[1].grounding).toBe("fabricated");
-  });
-
-  it("返答文が空なら API を呼ばずに空配列", async () => {
-    expect((await extractClaims({ ...params, text: "   " })).claims).toEqual([]);
-    expect(generateContent).not.toHaveBeenCalled();
-  });
-
-  it("パースできない出力は例外にする（pipeline 側で握って claims 空にする）", async () => {
-    generateContent.mockResolvedValue({ text: "not json" });
-    await expect(extractClaims(params)).rejects.toThrow("Failed to parse claims output");
-  });
-
-  it("語彙外の relation はその1件だけ捨てる（残りは通す）", async () => {
-    generateContent.mockResolvedValue({
-      text: JSON.stringify({
-        claims: [
-          { subject: "ハチワレ", relation: "住んでいる", object: "洞窟", negated: false },
-          { subject: "ハチワレ", relation: "did", object: "屋台の看板を書いた", negated: false },
-        ],
-      }),
-    });
-    const { claims } = await extractClaims(params);
-    expect(claims.map((c) => c.relation)).toEqual(["did"]);
-  });
-
-  it("EXTRACT_ENDPOINT が無ければ fetch は呼ばない（Gemini のまま）", async () => {
-    const fetchMock = vi.fn();
-    vi.stubGlobal("fetch", fetchMock);
-    const { backend } = await extractClaims(params);
-    expect(backend).toBe("gemini");
-    expect(fetchMock).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+  it("未設定なら例外（Gemini に黙って逃げる経路は無い）", () => {
+    vi.stubEnv("EXTRACT_ENDPOINT", "");
+    expect(() => extractEndpoint()).toThrow("EXTRACT_ENDPOINT");
   });
 });
 
-describe("extractClaims: EXTRACT_ENDPOINT があれば自前の推論サーバを使う", () => {
+describe("extractClaims: 取り出しは常にローカルの推論サーバ", () => {
   const fetchMock = vi.fn();
+  let warn: ReturnType<typeof vi.spyOn>;
 
   function serverClaims(claims: unknown[]) {
     return { ok: true, status: 200, json: async () => ({ claims, latencyMs: 12 }) };
   }
 
   beforeEach(() => {
-    generateContent.mockReset();
-    generateContent.mockResolvedValue({
-      text: JSON.stringify({
-        claims: [{ subject: "ハチワレ", relation: "lives_in", object: "洞窟", negated: false, claim: "gemini が出した主張" }],
-      }),
-    });
     fetchMock.mockReset();
     vi.stubEnv("EXTRACT_ENDPOINT", "http://localhost:8123/");
     vi.stubGlobal("fetch", fetchMock);
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   });
 
   afterEach(() => {
+    warn.mockRestore();
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
   });
 
-  it("POST <endpoint>/extract に返答文を投げ、Gemini は呼ばない", async () => {
+  it("POST <endpoint>/extract に返答文とユーザー発言を投げ、本物の設定は載せない", async () => {
     fetchMock.mockResolvedValue(
       serverClaims([
         { subject: "ハチワレ", relation: "lives_in", object: "洞窟", negated: false, quote: "ハチワレは洞窟に住んでる" },
         { subject: "ハチワレ", relation: "did", object: "屋台の看板を書いた", negated: false },
       ]),
     );
-    const { claims, backend } = await extractClaims(params);
+    const { claims, backend, failed } = await extractClaims(params);
 
     expect(backend).toBe("local");
-    expect(generateContent).not.toHaveBeenCalled();
+    expect(failed).toBeUndefined();
     const [url, init] = fetchMock.mock.calls[0];
     expect(url).toBe("http://localhost:8123/extract");
     expect(init.method).toBe("POST");
-    expect(JSON.parse(init.body)).toMatchObject({ text: params.text, workTitle: params.workTitle, userMessage: params.userMessage });
+    const body = JSON.parse(init.body);
+    expect(body).toMatchObject({ text: params.text, workTitle: params.workTitle, userMessage: params.userMessage });
+    expect(init.body).not.toContain("cf-1");
+    expect(init.body).not.toContain(canon().description);
     expect(init.signal).toBeInstanceOf(AbortSignal);
 
     // grounding は endpoint 側では決まらない。アプリが canonFacts と照合して付ける
     expect(claims.map((c) => c.grounding)).toEqual(["canon", "fabricated"]);
+    expect(claims[0].sourceCanonFactIds).toEqual(["cf-1"]);
   });
 
-  it("語彙外の relation はサーバ経由でも捨てる", async () => {
+  it("語彙外の relation はその1件だけ捨てる（残りは通す）", async () => {
     fetchMock.mockResolvedValue(
       serverClaims([
         { subject: "ハチワレ", relation: "住んでいる", object: "洞窟", negated: false },
@@ -240,20 +174,17 @@ describe("extractClaims: EXTRACT_ENDPOINT があれば自前の推論サーバ�
     expect(claims.map((c) => c.relation)).toEqual(["did"]);
   });
 
-  it("接続できなければ Gemini に切り替える（デモ当日にサーバが落ちていても会話は続く）", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("接続できなければ warn 1行 + claims 空（返答文は返るので会話は続く）", async () => {
     fetchMock.mockRejectedValue(new Error("fetch failed"));
 
-    const { claims, backend } = await extractClaims(params);
-    expect(backend).toBe("gemini");
-    expect(generateContent).toHaveBeenCalledTimes(1);
-    expect(claims[0].claim).toBe("gemini が出した主張");
+    const { claims, backend, failed } = await extractClaims(params);
+    expect(claims).toEqual([]);
+    expect(backend).toBe("local");
+    expect(failed).toBe(true);
     expect(warn).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
   });
 
-  it("タイムアウト（abort）でも Gemini に切り替える", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("タイムアウト（abort）でも claims 空", async () => {
     fetchMock.mockImplementation((_url: string, init: { signal: AbortSignal }) => {
       return new Promise((_resolve, reject) => {
         init.signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")));
@@ -263,16 +194,15 @@ describe("extractClaims: EXTRACT_ENDPOINT があれば自前の推論サーバ�
     vi.useFakeTimers();
     const pending = extractClaims(params);
     await vi.advanceTimersByTimeAsync(EXTRACT_TIMEOUT_MS + 1);
-    const { backend } = await pending;
+    const { claims, failed } = await pending;
     vi.useRealTimers();
 
-    expect(backend).toBe("gemini");
-    expect(generateContent).toHaveBeenCalledTimes(1);
-    warn.mockRestore();
+    expect(claims).toEqual([]);
+    expect(failed).toBe(true);
+    expect(warn).toHaveBeenCalledTimes(1);
   });
 
-  it("不正な JSON（形が違う）でも Gemini に切り替える", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  it("不正な JSON・形違い・非 2xx でも claims 空", async () => {
     fetchMock.mockResolvedValue({
       ok: true,
       status: 200,
@@ -280,27 +210,24 @@ describe("extractClaims: EXTRACT_ENDPOINT があれば自前の推論サーバ�
         throw new SyntaxError("Unexpected token");
       },
     });
-    expect((await extractClaims(params)).backend).toBe("gemini");
+    expect((await extractClaims(params)).claims).toEqual([]);
 
     fetchMock.mockResolvedValue({ ok: true, status: 200, json: async () => ({ result: "???" }) });
-    expect((await extractClaims(params)).backend).toBe("gemini");
+    expect((await extractClaims(params)).claims).toEqual([]);
 
     fetchMock.mockResolvedValue({ ok: false, status: 500, json: async () => ({}) });
-    expect((await extractClaims(params)).backend).toBe("gemini");
+    expect((await extractClaims(params)).claims).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(3);
-    warn.mockRestore();
   });
 
-  it("サーバも Gemini も駄目なら例外（pipeline が claims 空として握る）", async () => {
-    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    fetchMock.mockRejectedValue(new Error("fetch failed"));
-    generateContent.mockRejectedValue(new Error("429"));
-    await expect(extractClaims(params)).rejects.toThrow("429");
-    warn.mockRestore();
-  });
-
-  it("返答文が空ならサーバも呼ばない", async () => {
+  it("返答文が空ならサーバを呼ばない", async () => {
     expect((await extractClaims({ ...params, text: "   " })).claims).toEqual([]);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("EXTRACT_ENDPOINT が未設定なら例外（pipeline が claims 空として握る）", async () => {
+    vi.stubEnv("EXTRACT_ENDPOINT", "");
+    await expect(extractClaims(params)).rejects.toThrow("EXTRACT_ENDPOINT");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 });

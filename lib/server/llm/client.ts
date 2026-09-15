@@ -46,10 +46,8 @@ export const ai = {
 // gemini-3.6-flash は無料枠が1日20リクエストほどで、開発中にすぐ尽きる
 export const GENERATION_MODEL = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
-// 返答文から主張を取り出すだけの事務的な呼び出し（extract.ts）。会話の質は要らず
-// 分類ができればよいので、既定では会話より軽いモデルを使う。将来ここをローカルの
-// 軽量モデル（LoRA）に差し替える想定で、モデル名だけ別の環境変数にしてある。
-export const EXTRACTION_MODEL = process.env.GEMINI_EXTRACT_MODEL || "gemini-3.5-flash-lite";
+// 返答文から主張を取り出す extract.ts は Gemini を使わない。抽出は `EXTRACT_ENDPOINT` の
+// 自前の LoRA 推論サーバ（ml/、Qwen3-1.7B + LoRA マージ済み）専用で、モデル名の環境変数も持たない。
 
 // 話題の切り替わりの判定役（issue #14 の続き）。文脈の小さい判定だけなので軽いモデルでよい。
 // 無料枠の上限はモデルごと（flash-lite で1分15回）なので、シオリの generate（GEMINI_MODEL）とは
