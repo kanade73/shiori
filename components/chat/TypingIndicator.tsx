@@ -4,8 +4,8 @@ import type { Speaker } from "@/lib/server/types";
 /** 本文がまだ届いていない返答の吹き出し。としおの割り込みでは としおの顔を出す。 */
 export function TypingIndicator({ speaker }: { speaker?: Speaker }) {
   return (
-    <div className="flex animate-fade-up items-center gap-sm px-md py-xs">
-      <Mascot size={32} delay={0.4} character={speaker} name={speaker === "toshio" ? "としお" : undefined} />
+    <div className="flex animate-fade-up items-center gap-sm px-md py-xxs">
+      <Mascot size={40} delay={0.4} character={speaker} name={speaker === "toshio" ? "としお" : undefined} />
       <div className="flex items-center gap-1 rounded-lg px-xs py-xs">
         <span className="sr-only">入力中</span>
         {[0, 1, 2].map((i) => (

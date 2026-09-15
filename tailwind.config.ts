@@ -6,9 +6,9 @@ const config: Config = {
     extend: {
       colors: {
         primary: {
-          DEFAULT: "#6b5496",
-          active: "#4a396a",
-          disabled: "#dfdde4",
+          DEFAULT: "#6a4fc4",
+          active: "#533aa8",
+          disabled: "#d9dbe6",
         },
         ink: "#121421",
         body: {
@@ -20,14 +20,14 @@ const config: Config = {
           soft: "#8a8d9e",
         },
         hairline: {
-          DEFAULT: "#ece3df",
-          soft: "#f1ecea",
+          DEFAULT: "#d9dbe6",
+          soft: "#e6e8f0",
         },
-        canvas: "#fbf7f6",
+        canvas: "#f4f4f8",
         surface: {
-          soft: "#f8f2ef",
-          card: "#f2e8e4",
-          "cream-strong": "#ebded8",
+          soft: "#eceef4",
+          card: "#e3e5ee",
+          "cream-strong": "#d6d9e6",
           dark: "#121421",
           "dark-elevated": "#1e2133",
           "dark-soft": "#181a2a",

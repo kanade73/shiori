@@ -35,7 +35,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
       >
         <div className="flex items-center justify-between gap-sm px-md py-md">
           <div className="flex items-center gap-sm">
-            <Mascot size={44} />
+            <Mascot size={48} />
             <span className="font-display text-[20px] font-medium leading-none text-ink">シオリ</span>
           </div>
           <button

@@ -12,13 +12,13 @@
   }
 
   ::selection {
-    background-color: #6b549633;
+    background-color: #6a4fc433;
     color: theme("colors.ink");
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #6b549633 transparent;
+    scrollbar-color: #6a4fc433 transparent;
   }
 
   *::-webkit-scrollbar {
@@ -27,11 +27,11 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: #6b549633;
+    background-color: #6a4fc433;
     border-radius: 9999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: #6b549655;
+    background-color: #6a4fc455;
   }
 }

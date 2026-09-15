@@ -19,7 +19,9 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
     // IME の変換を確定する Enter では送らない。Safari は確定の keydown で isComposing が
     // false になるが、keyCode は 229（処理中）になるのでそちらでも見る
     if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-    if (e.key === "Enter" && !e.shiftKey) {
+    // issue #15 暫定: 誤送信を減らすため Enter 単体では送らず、⌘/Ctrl+Enter で送信する。
+    // Enter / Shift+Enter は改行（textarea の既定動作）に任せる。
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       if (value.trim() && !disabled) onSend();
     }
@@ -33,9 +35,9 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
   }
 
   return (
-    <div className="border-t border-hairline bg-canvas px-md py-sm">
+    <div className="bg-canvas px-md py-sm">
       <div className="mx-auto max-w-[760px]">
-        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-canvas px-sm py-xs shadow-sm transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(107,84,150,0.15)]">
+        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-canvas px-sm py-xs shadow-sm transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(106,79,196,0.15)]">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -65,7 +67,9 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
           <p className="text-[12px] text-muted-soft">
             シオリは本物の設定に時々小さな嘘を混ぜて話す、娯楽目的のフィクションです。内容を事実として扱わないでください。
           </p>
-          <div className="flex shrink-0 items-center gap-xxs text-[12px] text-muted-soft">
+          <div className="flex shrink-0 items-center gap-xs text-[11px] text-muted-soft">
+            <span className="hidden sm:inline">↵ 改行 / ⌘・Ctrl+↵ 送信</span>
+            <span className="sm:hidden">⌘/Ctrl+Enterで送信</span>
             <span className="h-[6px] w-[6px] rounded-full bg-success" />
             シオリ・オンライン
           </div>
