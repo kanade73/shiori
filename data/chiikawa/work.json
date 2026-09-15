@@ -14,6 +14,18 @@
       "sections": ["概要", "世界観", "連作エピソード", "登場キャラクター", "用語"]
     }
   ],
+  "creators": [
+    {
+      "role": "原作",
+      "name": "ナガノ",
+      "source": {
+        "kind": "mediawiki",
+        "endpoint": "https://ja.wikipedia.org/w/api.php",
+        "page": "ナガノ (イラストレーター)",
+        "sections": ["概要", "人物"]
+      }
+    }
+  ],
   "arcs": [
     {
       "id": "arc-nantoka-vania",

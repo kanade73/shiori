@@ -8,7 +8,7 @@ vi.mock("./client", () => ({
   GENERATION_MODEL: "test-model",
 }));
 
-import { formatDirective, generateResponse } from "./generate";
+import { TOSHIO_HISTORY_MAX_CHARS, formatDirective, generateResponse } from "./generate";
 
 function msg(role: Message["role"], content: string): Message {
   return { id: `m-${content}`, sessionId: "s1", role, content, createdAt: "2026-01-01T00:00:00Z" } as Message;
@@ -134,8 +134,8 @@ describe("generateResponse: ペルソナと材料は systemInstruction に載せ
 });
 
 describe("formatDirective: バックエンドが決めた「今回の指示」の文面", () => {
-  it("introduce は新しい設定を1つ混ぜるよう言う", () => {
-    expect(formatDirective({ kind: "introduce" })).toContain("新しい設定を1つ");
+  it("introduce は場面の細部を1つ混ぜるよう言う", () => {
+    expect(formatDirective({ kind: "introduce" })).toContain("場面の中の細部");
   });
 
   it("plain は新しい設定を要求しない", () => {
@@ -241,19 +241,25 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
     expect(contents[contents.length - 1].role).toBe("user");
   });
 
-  it("としおの発話（speaker=toshio）はシオリの会話ではないので履歴から落とす", async () => {
+  it("としおの発話は直近1件だけ【としお】の印を付けて model 側に載せ、古いものは落とす", async () => {
+    const long = "結論から言うとね……".repeat(60);
     await generateResponse({
       ...baseParams,
       history: [
         msg("user", "これって伏線じゃない？"),
         { ...msg("assistant", "そうだね。"), speaker: "shiori" },
-        { ...msg("assistant", "結論から言うとね……"), speaker: "toshio" },
+        { ...msg("assistant", "古い考察"), speaker: "toshio", id: "t1" },
+        msg("user", "ふーん"),
+        { ...msg("assistant", "うん。"), speaker: "shiori" },
+        { ...msg("assistant", long), speaker: "toshio", id: "t2" },
       ],
     });
     const contents = generateContent.mock.calls[0][0].contents;
     expect(contents).toEqual([
       { role: "user", parts: [{ text: "これって伏線じゃない？" }] },
       { role: "model", parts: [{ text: "そうだね。" }] },
+      { role: "user", parts: [{ text: "ふーん" }] },
+      { role: "model", parts: [{ text: `うん。\n【としお】${long.slice(0, TOSHIO_HISTORY_MAX_CHARS)}` }] },
       { role: "user", parts: [{ text: "1話どうだった？" }] },
     ]);
   });

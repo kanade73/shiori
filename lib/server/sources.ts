@@ -170,6 +170,11 @@ async function loadChunksOf(source: WorkSource, idPrefix: string): Promise<Sourc
   }
 }
 
+/** 1つの知識源を段落に区切って返す（`sections` の絞り込み込み）。作り手の記事など、作品の sources 以外にも使う。 */
+export async function loadChunksOfSource(source: WorkSource, idPrefix: string): Promise<SourceChunk[]> {
+  return (await loadChunksOf(source, idPrefix)).filter((c) => inSections(c, source.sections));
+}
+
 /** 作品の外部知識源を全部、段落に区切って返す。取れなかった記事は飛ばす（ログだけ残す）。 */
 export async function loadSourceChunks(workId: string): Promise<SourceChunk[]> {
   const sources = getSources(workId);
