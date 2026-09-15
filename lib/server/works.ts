@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Arc, CanonFact, Entity, Episode, Work, WorkSource } from "./types";
+import type { Arc, CanonFact, Creator, Entity, Episode, Work, WorkSource } from "./types";
 
 type WorkFile = {
   work: Work;
@@ -10,6 +10,8 @@ type WorkFile = {
   canonFacts: CanonFact[];
   /** 会話の話題を調べにいく外部の知識源 */
   sources?: WorkSource[];
+  /** 作り手（作風から考察を組むため） */
+  creators?: Creator[];
 };
 
 // One directory per work under data/, each holding a work.json (and cards.jsonl).
@@ -74,6 +76,10 @@ export function getEntities(workId: string): Entity[] {
 }
 
 /** 会話の話題を調べにいく外部の知識源。書かれていなければ外部は引かない。 */
+export function getCreators(workId: string): Creator[] {
+  return loadAll().get(workId)?.creators ?? [];
+}
+
 export function getSources(workId: string): WorkSource[] {
   return loadAll().get(workId)?.sources ?? [];
 }

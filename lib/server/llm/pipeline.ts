@@ -7,6 +7,7 @@ import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts }
 import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
 import { detectTopicShift } from "../topic-shift";
 import { getEntities } from "../works";
+import { getCreatorProfiles } from "../creator";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import type {
   Claim,
@@ -37,9 +38,11 @@ export type PipelineResult = {
   currentEpisode: number;
 };
 
-// としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない
-// （「まとまる」の定義はissue #6で実装者判断としている単純なクールダウン方式）。
-const TOSHIO_COOLDOWN_TURNS = 2;
+// としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない。
+// 頻度はコードが決める（としお本人の shouldComment は材料の有無で true に倒れやすく、頻度の調整には使えない）。
+// ユーザーが考察・理由を求めた／疑ったときは短い間隔で乗り、シオリが嘘をついただけの回はもっと間を空ける。
+export const TOSHIO_COOLDOWN_ON_QUESTION = 2;
+export const TOSHIO_COOLDOWN_ON_CLAIMS = 5;
 
 /** 直近のとしお発話から何ターン（シオリの返答）経ったか。一度も話していなければ Infinity。 */
 export function turnsSinceLastToshio(history: Message[]): number {
@@ -53,13 +56,19 @@ export function turnsSinceLastToshio(history: Message[]): number {
   return Infinity;
 }
 
-/** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
-export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
+/**
+ * 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。
+ * ユーザーが考察・理由を求めている／疑っている回は主な出番なので短い間隔で通し、
+ * シオリが嘘をついただけの回は長い間隔でしか通さない。
+ */
+export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis, turnsSince: number = Infinity): boolean {
   // としおは evaluate を通らない。シオリが分からないふりで主張を避けた話題
   // （差し戻し2回後の定型文もここに落ちる）に、検査の無い経路で乗せない。
   if (generation.strategy === "admit_uncertainty") return false;
-  if (generation.claims.length > 0) return true;
-  return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
+  const asked = analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
+  if (asked) return turnsSince >= TOSHIO_COOLDOWN_ON_QUESTION;
+  if (generation.claims.length > 0) return turnsSince >= TOSHIO_COOLDOWN_ON_CLAIMS;
+  return false;
 }
 
 /**
@@ -139,6 +148,7 @@ export async function runConversationPipeline(params: {
   const directive = decideDirective({
     analysis,
     history,
+    userMessage,
     fabricatedFacts: existingFabricatedFacts,
     relevantFacts: promptFabricatedFacts,
   });
@@ -239,11 +249,13 @@ export async function runToshioInterjection(params: {
 }): Promise<string | null> {
   const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation } = params;
 
-  if (turnsSinceLastToshio(history) < TOSHIO_COOLDOWN_TURNS) return null;
-  if (!worthAskingToshio(generation, analysis)) return null;
+  if (!worthAskingToshio(generation, analysis, turnsSinceLastToshio(history))) return null;
 
   try {
+    // 作風は取れなくても割り込みは成立する（作り手の記事が無い作品もある）
+    const creators = await getCreatorProfiles(workId).catch(() => []);
     const commentary = await generateToshioCommentary({
+      creators,
       workTitle,
       currentEpisode,
       topic: topic ?? null,

@@ -25,6 +25,7 @@ vi.mock("../retrieval", () => ({
 // 話題の場面の特定（外部の知識源 + Gemini）は pipeline.topic.test 側で見る。ここでは「特定できなかった」扱い
 vi.mock("../topic", () => ({ lookupSessionTopic: async () => null, episodeBoundaryFor: () => 0, isSameTopic: () => false }));
 vi.mock("../topic-shift", () => ({ detectTopicShift: async () => null }));
+vi.mock("../creator", () => ({ getCreatorProfiles: async () => [] }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
   getEntities: () => [],
@@ -32,7 +33,7 @@ vi.mock("../works", () => ({
   getEpisodesUpTo: () => [],
 }));
 
-import { runConversationPipeline, runToshioInterjection, turnsSinceLastToshio, worthAskingToshio } from "./pipeline";
+import { runConversationPipeline, runToshioInterjection, turnsSinceLastToshio, worthAskingToshio, TOSHIO_COOLDOWN_ON_CLAIMS, TOSHIO_COOLDOWN_ON_QUESTION } from "./pipeline";
 
 const visibleFact: CanonFact = {
   id: "cf-visible",
@@ -128,6 +129,7 @@ describe("runToshioInterjection: シオリの返答が確定した後に、材�
     expect(mocks.retrieveCanonFacts).toHaveBeenCalledWith("w", 3, toshioParams.analysis, []);
     expect(mocks.retrieveFabricatedFacts).toHaveBeenCalledWith("s1", toshioParams.analysis);
     expect(mocks.generateToshioCommentary).toHaveBeenCalledWith({
+      creators: [],
       workTitle: "テスト作品",
       currentEpisode: 3,
       topic: null,
@@ -305,19 +307,29 @@ describe("turnsSinceLastToshio", () => {
 });
 
 describe("worthAskingToshio", () => {
-  it("claims があれば true", () => {
-    const result = generation({ claims: [{ subject: "a", relation: "is", object: "b", negated: false, claim: "a", grounding: "canon", sourceCanonFactIds: [] }] });
-    expect(worthAskingToshio(result, analysis())).toBe(true);
+  const lie = { subject: "a", relation: "is", object: "b", negated: false, claim: "a", grounding: "canon", sourceCanonFactIds: [] } as const;
+
+  it("questionType が theory/doubt/fact_question なら短い間隔で true", () => {
+    expect(worthAskingToshio(generation(), analysis({ questionType: "theory" }), TOSHIO_COOLDOWN_ON_QUESTION)).toBe(true);
+    expect(worthAskingToshio(generation(), analysis({ questionType: "doubt" }), TOSHIO_COOLDOWN_ON_QUESTION)).toBe(true);
+    expect(worthAskingToshio(generation(), analysis({ questionType: "fact_question" }), TOSHIO_COOLDOWN_ON_QUESTION)).toBe(true);
+    expect(worthAskingToshio(generation(), analysis({ questionType: "theory" }), TOSHIO_COOLDOWN_ON_QUESTION - 1)).toBe(false);
   });
 
-  it("claims が無くても questionType が theory/doubt/fact_question なら true", () => {
-    expect(worthAskingToshio(generation(), analysis({ questionType: "theory" }))).toBe(true);
-    expect(worthAskingToshio(generation(), analysis({ questionType: "doubt" }))).toBe(true);
-    expect(worthAskingToshio(generation(), analysis({ questionType: "fact_question" }))).toBe(true);
+  it("claims があるだけの回は長い間隔でしか true にならない", () => {
+    const result = generation({ claims: [lie] });
+    const impression = analysis({ questionType: "impression" });
+    expect(worthAskingToshio(result, impression, TOSHIO_COOLDOWN_ON_CLAIMS)).toBe(true);
+    expect(worthAskingToshio(result, impression, TOSHIO_COOLDOWN_ON_CLAIMS - 1)).toBe(false);
+    expect(worthAskingToshio(result, impression)).toBe(true); // 一度も割り込んでいない
   });
 
   it("claims も無く、questionType が impression/other なら false", () => {
     expect(worthAskingToshio(generation(), analysis({ questionType: "impression" }))).toBe(false);
     expect(worthAskingToshio(generation(), analysis({ questionType: "other" }))).toBe(false);
+  });
+
+  it("admit_uncertainty なら false", () => {
+    expect(worthAskingToshio(generation({ claims: [lie], strategy: "admit_uncertainty" }), analysis({ questionType: "doubt" }))).toBe(false);
   });
 });

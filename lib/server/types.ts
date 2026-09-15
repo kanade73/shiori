@@ -48,6 +48,30 @@ export type Arc = {
  * 外部の知識源（work.json の sources）の取り出し先。今は MediaWiki の記事だけ。
  * どの記事を引くかはデータで決め、コードは作品を知らない。
  */
+/**
+ * 作品の作り手（原作者・監督など）。としおが「この作者はこういう描き方をする人だから」と
+ * 作風から考察を組むための材料。データ側に必要なのは役割・名前と、作風を読みにいく記事だけ。
+ * `style` を書けば記事を読まずにそれを使う。
+ */
+export type Creator = {
+  /** 原作 / 監督 / シリーズ構成 など */
+  role: string;
+  name: string;
+  /** 作風を読みにいく外部資料（本人の記事）。`sections` で章を絞れる */
+  source?: WorkSource;
+  /** 手で書いた作風の要点。あれば source を読まない */
+  style?: string[];
+};
+
+/** 作風の要約（記事から1回だけ抜いて DATA_DIR にキャッシュする） */
+export type CreatorProfile = {
+  role: string;
+  name: string;
+  /** 作品内の描き方の癖・傾向を1行ずつ */
+  style: string[];
+  source?: { title: string; url: string };
+};
+
 export type WorkSource = {
   kind: "mediawiki";
   /** 例: https://ja.wikipedia.org/w/api.php */
@@ -191,6 +215,8 @@ export type StoredClaim = Claim & { id: string };
 export type TurnDirective =
   | { kind: "introduce" }
   | { kind: "layer"; doubted: FabricatedFact[] }
+  /** ユーザーがとしおの考察について聞いている。シオリはそれが成り立つように見える細部（嘘）を足して支える */
+  | { kind: "support_theory"; theory: string }
   | { kind: "plain" };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
