@@ -88,30 +88,39 @@ export type Contradiction = {
   reason: string;
 };
 
-/** Both inputs must already be normalized with the same Normalizer. */
-export function findContradiction(claim: Triple, existing: FabricatedFact): Contradiction | null {
-  if (claim.subject !== existing.subject) return null;
+export function isClaimRelation(value: string): value is ClaimRelation {
+  return (CLAIM_RELATIONS as readonly string[]).includes(value);
+}
 
-  if (claim.relation === existing.relation) {
-    if (claim.object === existing.object && claim.negated !== existing.negated) {
-      return { claim, existing, reason: "同じ主張を肯定と否定の両方で述べている" };
+/**
+ * The contradiction rules above, for any two triples (a new claim against a stored
+ * lie, or against a canon fact). Returns why they contradict, or null if they can coexist.
+ * Both inputs must already be normalized with the same Normalizer.
+ */
+export function contradictionReason(claim: Triple, other: Triple): string | null {
+  if (claim.subject !== other.subject) return null;
+
+  if (claim.relation === other.relation) {
+    if (claim.object === other.object && claim.negated !== other.negated) {
+      return "同じ主張を肯定と否定の両方で述べている";
     }
-    if (
-      FUNCTIONAL_RELATIONS.has(claim.relation) &&
-      !claim.negated &&
-      !existing.negated &&
-      claim.object !== existing.object
-    ) {
-      return { claim, existing, reason: `${claim.relation} は1つに決まる関係なのに別の値を述べている` };
+    if (FUNCTIONAL_RELATIONS.has(claim.relation) && !claim.negated && !other.negated && claim.object !== other.object) {
+      return `${claim.relation} は1つに決まる関係なのに別の値を述べている`;
     }
     return null;
   }
 
   const opposite = polarOpposite(claim.relation);
-  if (opposite && existing.relation === opposite && claim.object === existing.object && !claim.negated && !existing.negated) {
-    return { claim, existing, reason: "正反対の関係を同じ対象に述べている" };
+  if (opposite && other.relation === opposite && claim.object === other.object && !claim.negated && !other.negated) {
+    return "正反対の関係を同じ対象に述べている";
   }
   return null;
+}
+
+/** Both inputs must already be normalized with the same Normalizer. */
+export function findContradiction(claim: Triple, existing: FabricatedFact): Contradiction | null {
+  const reason = contradictionReason(claim, existing);
+  return reason ? { claim, existing, reason } : null;
 }
 
 export function findContradictions(claim: Triple, existing: FabricatedFact[]): Contradiction[] {
