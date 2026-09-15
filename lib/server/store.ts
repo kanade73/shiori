@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ChatSession, FabricatedFact, FabricatedRelation, Message } from "./types";
+import type { ChatSession, FabricatedFact, FabricatedRelation, Message, Speaker } from "./types";
 
 type Db = {
   sessions: Record<string, ChatSession>;
@@ -91,7 +91,7 @@ export function getMessages(sessionId: string): Message[] {
   return readDb().messages[sessionId] ?? [];
 }
 
-export function appendMessage(sessionId: string, role: Message["role"], content: string): Message {
+export function appendMessage(sessionId: string, role: Message["role"], content: string, speaker?: Speaker): Message {
   const db = readDb();
   const message: Message = {
     id: newId("msg"),
@@ -99,6 +99,7 @@ export function appendMessage(sessionId: string, role: Message["role"], content:
     role,
     content,
     createdAt: new Date().toISOString(),
+    ...(speaker ? { speaker } : {}),
   };
   if (!db.messages[sessionId]) db.messages[sessionId] = [];
   db.messages[sessionId].push(message);

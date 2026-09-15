@@ -6,6 +6,7 @@ import type {
   Message,
   ProgressResolution,
   ResponseStrategy,
+  Speaker,
   Work,
 } from "@/lib/server/types";
 
@@ -103,8 +104,11 @@ export async function getFabricatedGraph(sessionId: string): Promise<FabricatedG
 }
 
 export type SendMessageHandlers = {
+  /** シオリ・としお、どちらの発話が始まったか。以降の onToken はこの発話に属する。 */
+  onMessageStart: (speaker: Speaker) => void;
   onToken: (text: string) => void;
   onMetadata: (data: { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean }) => void;
+  onMessageEnd: () => void;
   onDone: () => void;
 };
 
@@ -121,9 +125,11 @@ export async function sendMessage(sessionId: string, content: string, handlers: 
   }
 
   for await (const { event, data } of readSse(res)) {
-    if (event === "token") handlers.onToken((data as { text: string }).text);
+    if (event === "message-start") handlers.onMessageStart((data as { speaker: Speaker }).speaker);
+    else if (event === "token") handlers.onToken((data as { text: string }).text);
     else if (event === "metadata")
       handlers.onMetadata(data as { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean });
+    else if (event === "message-end") handlers.onMessageEnd();
     else if (event === "done") handlers.onDone();
   }
 }

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { appendMessage, addFabricatedFact, getMessages, getSession } from "@/lib/server/store";
 import { getWork } from "@/lib/server/works";
-import { runConversationPipeline, fallbackMessage } from "@/lib/server/llm/pipeline";
+import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
 import type { Message } from "@/lib/server/types";
 
@@ -62,28 +62,47 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   const historyBefore: Message[] = getMessages(sessionId).slice(-HISTORY_LIMIT);
   appendMessage(sessionId, "user", content);
 
+  // クライアントが切断（タブを閉じる/リロード等）すると controller は自動で
+  // close されるが、その後も generate 等の await が続いていれば send() が
+  // 呼ばれうる。enqueue-after-close は例外になり、握りつぶさないとサーバー
+  // ログにエラーが残るだけでなく catch 側のフォールバック送信も同じ理由で
+  // 失敗し、ユーザーには何も返らないまま消える（"問いかけに返事がない"）。
+  let closed = false;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const encoder = new TextEncoder();
-      const send = (event: string, data: unknown) => controller.enqueue(encoder.encode(sseEvent(event, data)));
+      const send = (event: string, data: unknown) => {
+        if (closed) return;
+        try {
+          controller.enqueue(encoder.encode(sseEvent(event, data)));
+        } catch {
+          // クライアント切断等で controller が既に閉じていた。以降は送らない。
+          closed = true;
+        }
+      };
 
-      try {
-        const { generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
-          await runConversationPipeline({
-          workId: session.workId,
-          workTitle: work.title,
-          sessionId,
-          currentEpisode: session.currentEpisode,
-          history: historyBefore,
-          userMessage: content,
-        });
-
-        for (const chunk of chunkText(generation.message)) {
+      const streamText = async (text: string) => {
+        for (const chunk of chunkText(text)) {
           send("token", { text: chunk });
           await sleep(18);
         }
+      };
 
-        const assistantMessage = appendMessage(sessionId, "assistant", generation.message);
+      try {
+        const { analysis, generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+          await runConversationPipeline({
+            workId: session.workId,
+            workTitle: work.title,
+            sessionId,
+            currentEpisode: session.currentEpisode,
+            history: historyBefore,
+            userMessage: content,
+          });
+
+        send("message-start", { speaker: "shiori" });
+        await streamText(generation.message);
+
+        const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
 
         const newFactIds: string[] = [];
         for (const claim of newFabricatedClaims) {
@@ -106,20 +125,53 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           strategy: generation.strategy,
           regenerated,
         });
+        send("message-end", {});
+
+        // issue #6: シオリの返答を出し切ってから、材料が揃っているときだけ「としお」が割り込む。
+        // シオリの嘘は保存済みなので、としおには今ついた嘘も「既に語った設定」として渡る。
+        const toshioMessage = await runToshioInterjection({
+          workId: session.workId,
+          workTitle: work.title,
+          sessionId,
+          currentEpisode: session.currentEpisode,
+          history: historyBefore,
+          userMessage: content,
+          analysis,
+          generation,
+        });
+        if (toshioMessage) {
+          send("message-start", { speaker: "toshio" });
+          await streamText(toshioMessage);
+          appendMessage(sessionId, "assistant", toshioMessage, "toshio");
+          // としおの発話は嘘の仕組み（FabricatedFact / strategy）に乗っていない
+          send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
+          send("message-end", {});
+        }
+
         send("done", {});
       } catch (error) {
         console.error(`[sessions/${sessionId}/messages] pipeline failed:`, error);
         const fallback = fallbackMessage();
-        for (const chunk of chunkText(fallback)) {
-          send("token", { text: chunk });
-          await sleep(18);
-        }
-        appendMessage(sessionId, "assistant", fallback);
+        send("message-start", { speaker: "shiori" });
+        await streamText(fallback);
+        appendMessage(sessionId, "assistant", fallback, "shiori");
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
+        send("message-end", {});
         send("done", {});
       } finally {
-        controller.close();
+        if (!closed) {
+          closed = true;
+          try {
+            controller.close();
+          } catch {
+            // 既に閉じられていた（クライアント切断）。何もすることはない。
+          }
+        }
       }
+    },
+    cancel() {
+      // クライアントが切断した。以降の send() を黙って無視させる。
+      closed = true;
     },
   });
 

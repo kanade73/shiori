@@ -9,6 +9,12 @@ export const ClaimSchema = z.object({
   claim: z.string(),
   grounding: z.enum(["canon", "fabricated"]),
   sourceCanonFactIds: z.array(z.string()),
+  quote: z.string().optional(),
+});
+
+export const ToshioCommentarySchema = z.object({
+  shouldComment: z.boolean(),
+  message: z.string(),
 });
 
 export const GenerationResultSchema = z.object({

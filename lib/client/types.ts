@@ -1,4 +1,4 @@
-import type { ResponseStrategy } from "@/lib/server/types";
+import type { ResponseStrategy, Speaker } from "@/lib/server/types";
 
 export type ViewMessage = {
   id: string;
@@ -8,6 +8,8 @@ export type ViewMessage = {
   isStreaming?: boolean;
   fabricatedFactIds?: string[];
   strategy?: ResponseStrategy;
+  /** role === "assistant" のときのみ意味を持つ。未設定は「シオリ」。 */
+  speaker?: Speaker;
 };
 
 export function formatTime(iso: string): string {

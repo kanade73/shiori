@@ -54,6 +54,25 @@ describe("generateResponse: Gemini の JSON 出力を GenerationResult として
     await expect(generateResponse(baseParams)).rejects.toThrow(/Failed to parse generation output/);
   });
 
+  it("各 claim に返答文からの抜き出し（quote）を必須で要求し、返ってきた quote は保持する", async () => {
+    const lie = {
+      subject: "A",
+      relation: "has",
+      object: "B",
+      negated: false,
+      claim: "A は B を持っている",
+      grounding: "fabricated",
+      sourceCanonFactIds: [],
+      quote: "B を持ってる",
+    };
+    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, message: "A は B を持ってるよ。", claims: [lie] }) });
+    const result = await generateResponse(baseParams);
+    expect(result.claims[0].quote).toBe("B を持ってる");
+
+    const claimSchema = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items;
+    expect(claimSchema.required).toContain("quote");
+  });
+
   it("text が空でも例外になり、握りつぶさない（pipeline 側の catch に任せる）", async () => {
     generateContent.mockResolvedValue({ text: "" });
     await expect(generateResponse(baseParams)).rejects.toThrow();
@@ -114,6 +133,22 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
     expect(contents[0].role).toBe("user");
     expect(contents[1]).toEqual({ role: "model", parts: [{ text: "先に話しかける" }] });
     expect(contents[contents.length - 1].role).toBe("user");
+  });
+
+  it("としおの発話（speaker=toshio）は model に畳まれるが、【としお】の印でシオリ自身の発言と区別する", async () => {
+    await generateResponse({
+      ...baseParams,
+      history: [
+        msg("user", "これって伏線じゃない？"),
+        { ...msg("assistant", "そうだね。"), speaker: "shiori" },
+        { ...msg("assistant", "結論から言うとね……"), speaker: "toshio" },
+      ],
+    });
+    const contents = generateContent.mock.calls[0][0].contents;
+    expect(contents[1]).toEqual({ role: "model", parts: [{ text: "そうだね。\n【としお】結論から言うとね……" }] });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("【としお】");
+    expect(system).toContain("あなたの発言ではありません");
   });
 
   it("履歴が空なら今回の発言だけを user として送る", async () => {

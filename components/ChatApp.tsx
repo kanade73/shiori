@@ -24,6 +24,7 @@ function toViewMessage(message: Message, factIdsByMessage: Map<string, string[]>
     content: message.content,
     createdAt: message.createdAt,
     fabricatedFactIds: factIdsByMessage.get(message.id),
+    speaker: message.speaker,
   };
 }
 
@@ -104,31 +105,56 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
       content: text,
       createdAt: new Date().toISOString(),
     };
-    const assistantId = `local-assistant-${crypto.randomUUID()}`;
-    const assistantMessage: ViewMessage = {
-      id: assistantId,
-      role: "assistant",
-      content: "",
-      createdAt: new Date().toISOString(),
-      isStreaming: true,
-    };
-    setMessages((prev) => [...prev, userMessage, assistantMessage]);
+    // 返答を待つ間も入力中の表示を出すため、吹き出しは先に1つ積んでおき、
+    // 最初の message-start はそれに充てる。1回の送信でシオリ→（ときどき）としお、
+    // と複数の発話が届きうるので、2つ目以降の message-start は新しく積む。
+    const placeholderId = `local-assistant-${crypto.randomUUID()}`;
+    setMessages((prev) => [
+      ...prev,
+      userMessage,
+      { id: placeholderId, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true },
+    ]);
+    let placeholderUsed = false;
+    // 以降の token/metadata はこの吹き出しに紐づける
+    let currentId: string | null = null;
 
     try {
       await sendMessage(sessionId, text, {
+        onMessageStart: (speaker) => {
+          if (!placeholderUsed) {
+            placeholderUsed = true;
+            currentId = placeholderId;
+            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker } : m)));
+            return;
+          }
+          const id = `local-assistant-${crypto.randomUUID()}`;
+          currentId = id;
+          setMessages((prev) => [
+            ...prev,
+            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker },
+          ]);
+        },
         onToken: (chunk) => {
-          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, content: m.content + chunk } : m)));
+          const id = currentId;
+          if (!id) return;
+          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: m.content + chunk } : m)));
         },
         onMetadata: (data) => {
+          const id = currentId;
+          if (!id) return;
           setMessages((prev) =>
             prev.map((m) =>
-              m.id === assistantId ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
+              m.id === id ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
             ),
           );
         },
-        onDone: () => {
-          setMessages((prev) => prev.map((m) => (m.id === assistantId ? { ...m, isStreaming: false } : m)));
+        onMessageEnd: () => {
+          const id = currentId;
+          if (!id) return;
+          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, isStreaming: false } : m)));
+          currentId = null;
         },
+        onDone: () => {},
       });
 
       if (work) {
@@ -137,15 +163,25 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           .catch(() => {});
       }
     } catch (e) {
-      setMessages((prev) =>
-        prev.map((m) =>
-          m.id === assistantId
-            ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
-            : m,
-        ),
-      );
+      const id = currentId;
+      if (id) {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === id
+              ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
+              : m,
+          ),
+        );
+      }
       setSendError(e instanceof Error ? e.message : "送信に失敗しました。回線を確認してもう一度試して。");
     } finally {
+      // 何も届かないまま終わった（送信自体の失敗など）placeholder は消し、
+      // message-end が来ないまま閉じた吹き出しは streaming を解除する
+      setMessages((prev) =>
+        prev
+          .filter((m) => !(m.id === placeholderId && !placeholderUsed))
+          .map((m) => (m.isStreaming ? { ...m, isStreaming: false } : m)),
+      );
       setIsSending(false);
     }
   }
@@ -178,7 +214,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           <div className="mx-auto max-w-[760px] py-md">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
-                <TypingIndicator key={message.id} />
+                <TypingIndicator key={message.id} speaker={message.speaker} />
               ) : (
                 <ChatMessageItem key={message.id} message={message} sessionId={sessionId} />
               ),
