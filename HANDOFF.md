@@ -6,15 +6,29 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/session_rag`**（PR **#18** `feat: 話題の切り替わりを判定してRAGを引き直す（issue #14）` → `dev`）。`origin/dev`（#8 としお・#13 答え合わせ + ディレクトリ再編・directive 方式の生成 をマージ済み）を **このブランチにマージしてコンフリクトを解消した**。PR はマージ可能な状態
-- マージで決めたこと:
-  - 生成は dev の **directive 方式**（`llm/directive.ts` が「今回の指示」を決め、strategy はモデルに出させない）を正とし、その上に issue #14 の「今日の話題」節・`topic`/`pastTopics` の文脈・話題単位の履歴切り出し（`historyForTopic`）を載せた
-  - evaluate は dev のとおり **ネタバレ検査なし**（既存の嘘との矛盾・本物の設定の上書きだけ）。PR 側の `allCanonFacts`/`currentEpisode` を evaluate に渡す経路と、それを見ていたテスト1件は削除した
-  - 視聴進捗の入力（`progress-resolver` / `resolveProgress` / `ProgressCandidate`）は PR のとおり **廃止**。セットアップ画面は作品選択だけで、話題は最初の発話から決める
-  - としおは dev の `premises`（この返答の fabricated claims）方式。PR の `markLies`（【嘘】印）は捨て、`topic` だけ足した
-  - ファイルは dev の配置（`components/{chat,setup,reveal,ui,debug}/`、`lib/server/reveal/{build,graph,types}.ts`、`lib/client/format.ts`）。PR が足した `sessionLabel` / `episodeFromLabel` は `lib/client/types.ts` のまま。`ChatInput.test.tsx` は `components/chat/` へ移した
-- 検証: `npm test` 226件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**
-- 直前の `feat/checking_mockup`（#13）と `feat/issue-6-toshio`（#8）は dev にマージ済み
+- **作業ブランチ: `feat/vectorDB`**（dev `47d6378` から切った）。issue #22「初回話題特定の RAG にベクトルDBを追加」を実装済み・**未コミット**（コミット・PR はユーザー判断）
+- dev には #18（話題の切り替わり・RAG の引き直し）、#20/#21（ドット絵ダークテーマ・字の大きさ）までマージ済み
+
+## 直近のセッション: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、`feat/vectorDB`、未コミット）
+- ユーザー指示:「issue#22 を実行して。必要に応じて AGENTS.md の方針も書き換えて。ベクトルDBを使うのが優先」。issue の目的は「曖昧なワードを初回の話題特定で拾えるように」、補足は「コンテキストの逼迫に注視」
+- 選んだ DB: **sqlite-vec**（`node:sqlite` に拡張として読み込む組み込み型）。`DATA_DIR/vectors/<モデル>-<次元>.sqlite` のファイル1本、作品ごとの partition key、近傍探索も DB 内。サーバーを立てる DB（Chroma・Qdrant・pgvector）はコンテナ1台・Route Handler だけの構成を崩すので外した。AGENTS.md の「意図的に選んでいない技術」を書き換え済み（ベクトルDBは外部資料の段落の検索にだけ使う。db.json は据え置き）
+- 変更点:
+  - `lib/server/vector-db.ts`（新規）: 接続・表（vec0）・add（既存キーは飛ばす）・removeExcept（記事から消えた段落）・nearest。接続は `globalThis` で共有
+  - `lib/server/embeddings.ts`: JSON + メモリの総当たりをやめて DB に出し入れ。関数に `workId` が増えた（`rankChunksByVector(workId, query, chunks, limit)`、`ensureChunkEmbeddings(workId, chunks)`）。**埋め込み済みが1件でもあればその中で探す**（以前は全件揃うまで null）。裏の仕事の Map は `globalThis` で共有
+  - `lib/server/topic.ts`: `selectCandidates` を新設。bigram の最高点が3以上なら従来どおり RRF で8段落、**3未満でもコサイン類似度 0.66 以上の段落があればそれだけを資料係に渡す**（以前は bigram 3未満で即「話題なし」）。`prepareTopicSearch` をセッション作成（`app/api/sessions/route.ts`）から呼び、ユーザーが答える前に資料の取得と埋め込みを始める
+  - `next.config.mjs`: `serverExternalPackages: ["sqlite-vec"]` と、プラットフォーム別の拡張ファイルを standalone に含める `outputFileTracingIncludes`
+  - `Dockerfile`: `node:22-alpine` → **`node:22-bookworm-slim`**（sqlite-vec の Linux 版は glibc 向けで musl では読めない。`vec0.so` の依存で確認）。ユーザー作成は `groupadd`/`useradd` に
+- 計測（スクラッチ `bench/after.json`、gemini-embedding-001・768次元、43発話）: 挨拶・相づち15種の最も近い段落は 0.599〜0.646 で、しきい値 0.66 を超えたものは無し。新しく資料係まで届いたのは「泣ける話」「ぞっとしたとこ」「ほっこりするやつ」「牢屋」の4つで、渡る段落は1〜3件（95〜325字。通常の8段落は約1000〜2300字）。それ以外の発話の候補は以前と同じ
+- 実際に動かして確認（`.next-build` の standalone を 3011 番で、スクラッチの `DATA_DIR`）: 「泣ける話がしたい」→『あのことでかつよ』編（arc 一致）、「牢屋のとこ」（bigram 0点）→『プリズン』編、「こんにちは」→ 資料係を呼ばない。空の DB から始めてセッション作成 → 8秒後に発話しても、埋め込みの仕事は1本だけで（ルートごとにモジュールが別々に読まれても `globalThis` で共有できている）、80件入った時点で話題が引けた
+- 検証: `npm test` 246件・`tsc`・`eslint`・`next build` 通過。**Docker のビルドは未確認**（Docker Desktop が起動していなかった）。デプロイ前に `docker build .` で Debian ベースのイメージと `vec0.so` の読み込みを確かめること
+- 注意:
+  - ユーザーの dev サーバー（3000番、このツリー）が新しいコードで本物の `.data/vectors/` を作った（168段落、3.3MB）。同じ API キーの埋め込み枠を同時に使うと 429 になる（検証中に1回起きた）
+  - 旧キャッシュ `.data/embeddings/*.json` はもう読まない。消してよい（本番のボリュームにも残っているはず）。旧 JSON からの取り込みは作っていない（初回だけ168件を埋め込み直す。約2分、その間は埋め込み済みの分と bigram で検索）
+  - しきい値 0.66 は余裕が小さい（相づち最大 0.646 と言い換え最小 0.663）。埋め込みモデルを変えたら測り直すこと
+- 残課題・気づいたこと:
+  - 『プリズン』編が `work.json` の arc「オデと牢獄編」の別名に無く、arc に対応しない（境界0）。同じ編なら別名に「プリズン」を足すとよい（データの話なので触っていない）
+  - 話題の切り替わりのゲート（`topic-shift.ts`）は bigram のままで、曖昧な言い方の切り替えはベクトルでは拾っていない（issue の範囲は初回の話題特定）
+  - 挨拶でも話題が決まるまでは検索語の埋め込みを1件使う（以前は bigram で落ちた発話は埋め込みを呼ばなかった）
 
 ## 直近のセッション: 字の大きさと本文幅の調整（`feat/pixel-type-scale`、PR → dev）
 - ユーザー要望:「この雰囲気だと字がもう少し大きいほうが分かりやすい」「PC ではもう少し広く」「入力欄の下がぐちゃぐちゃなので整理」「シオリ・オンラインを削除」

@@ -58,8 +58,14 @@
 
 - `lib/server/sources.ts` — `sources` の MediaWiki 記事を TextExtracts で取り、段落に区切る（プロセス内キャッシュ）。発話との**文字 bigram の IDF 重み付き重なり**で段落を順位付けする（下のベクトル検索と併用）
 - `lib/server/topic.ts` の `lookupSessionTopic` — 上位の段落を資料係（`llm/topic.ts`、Gemini 1回・構造化出力）に渡し、場面の名前・要約・事実（`relation` は claims と同じ閉じた語彙）を**資料に書かれたことだけから**抜かせる。場面が `arcs` に対応すればその arc の最後の話を視聴済み話数にする
-- 結果は `ChatSession.topic` に保存し、事実は `topic-<何番目の話題>-<連番>` の id の canonFact として以後の retrieve / generate / evaluate / としお / 答え合わせに流れる（`retrieval.getVisibleCanonFacts`）。**話題が決まるまでは発話のたびに調べ、決まった後は下の「話題の切り替わり」を判定したときだけ引き直す**。挨拶のように資料と重ならない発話では資料係を呼ばない。失敗しても話題なしのままシオリは返事をする
-- 段落の検索は bigram とベクトル（`lib/server/embeddings.ts`、`gemini-embedding-001`）の順位を Reciprocal Rank Fusion で混ぜる。ベクトルは言い換え（「大きい敵を倒しにいく話」→『おっきい討伐』編）に強く、bigram は固有名詞に強い。ベクトルDBは入れず、段落の埋め込みはメモリと `DATA_DIR/embeddings/` の JSON に持つ。埋め込みの無料枠は「1分100件（まとめて送っても1件ずつ数える）」なので、段落は裏で80件ずつ1分おきに埋め込み、揃うまでは bigram だけで検索する（会話は待たせない）
+- 結果は `ChatSession.topic` に保存し、事実は `topic-<何番目の話題>-<連番>` の id の canonFact として以後の retrieve / generate / evaluate / としお / 答え合わせに流れる（`retrieval.getVisibleCanonFacts`）。**話題が決まるまでは発話のたびに調べ、決まった後は下の「話題の切り替わり」を判定したときだけ引き直す**。挨拶のように文字でも意味でも資料と重ならない発話では資料係を呼ばない。失敗しても話題なしのままシオリは返事をする
+- 段落の検索は bigram とベクトルの2本立て（`topic.selectCandidates`）。ベクトルは言い換え（「大きい敵を倒しにいく話」→『おっきい討伐』編）や固有名詞の無い曖昧な言い方（「牢屋のとこ」→『プリズン』編）に強く、bigram は固有名詞に強い
+  - 文字で十分に重なる（bigram の最高点が3以上）なら、両方の順位を Reciprocal Rank Fusion で混ぜて上位8段落
+  - 文字でほとんど重ならなければ、コサイン類似度 0.66 以上の段落だけ（bigram の偶然の重なりは混ぜない）。挨拶・相づち15種の最も近い段落は 0.60〜0.65、文字では重ならない場面の言い換えは 0.66〜0.68 で、差は小さい（gemini-embedding-001・768次元で測った値。モデルを変えたら測り直すこと）。この経路で資料係に渡るのは1〜3段落程度で、文脈はむしろ小さい
+- **ベクトルDB（issue #22）**: `lib/server/vector-db.ts`。SQLite に sqlite-vec の拡張を読み込んだ組み込み型で、`DATA_DIR/vectors/<埋め込みモデル>-<次元>.sqlite` のファイル1本に段落の埋め込み（作品ごとの区画）を持ち、近傍の探索も DB の中でする。別のサーバーは立てない。`lib/server/embeddings.ts` が Gemini の埋め込み（`gemini-embedding-001`）と DB への出し入れを受け持つ
+  - 埋め込みの無料枠は「1分100件（まとめて送っても1件ずつ数える）」なので、段落は裏で80件ずつ1分おきに埋め込む（段落168件で約2分）。埋め込み済みの段落が1件でもあればその中で探し、1件も無ければ bigram だけで検索する（会話は待たせない）。記事が書き換わってもう無い段落は、次に埋め込むときに DB から消す
+  - セッションを作った時点（ユーザーが最初の答えを打つ前）に `topic.prepareTopicSearch` が資料の取得と段落の埋め込みを始める
+  - sqlite-vec の Linux 版の拡張は glibc 向けなので、Docker のベースは alpine ではなく Debian（`node:22-bookworm-slim`）。`next.config.mjs` で `sqlite-vec` をバンドルから外し、プラットフォーム別の拡張ファイルを standalone の出力に含めている
 
 #### 話題の切り替わり（`lib/server/topic-shift.ts`）
 
@@ -107,9 +113,9 @@
 
 ### 永続化
 
-`lib/server/store.ts`。JSONファイル1本（`.data/db.json`、gitignore済み）にセッション・メッセージ・嘘を全部持つ。単一プロセス・単一ユーザー前提。DBを入れる要件は今のところない。
+`lib/server/store.ts`。JSONファイル1本（`.data/db.json`、gitignore済み）にセッション・メッセージ・嘘を全部持つ。単一プロセス・単一ユーザー前提。セッション・嘘のために DB を入れる要件は今のところない。外部資料の段落の埋め込みだけは、ベクトルDB（`lib/server/vector-db.ts`、`.data/vectors/*.sqlite`）に持つ（上の「話題の場面」）。
 
-置き場所は `DATA_DIR` 環境変数で差し替えられる（未設定なら `process.cwd()/.data`）。本番は Fly.io の永続ボリュームを `/app/.data` にマウントし、再起動・再デプロイをまたいで `db.json` を残す（`fly.toml` の `[mounts]`）。
+置き場所は `DATA_DIR` 環境変数で差し替えられる（未設定なら `process.cwd()/.data`）。本番は Fly.io の永続ボリュームを `/app/.data` にマウントし、再起動・再デプロイをまたいで `db.json` とベクトルDBを残す（`fly.toml` の `[mounts]`）。
 
 ---
 
@@ -122,20 +128,21 @@
 | バックエンド | Next.js Route Handlers（別サーバーを立てない） |
 | LLM | Google Gen AI SDK（`@google/genai`）+ zod 構造化出力 |
 | 永続化 | JSONファイル（`.data/db.json`） |
+| ベクトルDB | sqlite-vec（`node:sqlite` に読み込む組み込み型。`.data/vectors/`）。外部資料の段落の検索だけに使う |
 | デプロイ | Fly.io（Docker コンテナ 1 台 + 永続ボリューム）。`Dockerfile` はホスト非依存で Railway / Render でも動く |
 
 ### LLM 呼び出しの ON/OFF は API キーの有無で決まる
 
 `lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY` だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話で検索語の埋め込み+1件（別モデル）。
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
 
 ### 意図的に選んでいない技術
 
 提案しないこと。理由があって外している。
 
 - **Python バックエンドの分離** — 3日で結合を2回やる余裕がない
-- **Supabase / Postgres / ベクトルDB** — 単一ユーザー・設定数十件・書き込みほぼ無しの要件に対して過剰。retrieval はキーワード一致で足りている（外部資料の段落のベクトル検索は、埋め込みをメモリと JSON に持つだけで DB は入れていない）
+- **Supabase / Postgres / サーバーを立てるベクトルDB（Chroma・Qdrant・pgvector など）** — 単一ユーザー・設定数十件・書き込みほぼ無しの要件に対して過剰で、コンテナ1台の構成も崩れる。canonFacts・嘘の retrieval はキーワード一致で足りている。ベクトルDBは外部資料の段落の検索（話題の特定）にだけ、組み込み型の sqlite-vec を使う（issue #22）。セッション・嘘の永続化を SQLite に移す要件は今のところない
 - **LangChain 等のフレームワーク** — 処理が単純で、抽象層のデバッグコストの方が高い
 - **LoRA / ローカルLLM** — 口調はプロンプトのみで維持する方針。崩れることが確認できるまで入れない。勝手に学習パイプラインを組み始めないこと
 
@@ -167,7 +174,8 @@ lib/
     store.ts                        .data/db.json の読み書き
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
     sources.ts                      外部の知識源（MediaWiki）の取得・段落分け・検索（bigram・順位の融合）
-    embeddings.ts                   外部資料の段落のベクトル検索（埋め込みはメモリと DATA_DIR の JSON）
+    embeddings.ts                   外部資料の段落のベクトル検索（Gemini の埋め込み・裏での埋め込み作成）
+    vector-db.ts                    ベクトルDB（sqlite-vec。DATA_DIR/vectors/ の SQLite ファイル）
     topic.ts                        話題の場面の特定（セッションごとの RAG）
     topic-shift.ts                  話題の切り替わりの判定（ゲート → 判定役）
     rate-limit.ts
@@ -209,7 +217,7 @@ GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_MODEL=            # 省略可。既定 gemini-3.6-flash
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
-DATA_DIR=                # 省略可。db.json と埋め込みのキャッシュの置き場所。本番はボリュームのマウント先（/app/.data）
+DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。

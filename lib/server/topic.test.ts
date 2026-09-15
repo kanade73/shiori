@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   loadSourceChunks: vi.fn(),
   extractTopic: vi.fn(),
   rankChunksByVector: vi.fn(),
+  ensureChunkEmbeddings: vi.fn(),
 }));
 vi.mock("./works", () => ({
   getSources: mocks.getSources,
@@ -24,9 +25,12 @@ vi.mock("./sources", async (importOriginal) => ({
 }));
 vi.mock("./llm/topic", () => ({ extractTopic: mocks.extractTopic }));
 // ベクトル検索（埋め込み API）は差し替える。既定では「まだ埋め込みが揃っていない」（null）
-vi.mock("./embeddings", () => ({ rankChunksByVector: mocks.rankChunksByVector }));
+vi.mock("./embeddings", () => ({
+  rankChunksByVector: mocks.rankChunksByVector,
+  ensureChunkEmbeddings: mocks.ensureChunkEmbeddings,
+}));
 
-import { episodeBoundaryFor, lookupSessionTopic, matchArc } from "./topic";
+import { episodeBoundaryFor, lookupSessionTopic, matchArc, prepareTopicSearch, selectCandidates } from "./topic";
 
 const kenteiArc: Arc = {
   id: "arc-kentei",
@@ -99,6 +103,46 @@ describe("episodeBoundaryFor: 話題の場面から分かる視聴済み話数",
   });
 });
 
+describe("selectCandidates: 資料係に渡す段落を選ぶ", () => {
+  const [a, b, c] = chunks;
+
+  it("文字で十分に重なれば、bigram とベクトルの順位を混ぜる", () => {
+    const picked = selectCandidates(
+      [
+        { chunk: a, score: 20 },
+        { chunk: c, score: 1 },
+      ],
+      [
+        { chunk: b, score: 0.7 },
+        { chunk: a, score: 0.68 },
+      ],
+    );
+    expect(picked[0].id).toBe("src1-1");
+    expect(picked.map((x) => x.id).sort()).toEqual(["src1-1", "src1-2", "src1-3"]);
+  });
+
+  it("文字でほとんど重ならなければ、bigram の偶然の重なりは混ぜず、意味の近い段落だけ", () => {
+    const picked = selectCandidates(
+      [{ chunk: c, score: 2 }],
+      [
+        { chunk: b, score: 0.7 },
+        { chunk: a, score: 0.6 },
+      ],
+    );
+    expect(picked.map((x) => x.id)).toEqual(["src1-2"]);
+  });
+
+  it("ベクトル検索がまだ使えなければ、これまでどおり bigram だけ（足りなければ空）", () => {
+    expect(selectCandidates([{ chunk: a, score: 5 }], null).map((x) => x.id)).toEqual(["src1-1"]);
+    expect(selectCandidates([{ chunk: a, score: 2 }], null)).toEqual([]);
+  });
+
+  it("資料係に渡すのは最大8段落（文脈を増やさない）", () => {
+    const many = Array.from({ length: 12 }, (_, i) => ({ chunk: chunk({ id: `m${i}` }), score: 10 + i }));
+    expect(selectCandidates(many, many.map((r) => ({ ...r, score: 0.7 })))).toHaveLength(8);
+  });
+});
+
 describe("lookupSessionTopic: ユーザーの答えから話題の場面を特定する", () => {
   it("関係しそうな段落を資料係に渡し、特定した場面と事実をセッションの話題にする", async () => {
     const topic = await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "草むしり検定のところ" });
@@ -152,12 +196,25 @@ describe("lookupSessionTopic: ユーザーの答えから話題の場面を特�
     await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "草むしり検定のところ" });
     const passed: SourceChunk[] = mocks.extractTopic.mock.calls[0][0].chunks;
     expect(passed.map((c) => c.id)).toContain("src1-2");
-    expect(mocks.rankChunksByVector).toHaveBeenCalledWith("草むしり検定のところ", chunks);
+    expect(mocks.rankChunksByVector).toHaveBeenCalledWith("w", "草むしり検定のところ", chunks, 30);
   });
 
-  it("挨拶のように資料と重ならない発話では、埋め込みも呼ばない", async () => {
-    await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "こんにちは" });
-    expect(mocks.rankChunksByVector).not.toHaveBeenCalled();
+  it("文字では重ならない曖昧な言い方でも、意味の近い段落があれば資料係に渡す（issue #22）", async () => {
+    mocks.rankChunksByVector.mockResolvedValue([
+      { chunk: chunks[0], score: 0.7 },
+      { chunk: chunks[1], score: 0.62 },
+    ]);
+    const topic = await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "泣けるやつ" });
+    expect(topic?.title).toBe("草むしり検定編");
+    // 意味の近さが足りない段落（相づち程度の近さ）は渡さない
+    const passed: SourceChunk[] = mocks.extractTopic.mock.calls[0][0].chunks;
+    expect(passed.map((c) => c.id)).toEqual(["src1-1"]);
+  });
+
+  it("文字でも意味でも資料に近くない発話（挨拶など）では、資料係を呼ばない", async () => {
+    mocks.rankChunksByVector.mockResolvedValue([{ chunk: chunks[2], score: 0.63 }]);
+    expect(await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "こんにちは" })).toBeNull();
+    expect(mocks.extractTopic).not.toHaveBeenCalled();
   });
 
   it("arc に対応しない話題（人物など）の事実は、話数に関係なく見せる（episodeFrom=0）", async () => {
@@ -195,5 +252,18 @@ describe("lookupSessionTopic: ユーザーの答えから話題の場面を特�
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
     expect(await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "草むしり検定のところ" })).toBeNull();
     spy.mockRestore();
+  });
+});
+
+describe("prepareTopicSearch: セッションを作ったときに検索の準備をする", () => {
+  it("資料を取ってきて、段落の埋め込みを裏で作り始める", async () => {
+    prepareTopicSearch("w");
+    await vi.waitFor(() => expect(mocks.ensureChunkEmbeddings).toHaveBeenCalledWith("w", chunks));
+  });
+
+  it("外部の知識源が無い作品では何もしない", () => {
+    mocks.getSources.mockReturnValue([]);
+    prepareTopicSearch("w");
+    expect(mocks.loadSourceChunks).not.toHaveBeenCalled();
   });
 });

@@ -5,9 +5,8 @@ import type { SourceChunk, WorkSource } from "./types";
 /**
  * 会話の話題を調べる外部の知識源（issue #14）。work.json の `sources` に書かれた
  * MediaWiki の記事を取ってきて段落単位に区切り、ユーザーの発話との文字 bigram の
- * 重なりで関連する段落を選ぶ。
+ * 重なりで関連する段落を選ぶ。意味の近さ（言い換え・曖昧な言い方）は embeddings.ts のベクトル検索が補う。
  *
- * ベクトルDBや埋め込みは使わない（AGENTS.md: 単一ユーザー・記事数本の規模に対して過剰）。
  * 日本語は分かち書きが無いので、単語ではなく文字の2-gramで重なりを見る。
  */
 

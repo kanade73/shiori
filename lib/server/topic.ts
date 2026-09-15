@@ -1,9 +1,9 @@
 import { getArcs, getSources, getWork } from "./works";
-import { fuseRankings, loadSourceChunks, mentionedNames, rankChunks } from "./sources";
-import { rankChunksByVector } from "./embeddings";
+import { fuseRankings, loadSourceChunks, mentionedNames, rankChunks, type RankedChunk } from "./sources";
+import { ensureChunkEmbeddings, rankChunksByVector } from "./embeddings";
 import { extractTopic } from "./llm/topic";
 import { normalizeText } from "./claims";
-import type { Arc, CanonFact, SessionTopic } from "./types";
+import type { Arc, CanonFact, SessionTopic, SourceChunk } from "./types";
 
 /**
  * issue #14: セッションごとの RAG。会話の最初の返答で、ユーザーが話したい場面を外部の
@@ -19,6 +19,10 @@ const FUSION_DEPTH = 30;
 // これ未満の重なりしかない発話（挨拶など）では、資料係を呼ぶまでもなく「話題なし」とする。
 // ひらがなだけの重なりは弱く数えるので、漢字・カタカナの2文字が1つ重なる程度が目安
 const MIN_SCORE = 3;
+// 文字ではほとんど重ならなくても、意味の近さ（コサイン類似度）がこれ以上の段落があれば話題を探す
+// （「牢屋のとこ」→『プリズン』編）。gemini-embedding-001・768次元で測った目安で、挨拶や相づち15種の
+// 最も近い段落は 0.60〜0.65、文字では重ならない場面の言い換えは 0.66〜0.68 だった（差は小さい）
+const MIN_SIMILARITY = 0.66;
 
 /** 場面の名前（や資料の段落の見出し）に、arc の名前・別名が含まれていればその arc。長く一致したものを優先する */
 export function matchArc(arcs: Arc[], texts: string[]): Arc | null {
@@ -49,6 +53,33 @@ export function episodeBoundaryFor(workId: string, topic: SessionTopic | null | 
   return count ? Math.min(arc.episodeTo, count) : arc.episodeTo;
 }
 
+/**
+ * 資料係に渡す段落を選ぶ。文字で十分に重なれば bigram とベクトルの順位を混ぜ、文字ではほとんど
+ * 重ならない曖昧な言い方なら、意味の近い段落だけ（bigram の偶然の重なりは混ぜない）。
+ * どちらでも足りなければ空（話題なし。資料係を呼ばない）。
+ */
+export function selectCandidates(lexical: RankedChunk[], semantic: RankedChunk[] | null): SourceChunk[] {
+  const lexicalHit = (lexical[0]?.score ?? 0) >= MIN_SCORE;
+  let ranked: RankedChunk[];
+  if (lexicalHit) {
+    ranked = semantic ? fuseRankings([lexical.slice(0, FUSION_DEPTH), semantic.slice(0, FUSION_DEPTH)]) : lexical;
+  } else {
+    ranked = (semantic ?? []).filter((r) => r.score >= MIN_SIMILARITY);
+  }
+  return ranked.slice(0, MAX_CHUNKS).map((r) => r.chunk);
+}
+
+/**
+ * セッションを作ったとき（ユーザーがシオリの問いかけに答える前）に、外部の知識源を取ってきて
+ * 段落の埋め込みを裏で作り始める。最初の答えを待たせないため。失敗しても何もしない。
+ */
+export function prepareTopicSearch(workId: string): void {
+  if (getSources(workId).length === 0) return;
+  void loadSourceChunks(workId)
+    .then((chunks) => ensureChunkEmbeddings(workId, chunks))
+    .catch((error) => console.error("話題の検索の準備に失敗:", error));
+}
+
 /** 同じ場面を指しているか（切り替えたつもりで同じ場面を引き直したときは、切り替えとみなさない） */
 export function isSameTopic(a: SessionTopic, b: SessionTopic): boolean {
   if (a.arcId && b.arcId) return a.arcId === b.arcId;
@@ -77,15 +108,11 @@ export async function lookupSessionTopic(params: {
   try {
     const chunks = await loadSourceChunks(workId);
     const lexical = rankChunks(query, chunks, mentionedNames(workId, query));
-    // 挨拶のように資料とほとんど重ならない発話では、埋め込みも資料係も呼ばない
-    if ((lexical[0]?.score ?? 0) < MIN_SCORE) return null;
-
-    // 言い換えに強いベクトル検索と順位を混ぜる。段落の埋め込みがまだ揃っていなければ bigram だけ
-    const semantic = await rankChunksByVector(query, chunks);
-    const ranked = semantic
-      ? fuseRankings([lexical.slice(0, FUSION_DEPTH), semantic.slice(0, FUSION_DEPTH)])
-      : lexical;
-    const candidates = ranked.slice(0, MAX_CHUNKS).map((r) => r.chunk);
+    // 言い換えや曖昧な言い方に強いベクトル検索（ベクトルDB）。段落の埋め込みがまだ1件も無ければ bigram だけ
+    const semantic = await rankChunksByVector(workId, query, chunks, FUSION_DEPTH);
+    const candidates = selectCandidates(lexical, semantic);
+    // 挨拶のように、文字でも意味でも資料とほとんど重ならない発話では資料係を呼ばない
+    if (candidates.length === 0) return null;
 
     const extraction = await extractTopic({
       workTitle,
