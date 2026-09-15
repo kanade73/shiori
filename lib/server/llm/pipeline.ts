@@ -1,6 +1,6 @@
 import { analyzeUserMessage } from "./analyze";
 import { generateResponse } from "./generate";
-import { decideDirective } from "./directive";
+import { decideDirective, isSceneKnown } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
@@ -151,6 +151,7 @@ export async function runConversationPipeline(params: {
     userMessage,
     fabricatedFacts: existingFabricatedFacts,
     relevantFacts: promptFabricatedFacts,
+    sceneKnown: isSceneKnown(topic, currentEpisode),
   });
 
   const genArgs = {
@@ -249,6 +250,9 @@ export async function runToshioInterjection(params: {
 }): Promise<string | null> {
   const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation } = params;
 
+  // どの場面か分からないうちは、シオリは場面を聞き返している。としおは evaluate を通らないので、
+  // 本物の設定が1件も無いまま場面の考察を語らせない（issue #32）
+  if (!isSceneKnown(topic, currentEpisode)) return null;
   if (!worthAskingToshio(generation, analysis, turnsSinceLastToshio(history))) return null;
 
   try {

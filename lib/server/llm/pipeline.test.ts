@@ -216,6 +216,12 @@ describe("runToshioInterjection: 呼ばない条件", () => {
     expect(mocks.generateToshioCommentary).toHaveBeenCalledTimes(1);
   });
 
+  it("[企画の制約] どの場面か分からない（話題なし・話数0）ときは、としおを呼ばない（issue #32）", async () => {
+    const result = await runToshioInterjection({ ...toshioParams, currentEpisode: 0, topic: null });
+    expect(mocks.generateToshioCommentary).not.toHaveBeenCalled();
+    expect(result).toBeNull();
+  });
+
   it("[企画の制約] evaluate に2回落ちて定型の濁し返答に差し替わったときも、としおを呼ばない", async () => {
     // 既存の嘘との矛盾が再生成でも消えない → SAFE_UNCERTAIN_MESSAGE に差し替わる
     const stored: FabricatedFact = { ...existingLie, id: "ff-cave", subject: "ハチワレ", relation: "lives_in", object: "洞窟", claim: "ハチワレは洞窟に住んでいる" };
@@ -243,6 +249,12 @@ describe("runConversationPipeline: 1回の構造化出力で生成し、守り�
     const result = await runConversationPipeline(sessionParams);
     expect(mocks.generateResponse.mock.calls[0][0].directive).toEqual(result.directive);
     expect(result.directive.kind).toBe("introduce");
+  });
+
+  it("話題が特定できず話数も分からなければ、場面を聞き返させる（ask_scene、issue #32）", async () => {
+    const result = await runConversationPipeline({ ...sessionParams, currentEpisode: 0, userMessage: "泣ける話がしたい" });
+    expect(result.directive).toEqual({ kind: "ask_scene" });
+    expect(mocks.generateResponse.mock.calls[0][0].directive).toEqual({ kind: "ask_scene" });
   });
 
   it("生成には関係する数件の嘘（retrieveFabricatedFacts）を渡し、検査は全件（getActiveFabricatedFacts）に対して行う", async () => {

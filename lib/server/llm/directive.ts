@@ -1,6 +1,6 @@
 import { textIncludesAny } from "../retrieval";
 import { normalizeText } from "../claims";
-import type { FabricatedFact, Message, TurnDirective, UserMessageAnalysis } from "../types";
+import type { FabricatedFact, Message, SessionTopic, TurnDirective, UserMessageAnalysis } from "../types";
 
 /**
  * 「今回どう答えるか」はプロンプトではなくここで決める（量と頻度はコード、
@@ -79,6 +79,15 @@ export function theoryInQuestion(params: { userMessage: string; analysis: UserMe
   return null;
 }
 
+/**
+ * どの場面の話か分かっているか。話題の場面が決まっているか、どこまで見たか（話数）が分かっていれば、
+ * 本物の設定を材料にできる。どちらも無いと本物の設定が1件も渡らず、シオリが自分で選んだ場面を
+ * 語ると本筋を覆す嘘も素通りするので、場面を聞き返させる（issue #32）。
+ */
+export function isSceneKnown(topic: SessionTopic | null | undefined, currentEpisode: number): boolean {
+  return Boolean(topic) || currentEpisode > 0;
+}
+
 export function decideDirective(params: {
   analysis: UserMessageAnalysis;
   history: Message[];
@@ -88,8 +97,12 @@ export function decideDirective(params: {
   fabricatedFacts: FabricatedFact[];
   /** retrieveFabricatedFacts の結果（言及キャラ関連が先頭） */
   relevantFacts: FabricatedFact[];
+  /** どの場面の話か分かっているか（isSceneKnown）。分からなければ場面を聞き返させる */
+  sceneKnown?: boolean;
 }): TurnDirective {
-  const { analysis, history, fabricatedFacts, relevantFacts, userMessage = "" } = params;
+  const { analysis, history, fabricatedFacts, relevantFacts, userMessage = "", sceneKnown = true } = params;
+  if (!sceneKnown) return { kind: "ask_scene" };
+
   const theory = theoryInQuestion({ userMessage, analysis, history });
   if (theory) return { kind: "support_theory", theory };
 
