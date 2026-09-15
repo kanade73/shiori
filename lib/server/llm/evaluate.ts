@@ -1,5 +1,5 @@
-import { findContradictions, isFabricated, normalizeTriple, type Normalizer } from "../claims";
-import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
+import { contradictionReason, findContradictions, isClaimRelation, isFabricated, normalizeTriple, type Normalizer, type Triple } from "../claims";
+import type { CanonFact, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
 
 /**
  * Deterministic checker. The generation step is deliberately unconstrained
@@ -8,16 +8,18 @@ import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvalua
  * says no for exactly two reasons:
  *   1. a claim contradicts a lie the character already told this session
  *   2. a fabricated claim directly overwrites a visible canon fact
+ * Both use the same rules (claims.ts): a lie may add details next to canon
+ * ("モモンガ did A" and "モモンガ did B" coexist); it may not give a
+ * one-valued relation a different value, negate canon, or flip likes/can.
  */
 
-function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer): boolean {
-  // Canon relations are free text, so only the coarse case is checkable:
-  // same subject, same relation phrase, different object.
-  return (
-    normalize(claim.subject) === normalize(canon.subject) &&
-    normalize(claim.relation) === normalize(canon.relation) &&
-    normalize(claim.object) !== normalize(canon.object)
-  );
+/**
+ * 本物の設定を claims と同じ三つ組にする。話題の事実（topic-*）は claims と同じ閉じた語彙で書かれて
+ * いるので照合できる。work.json の canonFacts は関係が自由記述（「持っている」など）なので照合しない。
+ */
+function canonTriple(fact: CanonFact, normalize: Normalizer): Triple | null {
+  if (!isClaimRelation(fact.relation)) return null;
+  return { subject: normalize(fact.subject), relation: fact.relation, object: normalize(fact.object), negated: false };
 }
 
 export function evaluateGeneration(params: {
@@ -27,6 +29,11 @@ export function evaluateGeneration(params: {
   normalize: Normalizer;
 }): ResponseEvaluation {
   const { result, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
+
+  const canon = visibleCanonFacts.flatMap((fact) => {
+    const triple = canonTriple(fact, normalize);
+    return triple ? [{ fact, triple }] : [];
+  });
 
   const details: string[] = [];
   let canonConflicts = 0;
@@ -42,9 +49,14 @@ export function evaluateGeneration(params: {
       }
     }
 
-    if (isFabricated(claim) && visibleCanonFacts.some((fact) => contradictsCanon(claim, fact, normalize))) {
-      canonConflicts += 1;
-      details.push(`「${claim.claim}」は本物の設定と直接矛盾する`);
+    if (!isFabricated(claim)) continue;
+    for (const { fact, triple } of canon) {
+      const reason = contradictionReason(normalized, triple);
+      if (reason) {
+        canonConflicts += 1;
+        details.push(`「${claim.claim}」は本物の設定「${fact.description}」と矛盾する（${reason}）`);
+        break;
+      }
     }
   }
 
