@@ -92,7 +92,7 @@
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料（`directive` を含む）を渡し、**返答文（プレーンテキスト）だけ**を得る。記録の規則はここに書かない（書くとモデルが自己監視に寄って嘘をやめる）
-3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。取り出しは**手元の推論専用**で、`EXTRACT_OLLAMA_MODEL` があれば Ollama、なければ自前の LoRA 推論サーバ（`ml/`、Qwen3-1.7B + LoRA マージ済み、`EXTRACT_ENDPOINT` 必須）。**Gemini は使わず、フォールバックも無い**。取り出しに失敗しても claims 空として返答文はそのまま返す
+3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。取り出しは `EXTRACT_OLLAMA_MODEL` があれば Ollama、`EXTRACT_ENDPOINT` があれば自前の LoRA 推論サーバ（`ml/`、Qwen3-1.7B + LoRA マージ済み）、どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`）。**選んだ経路が落ちても別の経路には落とさない**（手元の推論を検証しているときに Gemini で「動いてしまう」と出来が測れないため）。取り出しに失敗しても claims 空として返答文はそのまま返す
 4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、本物の設定の直接上書きを検出（照合は視聴済み canonFacts 全件 + 話題の場面の事実）
 5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**（generate → extract → evaluate をもう一度）。それでもダメなら定型の濁し返答に差し替える
 6. **としお割り込み**（`pipeline.ts` の `runToshioInterjection` → `llm/toshio.ts`、issue #6）— Route Handler がシオリの返答を流し切って保存した後に呼ぶ（シオリのパイプラインには含めない。としお分の Gemini 待ちでシオリの表示を遅らせないため）。材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler` / `admit_uncertainty` で主張を避けていない場合だけ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない（だからシオリが逸らした話題には乗せない）。シオリが語った本物の設定・嘘（この発話でついた嘘も含む）を前提に、それを否定せず「深い考察」を重ねる。失敗しても単に今回は割り込まなかったことにする
@@ -142,7 +142,7 @@
 
 **キーの切り替え（issue #11）**: `GEMINI_API_KEY_2`（先輩のキー）もあれば、無料枠の上限（429）に達したキーからもう1本に切り替え、同じリクエストをすぐ送り直す。以後はそちらを使い続け、そちらも尽きたら元のキーに戻る（`lib/server/llm/key-pool.ts`）。休ませるのは (キー, モデル) の組で、1日の上限なら太平洋時間の0時まで、1分の上限ならエラーに書かれた待ち時間だけ。両方休み中なら送らずに投げ、今の fallback に任せる。混雑（503）では切り替えない。無効なキーはプロセスの間ずっと外す。`client.ts` の `ai` がこれを包んでいるので、呼び出し側は SDK と同じ `ai.models.generateContent` / `embedContent` のまま使う（`ai` に他のメソッドを足すときは包みにも足すこと）。SDK の `retryOptions` は付けない（429 を待ってから投げるので切り替えが遅れる）。無料枠はプロジェクトごとなので、2本のキーは別アカウントで作ったものでないと意味がない。ログにはキーの文字列ではなく環境変数名を出す
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、手元の推論を設定していなければ主張の取り出しで同じ回数（別モデル）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
 
 ### 意図的に選んでいない技術
 
@@ -224,15 +224,16 @@ pictures/                           デザイン素材・スケッチ
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_API_KEY_2=        # 省略可。2本目（先輩）のキー。上限に達したら1本目と切り替える
 GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.5-flash-lite
-EXTRACT_OLLAMA_MODEL=    # 主張の取り出し（extract）を手元の Ollama で行うときのモデル名（例 qwen3:8b）。あれば EXTRACT_ENDPOINT は不要
+EXTRACT_OLLAMA_MODEL=    # 省略可。主張の取り出し（extract）を手元の Ollama で行うときのモデル名（例 qwen3:8b）。EXTRACT_ENDPOINT より優先
 OLLAMA_HOST=             # 省略可。Ollama の URL。既定 http://localhost:11434
-EXTRACT_ENDPOINT=        # EXTRACT_OLLAMA_MODEL が無いときは必須。自前の LoRA 推論サーバ（例 http://localhost:8123）
+EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の LoRA 推論サーバで行う（例 http://localhost:8123）
+GEMINI_EXTRACT_MODEL=    # 省略可。上の2つがどちらも無いときに取り出しに使う Gemini のモデル。既定 gemini-3.1-flash-lite
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
 DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
-`extract`（返答文 → 主張の三つ組）は、`EXTRACT_OLLAMA_MODEL` があれば Ollama の `POST <OLLAMA_HOST>/api/chat`（`ml/common.py` と同じ指示文を JSON schema 付き・`think: false`・temperature 0 で投げる。60 秒で諦める）、なければ `POST <EXTRACT_ENDPOINT>/extract` に向く（自前の LoRA 推論サーバ `ml/serve.py`。`{ text, workTitle, userMessage }` → `{ claims: [...] }`。学習・評価・起動手順は `ml/README.md`）。**抽出に Gemini は使わない**。未設定なら呼び出し時に例外、サーバが落ちていれば 10 秒で諦めて `console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
+`extract`（返答文 → 主張の三つ組）の経路は `extract.ts` の `extractRoute` が上から順に選ぶ。`EXTRACT_OLLAMA_MODEL` があれば Ollama の `POST <OLLAMA_HOST>/api/chat`（`ml/common.py` と同じ指示文を JSON schema 付き・`think: false`・temperature 0 で投げる。60 秒で諦める）、`EXTRACT_ENDPOINT` があれば `POST <EXTRACT_ENDPOINT>/extract`（自前の LoRA 推論サーバ `ml/serve.py`。`{ text, workTitle, userMessage }` → `{ claims: [...] }`。10 秒で諦める。学習・評価・起動手順は `ml/README.md`）、どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`。同じ指示文を構造化出力で投げる。シオリの `GEMINI_MODEL` と無料枠を食い合わないよう既定は別モデル）。**選んだ経路が使えなくても別の経路には切り替えない**。`console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 

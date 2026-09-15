@@ -1,3 +1,5 @@
+import { Type } from "@google/genai";
+import { ai, EXTRACTION_MODEL } from "./client";
 import { ExtractedClaimSchema, ExtractedClaimsSchema } from "./schemas";
 import { CLAIM_RELATIONS, normalizeText, type Normalizer } from "../claims";
 import type { CanonFact, Claim, ClaimRelation } from "../types";
@@ -13,15 +15,17 @@ import type { CanonFact, Claim, ClaimRelation } from "../types";
  * （`groundClaims`）の仕事。ここを LLM に任せると、作り話が canon 扱いになって
  * 嘘として保存されない取りこぼしが出る。
  *
- * **取り出しは手元の推論に限る（Gemini は使わない。フォールバックも無い）**。
- * 経路は2つで、環境変数で選ぶ:
+ * 経路は3つで、環境変数で選ぶ（上から順に、設定のある最初のもの）:
  * - `EXTRACT_OLLAMA_MODEL` があれば Ollama（`OLLAMA_HOST`、既定 http://localhost:11434）の
  *   `/api/chat` に、ml/common.py と同じ指示（EXTRACT_PROMPT）を JSON schema 付きで投げる
- * - なければ自前の LoRA 推論サーバ（`EXTRACT_ENDPOINT`、ml/serve.py）の `POST /extract`
- * どちらも使えなければその発話の claims は空（返答文はそのまま返る）。
+ * - `EXTRACT_ENDPOINT` があれば自前の LoRA 推論サーバ（ml/serve.py）の `POST /extract`
+ * - どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`）に同じ指示を構造化出力で投げる
+ * **選んだ経路が使えなくても別の経路には落とさない**（手元の推論を検証しているときに、
+ * Gemini に落ちて「動いてしまう」と出来が測れないため）。その発話の claims は空になる
+ * （返答文はそのまま返る）。
  */
 
-/** 推論サーバが出す1件分。grounding はここには無い（コードが決める）。 */
+/** モデル（Ollama / 推論サーバ / Gemini）が出す1件分。grounding はここには無い（コードが決める）。 */
 export type ExtractedClaim = {
   subject: string;
   relation: ClaimRelation;
@@ -32,7 +36,7 @@ export type ExtractedClaim = {
 };
 
 /** どの実装で三つ組を取り出したか（開発者モードのパネルに1語出すだけ）。 */
-export type ExtractBackend = "local" | "ollama";
+export type ExtractBackend = "local" | "ollama" | "gemini";
 
 /** 自前の推論サーバの待ち時間。デモ中に会話が止まらない長さに切る。 */
 export const EXTRACT_TIMEOUT_MS = 10_000;
@@ -46,7 +50,7 @@ const CLOSED_RELATIONS = new Set<string>(CLAIM_RELATIONS.map((r) => normalizeTex
 const RELATION_VOCABULARY = new Set<string>(CLAIM_RELATIONS);
 
 /**
- * 推論サーバが返した JSON を `ExtractedClaim[]` にする。
+ * モデルが返した JSON を `ExtractedClaim[]` にする。
  * 形が違えば例外（呼び出し側が claims 空に落とす）。
  * **1件ごとの不備は捨てるだけ**にしてあるのは、語彙外の relation を1件混ぜられた
  * だけで、その発話の主張を全部落とすのがもったいないため。
@@ -144,19 +148,10 @@ type ExtractInput = {
   userMessage?: string;
 };
 
-/**
- * 自前の推論サーバの URL。末尾の / は落とす。
- * Ollama を使わないときは**必須**。未設定は設定漏れなので、黙って別の経路に逃げず
- * 呼び出し時に例外にする（起動時に落とさないのは、抽出を使わない画面まで開けなく
- * なるのを避けるため）。
- */
-export function extractEndpoint(): string {
+/** 自前の推論サーバの URL。未設定なら null（Ollama も無ければ Gemini を使う）。末尾の / は落とす。 */
+export function extractEndpoint(): string | null {
   const raw = process.env.EXTRACT_ENDPOINT?.trim();
-  if (!raw) {
-    throw new Error(
-      "EXTRACT_ENDPOINT が未設定です。claims 抽出は手元の推論専用で、Gemini へのフォールバックはありません（Ollama を使うなら EXTRACT_OLLAMA_MODEL を設定）",
-    );
-  }
+  if (!raw) return null;
   return raw.replace(/\/+$/, "");
 }
 
@@ -223,6 +218,29 @@ const OLLAMA_CLAIMS_SCHEMA = {
   },
   required: ["claims"],
 } as const;
+
+/** Gemini の `responseSchema`（上の Ollama 用と同じ形を SDK の型で書いたもの）。 */
+const GEMINI_CLAIMS_SCHEMA = {
+  type: Type.OBJECT,
+  properties: {
+    claims: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          subject: { type: Type.STRING },
+          relation: { type: Type.STRING, enum: [...CLAIM_RELATIONS] },
+          object: { type: Type.STRING },
+          negated: { type: Type.BOOLEAN },
+          claim: { type: Type.STRING },
+          quote: { type: Type.STRING },
+        },
+        required: ["subject", "relation", "object", "negated", "claim", "quote"],
+      },
+    },
+  },
+  required: ["claims"],
+};
 
 /**
  * モデルが返した文字列 → JSON。素の JSON を期待するが、\`\`\` 囲みや前後の文が
@@ -297,9 +315,64 @@ async function extractViaOllama({ host, model }: { host: string; model: string }
   }
 }
 
+/**
+ * Gemini（手元の推論を何も設定していないとき）。Ollama と同じ指示文・同じ入力を、
+ * 構造化出力で投げる。キーが無い・上限に達した・形が違うときは例外にして、
+ * 呼び出し側が claims 空に落とす。
+ */
+async function extractViaGemini(input: ExtractInput): Promise<ExtractedClaim[]> {
+  const response = await ai.models.generateContent({
+    model: EXTRACTION_MODEL,
+    contents: [{ role: "user", parts: [{ text: buildExtractUserPrompt(input) }] }],
+    config: {
+      systemInstruction: EXTRACT_PROMPT,
+      responseMimeType: "application/json",
+      responseSchema: GEMINI_CLAIMS_SCHEMA,
+      maxOutputTokens: 2048,
+    },
+  });
+  return parseExtractedClaims(parseClaimsText(response.text || "{}"));
+}
+
+type ExtractRoute =
+  | { backend: "ollama"; ollama: { host: string; model: string } }
+  | { backend: "local"; endpoint: string }
+  | { backend: "gemini" };
+
+/** 環境変数から取り出しの経路を1つ選ぶ（Ollama → 自前の推論サーバ → Gemini）。 */
+export function extractRoute(): ExtractRoute {
+  const ollama = ollamaConfig();
+  if (ollama) return { backend: "ollama", ollama };
+  const endpoint = extractEndpoint();
+  if (endpoint) return { backend: "local", endpoint };
+  return { backend: "gemini" };
+}
+
+function describeRoute(route: ExtractRoute): string {
+  switch (route.backend) {
+    case "ollama":
+      return `Ollama ${route.ollama.host} / ${route.ollama.model}`;
+    case "local":
+      return `抽出サーバ ${route.endpoint}`;
+    case "gemini":
+      return `Gemini ${EXTRACTION_MODEL}`;
+  }
+}
+
+function extractVia(route: ExtractRoute, input: ExtractInput): Promise<ExtractedClaim[]> {
+  switch (route.backend) {
+    case "ollama":
+      return extractViaOllama(route.ollama, input);
+    case "local":
+      return extractViaHttp(route.endpoint, input);
+    case "gemini":
+      return extractViaGemini(input);
+  }
+}
+
 export type ExtractResult = {
   claims: Claim[];
-  /** 取り出しに使った側（local: LoRA 推論サーバ / ollama） */
+  /** 取り出しに使った側（ollama / local: LoRA 推論サーバ / gemini） */
   backend: ExtractBackend;
   /** 推論が使えず claims を取り出せなかった（パネルに「取り出せず」と出す） */
   failed?: boolean;
@@ -324,19 +397,15 @@ export async function extractClaims(params: {
   userMessage?: string;
 }): Promise<ExtractResult> {
   const { text, workTitle, canonFacts, normalize, userMessage } = params;
-  const ollama = ollamaConfig();
-  // 設定漏れは例外（pipeline が claims 空として握るが、ログには明示的に出る）
-  const endpoint = ollama ? null : extractEndpoint();
-  const backend: ExtractBackend = ollama ? "ollama" : "local";
+  const route = extractRoute();
+  const { backend } = route;
   if (text.trim().length === 0) return { claims: [], backend };
 
-  const input: ExtractInput = { text, workTitle, userMessage };
-  const where = ollama ? `Ollama ${ollama.host} / ${ollama.model}` : `抽出サーバ ${endpoint}`;
   try {
-    const extracted = ollama ? await extractViaOllama(ollama, input) : await extractViaHttp(endpoint!, input);
+    const extracted = await extractVia(route, { text, workTitle, userMessage });
     return { claims: groundClaims(extracted, canonFacts, normalize), backend };
   } catch (error) {
-    console.warn(`claims を取り出せませんでした（${where}）: ${String(error)}`);
+    console.warn(`claims を取り出せませんでした（${describeRoute(route)}）: ${String(error)}`);
     return { claims: [], backend, failed: true };
   }
 }

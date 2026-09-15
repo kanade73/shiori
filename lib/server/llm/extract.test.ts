@@ -1,20 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildNormalizer } from "../claims";
 import type { CanonFact, Entity } from "../types";
+
+// 手元の推論（Ollama / 自前の推論サーバ）は fetch を、Gemini は generateContent をモックする
+const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
+vi.mock("./client", () => ({
+  ai: { models: { generateContent } },
+  EXTRACTION_MODEL: "test-extraction-model",
+}));
+
 import {
   EXTRACT_PROMPT,
   EXTRACT_TIMEOUT_MS,
   extractClaims,
   extractEndpoint,
+  extractRoute,
   groundClaims,
   matchCanonFacts,
   ollamaConfig,
   parseClaimsText,
   type ExtractedClaim,
 } from "./extract";
-
-// このブランチの抽出はローカルの推論サーバ専用。Gemini は経路ごと無いので、
-// 実 API のモック（generateContent）も持たない。叩くのは fetch だけ。
 
 const entities: Entity[] = [
   { id: "e-1", workId: "w", name: "ハチワレ", aliases: ["はちわれ", "八割れ"] },
@@ -121,13 +127,37 @@ describe("extractEndpoint", () => {
     expect(extractEndpoint()).toBe("http://localhost:8123");
   });
 
-  it("未設定なら例外（Gemini に黙って逃げる経路は無い）", () => {
+  it("未設定なら null", () => {
     vi.stubEnv("EXTRACT_ENDPOINT", "");
-    expect(() => extractEndpoint()).toThrow("EXTRACT_ENDPOINT");
+    expect(extractEndpoint()).toBeNull();
   });
 });
 
-describe("extractClaims: 取り出しは常にローカルの推論サーバ", () => {
+describe("extractRoute: Ollama → 自前の推論サーバ → Gemini の順に、設定のある最初の経路を選ぶ", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("両方あれば Ollama", () => {
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "qwen3:8b");
+    vi.stubEnv("EXTRACT_ENDPOINT", "http://localhost:8123");
+    expect(extractRoute().backend).toBe("ollama");
+  });
+
+  it("EXTRACT_ENDPOINT だけなら自前の推論サーバ", () => {
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "");
+    vi.stubEnv("EXTRACT_ENDPOINT", "http://localhost:8123");
+    expect(extractRoute()).toEqual({ backend: "local", endpoint: "http://localhost:8123" });
+  });
+
+  it("どちらも無ければ Gemini", () => {
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "");
+    vi.stubEnv("EXTRACT_ENDPOINT", "");
+    expect(extractRoute()).toEqual({ backend: "gemini" });
+  });
+});
+
+describe("extractClaims: EXTRACT_ENDPOINT があれば自前の推論サーバを使う", () => {
   const fetchMock = vi.fn();
   let warn: ReturnType<typeof vi.spyOn>;
 
@@ -137,6 +167,8 @@ describe("extractClaims: 取り出しは常にローカルの推論サーバ", (
 
   beforeEach(() => {
     fetchMock.mockReset();
+    generateContent.mockReset();
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "");
     vi.stubEnv("EXTRACT_ENDPOINT", "http://localhost:8123/");
     vi.stubGlobal("fetch", fetchMock);
     warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -184,7 +216,7 @@ describe("extractClaims: 取り出しは常にローカルの推論サーバ", (
     expect(claims.map((c) => c.relation)).toEqual(["did"]);
   });
 
-  it("接続できなければ warn 1行 + claims 空（返答文は返るので会話は続く）", async () => {
+  it("接続できなければ warn 1行 + claims 空（Gemini には落とさない。返答文は返るので会話は続く）", async () => {
     fetchMock.mockRejectedValue(new Error("fetch failed"));
 
     const { claims, backend, failed } = await extractClaims(params);
@@ -192,6 +224,7 @@ describe("extractClaims: 取り出しは常にローカルの推論サーバ", (
     expect(backend).toBe("local");
     expect(failed).toBe(true);
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(generateContent).not.toHaveBeenCalled();
   });
 
   it("タイムアウト（abort）でも claims 空", async () => {
@@ -234,11 +267,76 @@ describe("extractClaims: 取り出しは常にローカルの推論サーバ", (
     expect((await extractClaims({ ...params, text: "   " })).claims).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
   });
+});
 
-  it("EXTRACT_ENDPOINT が未設定なら例外（pipeline が claims 空として握る）", async () => {
+describe("extractClaims: 手元の推論を何も設定していなければ Gemini を使う", () => {
+  const fetchMock = vi.fn();
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    generateContent.mockReset();
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "");
     vi.stubEnv("EXTRACT_ENDPOINT", "");
-    await expect(extractClaims(params)).rejects.toThrow("EXTRACT_ENDPOINT");
+    vi.stubGlobal("fetch", fetchMock);
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("同じ指示文と入力を構造化出力で投げ、grounding はコードが付ける", async () => {
+    generateContent.mockResolvedValue({
+      text: JSON.stringify({
+        claims: [
+          { subject: "ハチワレ", relation: "lives_in", object: "洞窟", negated: false, claim: "", quote: "洞窟に住んでる" },
+          { subject: "ハチワレ", relation: "did", object: "屋台の看板を書いた", negated: false, claim: "", quote: "" },
+          { subject: "ハチワレ", relation: "unknown_rel", object: "x", negated: false, claim: "", quote: "" },
+        ],
+      }),
+    });
+    const { claims, backend, failed } = await extractClaims(params);
+
+    expect(backend).toBe("gemini");
+    expect(failed).toBeUndefined();
+    expect(claims.map((c) => [c.relation, c.grounding])).toEqual([
+      ["lives_in", "canon"],
+      ["did", "fabricated"],
+    ]);
     expect(fetchMock).not.toHaveBeenCalled();
+
+    const [request] = generateContent.mock.calls[0];
+    expect(request.model).toBe("test-extraction-model");
+    expect(request.config.systemInstruction).toBe(EXTRACT_PROMPT);
+    expect(request.config.responseMimeType).toBe("application/json");
+    expect(request.config.responseSchema.properties.claims.items.properties.relation.enum).toContain("lives_in");
+    const input = request.contents[0].parts[0].text as string;
+    expect(input).toContain("# 返答文");
+    expect(input).toContain(params.userMessage);
+    // 記録係に本物の設定は見せない
+    expect(input).not.toContain(canon().description);
+  });
+
+  it("Gemini が失敗したら warn 1行 + claims 空", async () => {
+    generateContent.mockRejectedValue(new Error("429 RESOURCE_EXHAUSTED"));
+    const result = await extractClaims(params);
+    expect(result).toEqual({ claims: [], backend: "gemini", failed: true });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("返答が JSON でなければ claims 空", async () => {
+    generateContent.mockResolvedValue({ text: "わかりません" });
+    const result = await extractClaims(params);
+    expect(result.claims).toEqual([]);
+    expect(result.failed).toBe(true);
+  });
+
+  it("返答文が空なら Gemini を呼ばない", async () => {
+    expect(await extractClaims({ ...params, text: "   " })).toEqual({ claims: [], backend: "gemini" });
+    expect(generateContent).not.toHaveBeenCalled();
   });
 });
 
@@ -329,10 +427,12 @@ describe("extractClaims: EXTRACT_OLLAMA_MODEL があれば Ollama を使う", ()
   });
 
   it("Ollama が落ちていれば warn 1行 + claims 空（backend は ollama のまま）", async () => {
+    generateContent.mockReset();
     fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
     const result = await extractClaims(params);
     expect(result).toEqual({ claims: [], backend: "ollama", failed: true });
     expect(warn).toHaveBeenCalledTimes(1);
+    expect(generateContent).not.toHaveBeenCalled();
   });
 
   it("message.content が JSON でなければ claims 空", async () => {

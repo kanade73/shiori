@@ -220,8 +220,8 @@ export async function runConversationPipeline(params: {
   };
 
   // 取り出しに失敗しても返答文は返す（嘘が保存されないだけ）。会話が止まる方が損。
-  // 推論サーバが落ちていれば extractClaims 自身が warn + claims 空で返し、
-  // ここの catch は EXTRACT_ENDPOINT の設定漏れのような呼び出し自体の失敗を拾う。
+  // 推論サーバや Gemini が使えなければ extractClaims 自身が warn + claims 空で返し、
+  // ここの catch はそれ以外の想定外の失敗を拾う。
   let attempt = 0;
   const extract = async (message: string): Promise<Claim[]> => {
     try {
