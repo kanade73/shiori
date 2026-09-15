@@ -46,6 +46,7 @@ function pipelineResult(overrides: Record<string, unknown> = {}) {
       shouldRegenerate: false,
       details: [],
     },
+    phase: "early",
     regenerated: false,
     newFabricatedClaims: [],
     reusedFabricatedFactIds: [],
@@ -153,6 +154,7 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
       userMessage: "これって伏線じゃない？",
       analysis: pipeline.analysis,
       generation: pipeline.generation,
+      phase: "early",
     });
   });
 
@@ -162,6 +164,28 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     expect(bubbles(events)).toEqual([["shiori", SHIORI]]);
     expect(mocks.appendMessage).toHaveBeenCalledTimes(2);
     expect(events[events.length - 1].event).toBe("done");
+  });
+
+  it("done イベントにセッションの進行度を載せる（フロントが終盤を検出できるように）", async () => {
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ phase: "late" }));
+    const events = await collect(await post());
+    const done = events[events.length - 1];
+    expect(done.event).toBe("done");
+    expect(done.data).toEqual({ phase: "late" });
+  });
+
+  it("進行度はセッション全体のユーザー発話数で数える（history の打ち切りに影響されない）", async () => {
+    const stored = Array.from({ length: 9 }, (_, i) => ({
+      id: `m${i}`,
+      sessionId: "s1",
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: `c${i}`,
+      createdAt: "",
+    }));
+    mocks.getMessages.mockReturnValue(stored);
+    await collect(await post());
+    // 保存済みのユーザー発話 5 件 + 今回の 1 件
+    expect(mocks.runConversationPipeline.mock.calls[0][0].userMessageCount).toBe(6);
   });
 
   it("パイプラインが失敗したら定型文をシオリとして流して保存し、としおは呼ばない", async () => {

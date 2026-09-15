@@ -48,7 +48,11 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
     return NextResponse.json({ error: "work not found" }, { status: 404 });
   }
 
-  const historyBefore: Message[] = getMessages(sessionId).slice(-HISTORY_LIMIT);
+  const storedMessages = getMessages(sessionId);
+  const historyBefore: Message[] = storedMessages.slice(-HISTORY_LIMIT);
+  // 進行度はセッション全体で数える。history は直近だけに打ち切ってあるので、
+  // 実数（今回の発話を含む）をパイプラインに渡す。
+  const userMessageCount = storedMessages.filter((m) => m.role === "user").length + 1;
   appendMessage(sessionId, "user", content);
 
   let writer: SseWriter | null = null;
@@ -58,7 +62,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       const { send, streamText, close } = writer;
 
       try {
-        const { analysis, generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+        const { analysis, generation, evaluation, phase, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
           await runConversationPipeline({
             workId: session.workId,
             workTitle: work.title,
@@ -66,6 +70,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
             currentEpisode: session.currentEpisode,
             history: historyBefore,
             userMessage: content,
+            userMessageCount,
           });
 
         send("message-start", { speaker: "shiori" });
@@ -109,6 +114,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           userMessage: content,
           analysis,
           generation,
+          phase,
         });
         if (toshioMessage) {
           send("message-start", { speaker: "toshio" });
@@ -119,7 +125,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           send("message-end", {});
         }
 
-        send("done", {});
+        // 進行度はフロントに流すだけ（UI は未実装）。終盤に達したことを検出できればよい。
+        send("done", { phase });
       } catch (error) {
         console.error(`[sessions/${sessionId}/messages] pipeline failed:`, error);
         const fallback = fallbackMessage();
@@ -129,7 +136,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         saveMessageClaims(sessionId, fallbackMessageRecord.id, []);
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
         send("message-end", {});
-        send("done", {});
+        send("done", { phase: "early" });
       } finally {
         close();
       }

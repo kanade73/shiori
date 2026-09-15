@@ -26,7 +26,7 @@ function streamed(bubbles: [speaker: "shiori" | "toshio", text: string][]) {
       h.onMetadata({ fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
       h.onMessageEnd();
     }
-    h.onDone();
+    h.onDone({ phase: "early" });
   };
 }
 
@@ -149,7 +149,7 @@ describe("ChatApp: 返答を待つ間の表示", () => {
           release = () => {
             h.onToken("結論から言うとね。");
             h.onMessageEnd();
-            h.onDone();
+            h.onDone({ phase: "early" });
             resolve();
           };
         }),

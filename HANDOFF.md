@@ -1,5 +1,8 @@
 # HANDOFF
 
+## 2026-09-15: claims 抽出の分離 + 嘘のエスカレーション（ブランチ `feat/claims-extractor`）
+- 詳細は [docs/handoff-claims-extractor.md](docs/handoff-claims-extractor.md)。generate は返答文だけを書き、主張の三つ組は `lib/server/llm/extract.ts` が別呼び出しで取り出す（grounding はモデルではなくコードが canonFacts との照合で決める）。セッションの進行度で嘘の頻度と密度だけを上げる（閾値は `lib/server/llm/directive.ts` の先頭）。
+
 AIがセッションを開始する際はまずこれを読むこと（AGENTS.md参照）。作業を終えるAIは、次のAIが初見で状況を把握できるようここを更新してから終わること。
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。

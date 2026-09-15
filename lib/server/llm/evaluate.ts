@@ -1,5 +1,5 @@
 import { findContradictions, isFabricated, normalizeTriple, type Normalizer } from "../claims";
-import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
+import type { CanonFact, Claim, FabricatedFact, ResponseEvaluation } from "../types";
 
 /**
  * Deterministic checker. The generation step is deliberately unconstrained
@@ -21,18 +21,19 @@ function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer)
 }
 
 export function evaluateGeneration(params: {
-  result: GenerationResult;
+  /** extract.ts が返答文から取り出した主張 */
+  claims: Claim[];
   visibleCanonFacts: CanonFact[];
   existingFabricatedFacts: FabricatedFact[];
   normalize: Normalizer;
 }): ResponseEvaluation {
-  const { result, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
+  const { claims, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
 
   const details: string[] = [];
   let canonConflicts = 0;
   let fabricatedConflicts = 0;
 
-  for (const claim of result.claims) {
+  for (const claim of claims) {
     const normalized = normalizeTriple(claim, normalize);
     const contradictions = findContradictions(normalized, existingFabricatedFacts);
     if (contradictions.length > 0) {
@@ -49,7 +50,7 @@ export function evaluateGeneration(params: {
   }
 
   const believabilityScore = 0.85;
-  const total = Math.max(result.claims.length, 1);
+  const total = Math.max(claims.length, 1);
   const canonContradictionScore = Math.min(1, canonConflicts / total);
   const fabricatedConsistencyScore = fabricatedConflicts > 0 ? 0 : 1;
 

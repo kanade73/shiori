@@ -1,12 +1,21 @@
 import { analyzeUserMessage } from "./analyze";
-import { generateResponse } from "./generate";
-import { decideDirective } from "./directive";
+import { generateReply } from "./generate";
+import { extractClaims } from "./extract";
+import { countUserMessages, decideDirective, decideSessionPhase, toshioCooldownTurns } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { getEntities } from "../works";
+import { getCanonFactsUpTo, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
-import type { Claim, GenerationResult, Message, ResponseEvaluation, TurnDirective, UserMessageAnalysis } from "../types";
+import type {
+  Claim,
+  GenerationResult,
+  Message,
+  ResponseEvaluation,
+  SessionPhase,
+  TurnDirective,
+  UserMessageAnalysis,
+} from "../types";
 
 export type PipelineResult = {
   analysis: UserMessageAnalysis;
@@ -14,16 +23,14 @@ export type PipelineResult = {
   evaluation: ResponseEvaluation;
   /** バックエンドがこのターンに決めた「今回の指示」。 */
   directive: TurnDirective;
+  /** 嘘がどれだけ積み上がったか。UI がこれを読んで終盤を検出できる。 */
+  phase: SessionPhase;
   regenerated: boolean;
   /** Fabricated claims from the final reply, normalized, that are not already stored. */
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
 };
-
-// としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない
-// （「まとまる」の定義はissue #6で実装者判断としている単純なクールダウン方式）。
-const TOSHIO_COOLDOWN_TURNS = 2;
 
 /** 直近のとしお発話から何ターン（シオリの返答）経ったか。一度も話していなければ Infinity。 */
 export function turnsSinceLastToshio(history: Message[]): number {
@@ -50,10 +57,13 @@ const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * analyze (local) -> retrieve -> decide directive (local) -> generate
- * (返答文 + claims を1回の構造化出力で) -> evaluate -> regenerate once if
- * flagged. 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する
- * 数件の嘘だけで、整合はこの後の evaluate が全件と照合して担保する。
+ * analyze (local) -> retrieve -> decide phase / directive (local) -> generate
+ * (返答文だけ) -> extract (主張の取り出し) -> evaluate -> flagged なら feedback
+ * 付きで generate → extract → evaluate をもう一度。API 呼び出しは1発話あたり
+ * generate 1回 + extract 1回（差し戻し時は各2回）。
+ *
+ * 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する数件の嘘
+ * だけで、整合は evaluate が全件と照合して担保する。
  */
 export async function runConversationPipeline(params: {
   workId: string;
@@ -62,51 +72,81 @@ export async function runConversationPipeline(params: {
   currentEpisode: number;
   history: Message[];
   userMessage: string;
+  /** 今回の発話を含むユーザー発話数。history は打ち切られているので呼び出し側が実数を渡す */
+  userMessageCount?: number;
 }): Promise<PipelineResult> {
   const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
-  const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
-  // 生成には関係する数件、検査には全件。守りは evaluate に寄せる。
+  // 生成には関係する数件、照合と検査には視聴済み全件。守りは evaluate に寄せる。
+  const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
+  const watchedCanonFacts = getCanonFactsUpTo(workId, currentEpisode);
   const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
+
+  const phase = decideSessionPhase({
+    fabricatedFactCount: existingFabricatedFacts.length,
+    userMessageCount: params.userMessageCount ?? countUserMessages(history) + 1,
+  });
 
   const directive = decideDirective({
     analysis,
     history,
     fabricatedFacts: existingFabricatedFacts,
     relevantFacts: promptFabricatedFacts,
+    phase,
   });
 
   const genArgs = {
     workTitle,
     currentEpisode,
-    canonFacts: visibleCanonFacts,
+    canonFacts: promptCanonFacts,
     fabricatedFacts: promptFabricatedFacts,
     directive,
     history,
     userMessage,
   };
-  const generate = (feedback?: string): Promise<GenerationResult> => generateResponse({ ...genArgs, feedback });
-  const evaluate = (result: GenerationResult) =>
+
+  // 取り出しに失敗しても返答文は返す（嘘が保存されないだけ）。会話が止まる方が損。
+  const extract = async (message: string): Promise<Claim[]> => {
+    try {
+      return await extractClaims({
+        text: message,
+        workTitle,
+        canonFacts: watchedCanonFacts,
+        normalize,
+        userMessage,
+      });
+    } catch (error) {
+      console.error("主張の取り出しに失敗:", error);
+      return [];
+    }
+  };
+
+  const respond = async (feedback?: string): Promise<GenerationResult> => {
+    const message = await generateReply({ ...genArgs, feedback });
+    return { message, claims: await extract(message), strategy: "no_new_lie" };
+  };
+
+  const evaluate = (claims: Claim[]) =>
     evaluateGeneration({
-      result,
-      visibleCanonFacts,
+      claims,
+      visibleCanonFacts: watchedCanonFacts,
       existingFabricatedFacts,
       normalize,
     });
 
-  let generation = await generate();
-  let evaluation = evaluate(generation);
+  let generation = await respond();
+  let evaluation = evaluate(generation.claims);
 
   let regenerated = false;
   let gaveUp = false;
   if (evaluation.shouldRegenerate) {
     regenerated = true;
     const feedback = [evaluation.reason, ...evaluation.details.map((d) => `- ${d}`)].filter(Boolean).join("\n");
-    generation = await generate(feedback);
-    evaluation = evaluate(generation);
+    generation = await respond(feedback);
+    evaluation = evaluate(generation.claims);
 
     // Still flagged after one retry: don't trust the generated *text* either
     // (it may have been written around the very lie we're discarding), so
@@ -141,6 +181,7 @@ export async function runConversationPipeline(params: {
     generation,
     evaluation,
     directive,
+    phase,
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
@@ -164,10 +205,12 @@ export async function runToshioInterjection(params: {
   userMessage: string;
   analysis: UserMessageAnalysis;
   generation: GenerationResult;
+  /** 終盤はクールダウンを外して毎ターン割り込めるようにする */
+  phase: SessionPhase;
 }): Promise<string | null> {
-  const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation } = params;
+  const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation, phase } = params;
 
-  if (turnsSinceLastToshio(history) < TOSHIO_COOLDOWN_TURNS) return null;
+  if (turnsSinceLastToshio(history) < toshioCooldownTurns(phase)) return null;
   if (!worthAskingToshio(generation, analysis)) return null;
 
   try {

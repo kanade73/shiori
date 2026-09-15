@@ -107,7 +107,12 @@ export type ClaimRelation =
 
 export type ClaimGrounding = "canon" | "fabricated";
 
-/** One setting-level claim the assistant made in a reply, as extracted by the model. */
+/**
+ * One setting-level claim a reply made, as extracted afterwards by
+ * lib/server/llm/extract.ts. The model only produces the triple, the sentence
+ * and the quote; `grounding` and `sourceCanonFactIds` are decided in code by
+ * matching the triple against the canon facts the user can already see.
+ */
 export type Claim = {
   subject: string;
   relation: ClaimRelation;
@@ -126,11 +131,18 @@ export type Claim = {
 /** 発話ごとに保存する claim。答え合わせで「どの主張が本当/嘘だったか」を示すのに使う。 */
 export type StoredClaim = Claim & { id: string };
 
+/**
+ * どれだけ嘘が積み上がったか。終盤ほど嘘を重ねる「頻度と密度」だけを上げる
+ * （嘘の内容・大きさ・方向性には一切触らない）。lib/server/llm/directive.ts。
+ */
+export type SessionPhase = "early" | "middle" | "late";
+
 /** バックエンドが1ターンごとに決める、シオリへの「今回の指示」。 */
 export type TurnDirective =
-  | { kind: "introduce" }
-  | { kind: "layer"; doubted: FabricatedFact[] }
-  | { kind: "plain" };
+  | { kind: "introduce"; phase: SessionPhase }
+  /** `detailCount` は裏付けにいくつ細部を足させるか。進行度で増える */
+  | { kind: "layer"; phase: SessionPhase; doubted: FabricatedFact[]; detailCount: number }
+  | { kind: "plain"; phase: SessionPhase };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 
@@ -177,6 +189,7 @@ export type ResponseStrategy =
 
 /**
  * 返答文と、そこで述べた主張。
+ * 返答文は generate（会話だけ）が書き、claims は extract が後から取り出す。
  * strategy はモデルが選ぶものではなく、保存された嘘の有無から事後に決まる
  * （UI のバッジと、としおのゲーティングに使うだけ）。
  */
