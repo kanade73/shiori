@@ -37,7 +37,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
   return (
     <div className="bg-canvas px-md py-sm">
       <div className="mx-auto max-w-[760px]">
-        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-surface-soft px-sm py-xs transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgb(var(--color-primary)_/_0.2)]">
+        <div className="pixel-frame flex items-end gap-xs bg-surface-soft px-sm py-xs focus-within:[--frame:rgb(var(--c-primary))]">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -56,7 +56,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
             type="button"
             onClick={onSend}
             disabled={!value.trim() || disabled}
-            className="mb-[2px] flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-on-primary transition-colors enabled:hover:bg-primary-active disabled:bg-primary-disabled disabled:text-muted-soft"
+            className="pixel-btn mb-[2px] flex h-8 w-8 shrink-0 items-center justify-center bg-primary text-on-primary enabled:hover:bg-primary-active disabled:bg-primary-disabled disabled:text-muted-soft"
             aria-label="送信"
           >
             <ArrowUpIcon width={17} height={17} />
@@ -67,10 +67,10 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
           <p className="text-[12px] text-muted-soft">
             シオリは本物の設定に時々小さな嘘を混ぜて話す、娯楽目的のフィクションです。内容を事実として扱わないでください。
           </p>
-          <div className="flex shrink-0 items-center gap-xs text-[11px] text-muted-soft">
+          <div className="flex shrink-0 items-center gap-xs font-pixel text-[12px] text-muted-soft">
             <span className="hidden sm:inline">↵ 改行 / ⌘・Ctrl+↵ 送信</span>
             <span className="sm:hidden">⌘/Ctrl+Enterで送信</span>
-            <span className="h-[6px] w-[6px] bg-success" />
+            <span className="h-[6px] w-[6px] animate-blink bg-success [animation-duration:2s]" />
             シオリ・オンライン
           </div>
         </div>

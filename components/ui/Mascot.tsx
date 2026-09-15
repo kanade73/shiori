@@ -41,8 +41,8 @@ function pickAvatarSource(size: number, character: Speaker) {
 }
 
 /**
- * The portrait mascot used for both the persistent chat avatar (circular
- * crop) and the larger empty-state display (full bust, natural silhouette).
+ * The portrait mascot used for both the persistent chat avatar (square pixel
+ * frame) and the larger empty-state display (full bust, natural silhouette).
  * The art is a single static frame, so "life" comes only from a slow,
  * whole-image tilt — no per-feature animation (no blink rig) is attempted
  * on this level of detail.
@@ -64,7 +64,7 @@ export function Mascot({
 
   return (
     <div
-      className={`shrink-0 ${isAvatar ? "rounded-full overflow-hidden bg-surface-card" : ""} ${className}`}
+      className={`shrink-0 ${isAvatar ? "pixel-frame overflow-hidden bg-surface-card" : ""} ${className}`}
       style={{ width: size, height: size }}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -72,7 +72,8 @@ export function Mascot({
         src={src}
         alt={name}
         draggable={false}
-        className={`image-pixelated block h-full w-full select-none object-cover ${animated ? "animate-tilt" : ""}`}
+        data-pixel=""
+        className={`block h-full w-full select-none object-cover ${animated ? "animate-tilt" : ""}`}
         style={animated ? { animationDelay: `${delay}s` } : undefined}
       />
     </div>

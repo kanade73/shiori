@@ -11,8 +11,8 @@ export function TypingIndicator({ speaker }: { speaker?: Speaker }) {
         {[0, 1, 2].map((i) => (
           <span
             key={i}
-            className="animate-typing-dot h-[6px] w-[6px] rounded-full bg-muted-soft"
-            style={{ animationDelay: `${i * 0.15}s` }}
+            className="animate-typing-dot h-[6px] w-[6px] bg-muted-soft"
+            style={{ animationDelay: `${i * 0.2}s` }}
           />
         ))}
       </div>

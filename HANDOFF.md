@@ -6,18 +6,6 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-## 2026-09-15: PR #19（フロントの細かい修正 #15）を dev（#17 テーマ後）とマージ
-- 衝突は配色まわりだけ。#17 のテーマ（CSS 変数 + ライト/ダーク）を構造として採り、#19 が固定値で入れていた紫（`#6a4fc4` / `#533aa8`）はライトテーマの `--color-primary` / `--color-primary-active` に写した。hairline・canvas・surface は #17 の値のまま
-- ChatInput は #17 の枠（`bg-surface-soft`・変数のフォーカスリング）に #19 のヒント文（↵ 改行 / ⌘・Ctrl+↵ 送信）を載せ、オンライン表示は #17 の四角ドット。Sidebar のアイコンは #19 の 48px
-- #19 の Enter 送信の仕様変更（⌘/Ctrl+Enter のみ送信）はそのまま。`npm test` 231件・tsc・lint・build 通過
-
-## 2026-09-15: ライト/ダークテーマ（PR #17 `feat/shiori-theme`）を dev の上に積み直した
-- PR #17 は元々 `feat/claims-extractor` の2コミット（`a52ab07` / `e04cfd6`、dev には未取り込み・`feat/lora-extractor` の土台）の上にテーマのコミットを積んでいたため dev と衝突していた。**テーマのコミット `940e215` だけを `origin/dev`（#18 マージ後）に cherry-pick し、ブランチを置き換えた**。claims-extractor の2コミットは PR #17 から外れた（`feat/lora-extractor` に残っている）
-- 置き直し時の変更: dev のディレクトリ再編に合わせ `ThemeToggle` を `components/ui/` に置き、`ChatHeader`（`components/chat/`）と `SetupScreen`（`components/setup/`）へトグルとクラスの変更を手で移植。SetupScreen は #18 で視聴進捗の入力が消えているので、残っている部分（タイトル・エラー表示・作品カード・続きから）だけに適用
-- 内容: `tailwind.config.ts` の意味色を `rgb(var(--color-*)/<alpha-value>)` 化、`app/globals.css` の `:root` / `[data-theme="dark"]` で配色を切り替え、`app/layout.tsx` で `DotGothic16` と FOUC 防止スクリプト、`.image-pixelated` でドット絵のジャギー保持。切り替えは `localStorage("theme")`、無ければ `prefers-color-scheme`
-- 注意: PR **#19**（`feat/issue-15` フロントの細かい修正）も `globals.css` / `tailwind.config.ts` / `components/chat/*` を触る。どちらかをマージしたらもう一方は衝突しうる
-- ローカルの worktree `../chat-shiori-theme` は古い `feat/shiori-theme` を指したままなので、使うなら `git fetch && git reset --hard origin/feat/shiori-theme`
-
 - **作業ブランチ: `feat/session_rag`**（PR **#18** `feat: 話題の切り替わりを判定してRAGを引き直す（issue #14）` → `dev`）。`origin/dev`（#8 としお・#13 答え合わせ + ディレクトリ再編・directive 方式の生成 をマージ済み）を **このブランチにマージしてコンフリクトを解消した**。PR はマージ可能な状態
 - マージで決めたこと:
   - 生成は dev の **directive 方式**（`llm/directive.ts` が「今回の指示」を決め、strategy はモデルに出させない）を正とし、その上に issue #14 の「今日の話題」節・`topic`/`pastTopics` の文脈・話題単位の履歴切り出し（`historyForTopic`）を載せた
@@ -27,6 +15,21 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
   - ファイルは dev の配置（`components/{chat,setup,reveal,ui,debug}/`、`lib/server/reveal/{build,graph,types}.ts`、`lib/client/format.ts`）。PR が足した `sessionLabel` / `episodeFromLabel` は `lib/client/types.ts` のまま。`ChatInput.test.tsx` は `components/chat/` へ移した
 - 検証: `npm test` 226件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**
 - 直前の `feat/checking_mockup`（#13）と `feat/issue-6-toshio`（#8）は dev にマージ済み
+
+## 直近のセッション: ダーク前提の「ドット絵風」テーマ（`feat/issue-15`、**未コミット**）
+- ユーザー要望:「ダークモードを、色調は変えずに Inverted Angel 風のドット絵の少しおしゃれな感じに。文字まで全部ピクセル風は厳しいのでバランスを考えて」→「一旦ダーク前提で」
+- 決めたバランス: **絵・枠・小さなラベルはドット、本文は普通**。本文・入力欄は Noto Sans JP のまま。話者名・時刻・「作品/セッション」の見出し・バッジ・ボタンのラベルだけ DotGothic16（`font-pixel`、next/font の `--font-pixel`）。CRT・走査線の湾曲は入れない（背景は 3px 間隔の縦のディザを 2% 弱で敷くだけ）
+- 仕組み:
+  - 色は `app/globals.css` の CSS 変数（`--c-*`、"r g b" 三つ組）に移し、`tailwind.config.ts` は `rgb(var(--c-x) / <alpha-value>)` で参照する。**既定（`:root`）がダーク**。元のライトの値は `[data-theme="light"]` に残してあり、`app/layout.tsx` の `<html data-theme="dark">` を切り替えれば戻る（切り替え UI は無い）。色相は元のラベンダー系のまま明度だけ反転、primary はダーク地で沈むので少し明るく（#7b63d6 / active #8f7ae0）
+  - 角丸トークン（`rounded-md` 等）は `--radius-*` 変数にして、ダークでは全部 0。ライトでは元の値
+  - `.pixel-frame`（2px 線 + 四隅を 2px 欠く clip-path。外側の影やフォーカスリングは出せない）、`.pixel-btn`（ぼかしなしの 2px 落ち影、押すと沈む）、`.pixel-dither`（2×2 ディザの地）を `@layer components` に置いた
+  - `Mascot` は丸抜きをやめて `pixel-frame` の正方形 + `img[data-pixel]` で `image-rendering: pixelated`
+  - fade-up / typing-dot は `steps()` に変え、ストリーミング中のカーソルは `█` 状のブロック（`animate-blink`）。アイコンは `strokeLinecap: square` + `crispEdges`
+  - 触ったコンポーネント: chat/{ChatApp,ChatHeader,ChatInput,ChatMessageItem,Sidebar,TypingIndicator}, setup/SetupScreen, ui/{Mascot,icons}。reveal / debug はトークン経由で暗くなるだけで className は触っていない
+- 検証: `tsc`・`eslint`・`npm test` 229件 通過。ヘッドレス Chromium（Playwright のキャッシュの chrome-headless-shell）で 3001 番の dev サーバーをスクリーンショットして、セットアップ・チャット（ユーザー吹き出し・としお）・答え合わせ（予想）を目視確認。`next build` は dev サーバーと衝突するので未実行
+- 注意: このツリーの dev サーバーは **3001 番**（別セッションが起動、PID は `.next/dev/logs`）。3000 番は別ディレクトリ `../chat-app` の古いコードなので見ないこと。Chrome 拡張（claude-in-chrome）は接続できなかった
+- **dev との統合**: dev には先に PR #17（ライト/ダーク切り替え、`--color-*` 変数、`ThemeToggle`、FOUC 防止スクリプト）が入っていたが、ユーザー判断でこのドット絵ダーク版を正として上書きした（globals.css / layout.tsx / tailwind.config.ts / chat・setup・ui の各コンポーネントはこちらの版）。`components/ui/ThemeToggle.tsx`（+test）と `SunIcon`/`MoonIcon` は残っているが**どこからも使っていない**。ライト切り替えを戻すなら `[data-theme="light"]` の変数はあるので、トグルを付け直すだけでよい
+- 残課題: 答え合わせ・debug 画面のカードにも `pixel-frame` を当てるか（今は角が直角になっただけ）。ライトへの切り替え UI は未着手。`tsconfig.json` の差分（`.next-3003` の include）はこのセッション以前からのもので触っていない
 
 ## 調査メモ: 「ステーキはゴーヤでできている」のような見れば分かる嘘は RAG 化のせいか（コードは変えていない）
 - ユーザー質問: localhost:3000 の会話（セッション `24d7e2dc`、話題「シーサー」）で出た「ステーキはシーサーが山で野生のゴーヤを素手で捕まえて作った」は RAG 化で出やすくなったのか、元々出うるのか

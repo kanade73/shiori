@@ -1,53 +1,53 @@
 import type { Config } from "tailwindcss";
 
-// 色の実体は globals.css の CSS 変数（--color-*）。[data-theme="dark"] で値が差し替わる。
-// Tailwind には「<alpha-value> プレースホルダ付きの rgb()」として渡し、bg-ink/30 のような透明度指定を効かせる。
-const themed = (name: string) => `rgb(var(--color-${name}) / <alpha-value>)`;
+const v = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
 
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      // 色は CSS 変数（app/globals.css）で持つ。既定はダーク。
+      // `<alpha-value>` を使うので値は "r g b" の三つ組で定義する
       colors: {
         primary: {
-          DEFAULT: themed("primary"),
-          active: themed("primary-active"),
-          disabled: themed("primary-disabled"),
+          DEFAULT: v("primary"),
+          active: v("primary-active"),
+          disabled: v("primary-disabled"),
         },
-        ink: themed("ink"),
+        ink: v("ink"),
         body: {
-          DEFAULT: themed("body"),
-          strong: themed("body-strong"),
+          DEFAULT: v("body"),
+          strong: v("body-strong"),
         },
         muted: {
-          DEFAULT: themed("muted"),
-          soft: themed("muted-soft"),
+          DEFAULT: v("muted"),
+          soft: v("muted-soft"),
         },
         hairline: {
-          DEFAULT: themed("hairline"),
-          soft: themed("hairline-soft"),
+          DEFAULT: v("hairline"),
+          soft: v("hairline-soft"),
         },
-        canvas: themed("canvas"),
+        canvas: v("canvas"),
         surface: {
-          soft: themed("surface-soft"),
-          card: themed("surface-card"),
-          "cream-strong": themed("surface-cream-strong"),
-          dark: themed("surface-dark"),
-          "dark-elevated": themed("surface-dark-elevated"),
-          "dark-soft": themed("surface-dark-soft"),
+          soft: v("surface-soft"),
+          card: v("surface-card"),
+          "cream-strong": v("surface-cream-strong"),
+          dark: v("surface-dark"),
+          "dark-elevated": v("surface-dark-elevated"),
+          "dark-soft": v("surface-dark-soft"),
         },
-        "on-primary": themed("on-primary"),
+        "on-primary": v("on-primary"),
         "on-dark": {
-          DEFAULT: themed("on-dark"),
-          soft: themed("on-dark-soft"),
+          DEFAULT: v("on-dark"),
+          soft: v("on-dark-soft"),
         },
         accent: {
-          steel: themed("accent-steel"),
-          mauve: themed("accent-mauve"),
+          steel: v("accent-steel"),
+          mauve: v("accent-mauve"),
         },
-        success: themed("success"),
-        warning: themed("warning"),
-        error: themed("error"),
+        success: v("success"),
+        warning: v("warning"),
+        error: v("error"),
       },
       fontSize: {
         "display-xl": ["64px", { lineHeight: "1.05", letterSpacing: "-1.5px" }],
@@ -64,7 +64,6 @@ const config: Config = {
       },
       fontFamily: {
         display: [
-          "var(--font-display)",
           "var(--font-sans)",
           "Noto Sans JP",
           "Hiragino Kaku Gothic ProN",
@@ -83,14 +82,16 @@ const config: Config = {
           "sans-serif",
         ],
         mono: ["var(--font-mono)", "JetBrains Mono", "ui-monospace", "monospace"],
+        // 小さなラベル専用のドットフォント。本文には使わない
+        pixel: ["var(--font-pixel)", "DotGothic16", "var(--font-sans)", "sans-serif"],
       },
       borderRadius: {
-        xs: "4px",
-        sm: "6px",
-        md: "8px",
-        lg: "12px",
-        xl: "16px",
-        pill: "9999px",
+        xs: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        pill: "var(--radius-pill)",
       },
       spacing: {
         xxs: "4px",
@@ -115,11 +116,16 @@ const config: Config = {
           "0%, 80%, 100%": { opacity: "0.25", transform: "translateY(0)" },
           "40%": { opacity: "1", transform: "translateY(-2px)" },
         },
+        blink: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0" },
+        },
       },
       animation: {
         tilt: "tilt 9s ease-in-out infinite",
-        "fade-up": "fade-up 0.25s ease-out",
-        "typing-dot": "typing-dot 1.2s ease-in-out infinite",
+        "fade-up": "fade-up 0.3s steps(4, end)",
+        "typing-dot": "typing-dot 1.2s steps(2, end) infinite",
+        blink: "blink 1s steps(2, end) infinite",
       },
     },
   },

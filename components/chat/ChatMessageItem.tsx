@@ -25,7 +25,7 @@ function CopyButton({ text }: { text: string }) {
       className="rounded-md p-xxs text-muted-soft transition-colors hover:bg-surface-card hover:text-body"
       aria-label="コピー"
     >
-      {copied ? <span className="text-[11px]">Copied</span> : <CopyIcon width={15} height={15} />}
+      {copied ? <span className="font-pixel text-[12px]">Copied</span> : <CopyIcon width={15} height={15} />}
     </button>
   );
 }
@@ -34,9 +34,9 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
   if (message.role === "user") {
     return (
       <div className="animate-fade-up flex justify-end px-md py-xxs">
-        <div className="max-w-[80%] rounded-lg bg-surface-card px-sm py-xs text-[15px] leading-[1.55] text-ink">
+        <div className="pixel-frame pixel-dither max-w-[80%] bg-surface-card px-sm py-xs text-[15px] leading-[1.55] text-ink">
           {message.content}
-          <p className="mt-xxs text-right text-[12px] text-muted-soft">{formatTime(message.createdAt)}</p>
+          <p className="mt-xxs text-right font-pixel text-[12px] text-muted-soft">{formatTime(message.createdAt)}</p>
         </div>
       </div>
     );
@@ -51,15 +51,15 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
       <Mascot size={40} delay={0.4} name={speakerName} character={message.speaker} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
-          <span className="text-[14px] font-medium text-ink">{speakerName}</span>
+          <span className="font-pixel text-[15px] text-ink">{speakerName}</span>
           {isToshio && (
-            <span className="rounded-pill border border-hairline px-xs py-[1px] text-[10px] text-muted-soft">考察</span>
+            <span className="border-2 border-hairline px-xs py-[1px] font-pixel text-[11px] leading-none text-muted-soft">考察</span>
           )}
-          <span className="text-[12px] text-muted-soft">{formatTime(message.createdAt)}</span>
+          <span className="font-pixel text-[12px] text-muted-soft">{formatTime(message.createdAt)}</span>
         </div>
         <p className="mt-xxs whitespace-pre-wrap text-[15px] leading-[1.55] text-body">
           {message.content}
-          {message.isStreaming && <span className="ml-[1px] inline-block h-[1em] w-[2px] animate-pulse bg-muted align-middle" />}
+          {message.isStreaming && <span className="ml-[2px] inline-block h-[1em] w-[0.6em] animate-blink bg-body align-middle" />}
         </p>
         {!message.isStreaming && (
           <div className="mt-xs flex items-center gap-xs opacity-0 transition-opacity group-hover:opacity-100">
@@ -67,7 +67,7 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
             {hasFacts && (
               <Link
                 href={`/debug/${sessionId}`}
-                className="rounded-pill border border-hairline px-xs py-[2px] text-[11px] text-muted transition-colors hover:bg-surface-card hover:text-ink"
+                className="border-2 border-hairline px-xs py-[2px] font-pixel text-[12px] text-muted hover:bg-surface-card hover:text-ink"
               >
                 設定を確認
               </Link>

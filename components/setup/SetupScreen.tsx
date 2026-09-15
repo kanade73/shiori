@@ -3,7 +3,6 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Mascot } from "@/components/ui/Mascot";
-import { ThemeToggle } from "@/components/ui/ThemeToggle";
 import { createSession, listSessions, listWorks, type SessionSummary } from "@/lib/client/api";
 import { sessionLabel } from "@/lib/client/types";
 import type { Work } from "@/lib/server/types";
@@ -72,23 +71,22 @@ export function SetupScreen() {
 
   return (
     <div className="flex h-dvh flex-col items-center overflow-y-auto bg-canvas px-md py-xl">
-      <ThemeToggle className="fixed right-md top-md" />
       <div className="w-full max-w-[460px]">
         <div className="flex flex-col items-center text-center">
           <Mascot size={128} variant="display" />
-          <h1 className="mt-md font-display text-[30px] leading-[1.2] text-ink">そんなシーンあった？</h1>
+          <h1 className="mt-md font-pixel text-display-sm text-ink">そんなシーンあった？</h1>
           <p className="mt-xs text-[14px] text-muted">
             話したい場面を教えて。シオリが本物の設定と、時々小さな嘘を混ぜて話すよ。
           </p>
         </div>
 
-        {error && <p className="mt-md rounded-md bg-error/10 px-sm py-xs text-center text-[13px] text-error">{error}</p>}
+        {error && <p className="mt-md rounded-md bg-[#c6435a1a] px-sm py-xs text-center text-[13px] text-error">{error}</p>}
 
         {!selectedWork ? (
           <p className="mt-lg text-center text-[14px] text-muted">利用できる作品がまだ登録されていません。</p>
         ) : (
-          <div className="mt-lg rounded-lg border border-hairline bg-surface-soft p-md">
-            <p className="font-display text-[13px] tracking-[1.5px] text-muted-soft">作品</p>
+          <div className="pixel-frame pixel-dither mt-lg bg-surface-card p-md">
+            <p className="font-pixel text-[12px] uppercase tracking-[1.5px] text-muted-soft">作品</p>
             <p className="mt-xxs text-[16px] font-medium text-ink">{selectedWork.title}</p>
             {selectedWork.description && <p className="mt-xxs text-[13px] text-muted">{selectedWork.description}</p>}
 
@@ -96,7 +94,7 @@ export function SetupScreen() {
               type="button"
               onClick={handleStart}
               disabled={starting}
-              className="mt-md flex w-full items-center justify-center rounded-md bg-primary px-sm py-xs text-[14px] font-medium text-on-primary transition-colors enabled:hover:bg-primary-active disabled:bg-primary-disabled"
+              className="pixel-btn mt-md flex w-full items-center justify-center bg-primary px-sm py-xs font-pixel text-[15px] text-on-primary enabled:hover:bg-primary-active disabled:bg-primary-disabled"
             >
               {starting ? "はじめています……" : "シオリと話す"}
             </button>
@@ -105,17 +103,17 @@ export function SetupScreen() {
 
         {sessions.length > 0 && (
           <div className="mt-lg">
-            <p className="px-xxs font-display text-[13px] tracking-[1.5px] text-muted-soft">続きから</p>
+            <p className="px-xxs font-pixel text-[12px] uppercase tracking-[1.5px] text-muted-soft">続きから</p>
             <div className="mt-xs space-y-xxs">
               {sessions.map((s) => (
                 <button
                   key={s.id}
                   type="button"
                   onClick={() => router.push(`/chat/${s.id}`)}
-                  className="flex w-full items-center justify-between rounded-md border border-hairline px-sm py-xs text-left text-[13px] text-body transition-colors hover:bg-surface-card hover:text-ink"
+                  className="pixel-frame flex w-full items-center justify-between px-sm py-xs text-left text-[13px] text-body hover:bg-surface-card hover:text-ink"
                 >
                   <span>{sessionLabel(s)}</span>
-                  <span className="text-[11px] text-muted-soft">{formatDateTime(s.updatedAt)}・嘘{s.fabricatedFactCount}件</span>
+                  <span className="font-pixel text-[12px] text-muted-soft">{formatDateTime(s.updatedAt)}・嘘{s.fabricatedFactCount}件</span>
                 </button>
               ))}
             </div>

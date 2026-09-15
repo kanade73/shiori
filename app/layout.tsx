@@ -15,17 +15,14 @@ const mono = JetBrains_Mono({
   display: "swap",
 });
 
-// タイトルやセクションラベルに使うドット体。シオリのドット絵に合わせた書体
-const displayFont = DotGothic16({
+// 小さなラベル（話者名・時刻・見出しの添え字・ボタン）にだけ使うドットフォント。
+// 本文まで置き換えると読みづらくなるので、本文は Noto Sans JP のまま
+const pixel = DotGothic16({
   subsets: ["latin"],
   weight: "400",
-  variable: "--font-display",
+  variable: "--font-pixel",
   display: "swap",
 });
-
-// 初回描画より先に data-theme を確定させ、テーマのちらつきを防ぐ。
-// 保存済みの選択があればそれを、無ければ OS の設定に従う。
-const themeInitScript = `(function(){try{var t=localStorage.getItem("theme");if(t!=="light"&&t!=="dark"){t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";}document.documentElement.dataset.theme=t;}catch(e){}})();`;
 
 export const metadata: Metadata = {
   title: "そんなシーンあった？",
@@ -38,11 +35,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="ja" suppressHydrationWarning>
-      <body className={`${sans.variable} ${mono.variable} ${displayFont.variable}`}>
-        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        {children}
-      </body>
+    <html lang="ja" data-theme="dark">
+      <body className={`${sans.variable} ${mono.variable} ${pixel.variable}`}>{children}</body>
     </html>
   );
 }
