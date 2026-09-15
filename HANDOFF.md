@@ -4,6 +4,10 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: 答え合わせで本文に位置を付けられなかった主張を表示（dev に直コミット）
+
+dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。
+
 ## 2026-09-15: claims 抽出に Gemini の経路を戻した（`fix/extract-gemini`、dev `4913fd5` から切った。**PR #40** → `dev`、未マージ）
 
 `31caf67`（PR #37）で抽出から Gemini の経路を消していたので、手元の推論（Ollama / LoRA サーバ）を何も設定していないと claims が毎回空になり、**答え合わせの嘘/本当の印が1つも付かなかった**（印は claims の `quote` の位置に付けるため。描画のコードは消えていない）。Ollama の経路（PR #39）は残したまま、Gemini だけでも動くようにした。

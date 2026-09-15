@@ -103,6 +103,29 @@ beforeEach(() => {
 });
 
 describe("RevealView", () => {
+  it("本文に位置を付けられなかった主張も、本文の下に印付きで出す", async () => {
+    const data = revealed({});
+    data.statements.push({
+      id: "l2",
+      messageId: "m1",
+      verdict: "lie",
+      claim: "資格証は三枚ある",
+      subject: "ちいかわ",
+      relation: "has",
+      object: "資格証",
+      negated: false,
+      quote: null,
+      sources: [],
+    });
+    data.messages[1].statementIds.push("l2");
+    mocks.revealSession.mockResolvedValue(data);
+    render(<RevealView sessionId="s1" />);
+    const list = await screen.findByTestId("reveal-unplaced");
+    expect(list.textContent).toContain("資格証は三枚ある");
+    // 位置が分かる主張は本文の印で出すので、下の一覧には重ねない
+    expect(list.textContent).not.toContain("裏にレシピがある");
+  });
+
   it("開いたらすぐ答え合わせをして結果を出す。予想の画面は挟まない", async () => {
     mocks.revealSession.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
