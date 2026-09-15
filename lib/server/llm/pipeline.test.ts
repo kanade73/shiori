@@ -25,8 +25,6 @@ function generation(overrides: Partial<GenerationResult> = {}): GenerationResult
     message: "",
     strategy: "no_new_lie",
     claims: [],
-    usedExistingFactIds: [],
-    spoilerRisk: 0,
     ...overrides,
   };
 }

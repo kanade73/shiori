@@ -6,6 +6,7 @@ import type {
   Message,
   ProgressResolution,
   ResponseStrategy,
+  SessionPhase,
   Speaker,
   Work,
 } from "@/lib/server/types";
@@ -109,7 +110,8 @@ export type SendMessageHandlers = {
   onToken: (text: string) => void;
   onMetadata: (data: { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean }) => void;
   onMessageEnd: () => void;
-  onDone: () => void;
+  /** `phase` はセッションに嘘がどれだけ積み上がったか。終盤（"late"）の検出用に流しているだけで、UI は未実装。 */
+  onDone: (data: { phase: SessionPhase }) => void;
 };
 
 export async function sendMessage(sessionId: string, content: string, handlers: SendMessageHandlers): Promise<void> {
@@ -130,6 +132,6 @@ export async function sendMessage(sessionId: string, content: string, handlers: 
     else if (event === "metadata")
       handlers.onMetadata(data as { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean });
     else if (event === "message-end") handlers.onMessageEnd();
-    else if (event === "done") handlers.onDone();
+    else if (event === "done") handlers.onDone({ phase: (data as { phase?: SessionPhase }).phase ?? "early" });
   }
 }
