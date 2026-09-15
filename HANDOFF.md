@@ -6,10 +6,10 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- issue #30・#32(a)・#33 を、dev `e38df88` から切った3本のブランチでそれぞれ直してコミットした（ユーザー指示「issue を簡単そうなものから3つ選んで解決して」）。push・PR は未（ユーザー判断）。この HANDOFF の更新は `fix/issue-33-arc-aliases` にだけ入れた
-  - `fix/issue-30-toshio-trigger`（Closes #30）
-  - `fix/issue-32-no-topic-canon`（Refs #32。(a) だけ）
-  - `fix/issue-33-arc-aliases`（Refs #33。一部）
+- issue #30・#32(a)・#33 を、dev `e38df88` から切った3本のブランチでそれぞれ直し、それぞれ dev への PR を出した（ユーザー指示「issue を簡単そうなものから3つ選んで解決して」→「PR まで作って」）。マージ待ち。この HANDOFF の更新は `fix/issue-33-arc-aliases` にだけ入れた
+  - `fix/issue-30-toshio-trigger` → PR #34（Closes #30）
+  - `fix/issue-32-no-topic-canon` → PR #35（Refs #32。(a) だけ）
+  - `fix/issue-33-arc-aliases` → PR #36（Refs #33。一部）
 - 別に `fix/issue-26`（issue #26 の上書き誤判定 + issue #11 の API キー2本の切り替え）の PR #28 が dev へのマージ待ち。その HANDOFF の更新（#26・#11 の節）は dev にまだ無い。**PR #28 とこの HANDOFF は冒頭で衝突する**ので、後からマージする方で両方の節を残すこと
 - dev には #23（ベクトルDB、issue #22）と #25（嘘を場面の細部に寄せる・としおの作風）までマージ済み
 
