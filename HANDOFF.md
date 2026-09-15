@@ -28,6 +28,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
   - 触ったコンポーネント: chat/{ChatApp,ChatHeader,ChatInput,ChatMessageItem,Sidebar,TypingIndicator}, setup/SetupScreen, ui/{Mascot,icons}。reveal / debug はトークン経由で暗くなるだけで className は触っていない
 - 検証: `tsc`・`eslint`・`npm test` 229件 通過。ヘッドレス Chromium（Playwright のキャッシュの chrome-headless-shell）で 3001 番の dev サーバーをスクリーンショットして、セットアップ・チャット（ユーザー吹き出し・としお）・答え合わせ（予想）を目視確認。`next build` は dev サーバーと衝突するので未実行
 - 注意: このツリーの dev サーバーは **3001 番**（別セッションが起動、PID は `.next/dev/logs`）。3000 番は別ディレクトリ `../chat-app` の古いコードなので見ないこと。Chrome 拡張（claude-in-chrome）は接続できなかった
+- **dev との統合**: dev には先に PR #17（ライト/ダーク切り替え、`--color-*` 変数、`ThemeToggle`、FOUC 防止スクリプト）が入っていたが、ユーザー判断でこのドット絵ダーク版を正として上書きした（globals.css / layout.tsx / tailwind.config.ts / chat・setup・ui の各コンポーネントはこちらの版）。`components/ui/ThemeToggle.tsx`（+test）と `SunIcon`/`MoonIcon` は残っているが**どこからも使っていない**。ライト切り替えを戻すなら `[data-theme="light"]` の変数はあるので、トグルを付け直すだけでよい
 - 残課題: 答え合わせ・debug 画面のカードにも `pixel-frame` を当てるか（今は角が直角になっただけ）。ライトへの切り替え UI は未着手。`tsconfig.json` の差分（`.next-3003` の include）はこのセッション以前からのもので触っていない
 
 ## 調査メモ: 「ステーキはゴーヤでできている」のような見れば分かる嘘は RAG 化のせいか（コードは変えていない）

@@ -152,7 +152,7 @@ export function DebugView({ sessionId }: { sessionId: string }) {
           ← チャットに戻る
         </Link>
 
-        <h1 className="mt-sm font-display text-display-sm font-medium text-ink">偽設定の確認画面</h1>
+        <h1 className="mt-sm font-display text-display-sm text-ink">偽設定の確認画面</h1>
         <p className="mt-xxs text-[13px] text-muted">
           {work.title} ・ {sessionLabel(session)}（
           {session.currentEpisode > 0 ? `第${session.currentEpisode}話まで視聴済みとして扱う` : "視聴話数は不明"}） ・
