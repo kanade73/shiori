@@ -2,23 +2,118 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+  色トークン。既定はダーク（Inverted Angel 風のドット絵の夜の画面）。
+  色相は元のライト配色（ラベンダー寄りのグレー + 紫）から変えず、明度だけ反転している。
+  値は "r g b" の三つ組（tailwind.config.ts が rgb(var(--c-x) / alpha) で参照する）。
+  ライトの値も残してあるので、あとで data-theme="light" の切り替えを足せる。
+*/
 @layer base {
+  :root {
+    --c-primary: 123 99 214; /* #7b63d6 */
+    --c-primary-active: 143 122 224; /* #8f7ae0 */
+    --c-primary-disabled: 44 48 73; /* #2c3049 */
+    --c-ink: 247 245 245; /* #f7f5f5 */
+    --c-body: 214 216 228; /* #d6d8e4 */
+    --c-body-strong: 235 236 243; /* #ebecf3 */
+    --c-muted: 148 151 168; /* #9497a8 */
+    --c-muted-soft: 111 114 136; /* #6f7288 */
+    --c-hairline: 44 48 73; /* #2c3049 */
+    --c-hairline-soft: 35 38 64; /* #232640 */
+    --c-canvas: 18 20 33; /* #121421 */
+    --c-surface-soft: 24 26 42; /* #181a2a */
+    --c-surface-card: 30 33 51; /* #1e2133 */
+    --c-surface-cream-strong: 39 43 66; /* #272b42 */
+    --c-surface-dark: 244 244 248;
+    --c-surface-dark-elevated: 227 229 238;
+    --c-surface-dark-soft: 236 238 244;
+    --c-on-primary: 255 255 255;
+    --c-on-dark: 18 20 33;
+    --c-on-dark-soft: 103 107 131;
+    --c-accent-steel: 138 150 214; /* #8a96d6 */
+    --c-accent-mauve: 175 160 210; /* #afa0d2 */
+    --c-success: 95 197 143; /* #5fc58f */
+    --c-warning: 224 173 74; /* #e0ad4a */
+    --c-error: 224 99 122; /* #e0637a */
+
+    /* ドット絵の枠は角を丸めない */
+    --radius-xs: 0px;
+    --radius-sm: 0px;
+    --radius-md: 0px;
+    --radius-lg: 0px;
+    --radius-xl: 0px;
+    --radius-pill: 0px;
+
+    /* 枠線と「落ち影」（ぼかさず 2px ずらした硬い影） */
+    --frame: rgb(var(--c-hairline));
+    --frame-strong: rgb(var(--c-muted-soft));
+    --drop: rgb(0 0 0 / 0.45);
+  }
+
+  [data-theme="light"] {
+    --c-primary: 106 79 196;
+    --c-primary-active: 83 58 168;
+    --c-primary-disabled: 217 219 230;
+    --c-ink: 18 20 33;
+    --c-body: 59 62 84;
+    --c-body-strong: 37 40 60;
+    --c-muted: 103 107 131;
+    --c-muted-soft: 138 141 158;
+    --c-hairline: 217 219 230;
+    --c-hairline-soft: 230 232 240;
+    --c-canvas: 244 244 248;
+    --c-surface-soft: 236 238 244;
+    --c-surface-card: 227 229 238;
+    --c-surface-cream-strong: 214 217 230;
+    --c-surface-dark: 18 20 33;
+    --c-surface-dark-elevated: 30 33 51;
+    --c-surface-dark-soft: 24 26 42;
+    --c-on-dark: 247 245 245;
+    --c-on-dark-soft: 148 151 168;
+    --c-accent-steel: 80 91 149;
+    --c-accent-mauve: 159 144 187;
+    --c-success: 76 170 119;
+    --c-warning: 207 154 58;
+    --c-error: 198 67 90;
+    --radius-xs: 4px;
+    --radius-sm: 6px;
+    --radius-md: 8px;
+    --radius-lg: 12px;
+    --radius-xl: 16px;
+    --radius-pill: 9999px;
+    --drop: rgb(18 20 33 / 0.12);
+  }
+
   html {
+    color-scheme: dark;
+  }
+
+  [data-theme="light"] {
     color-scheme: light;
   }
 
   body {
     @apply bg-canvas text-body font-sans antialiased;
+    /* 2px 間隔の縦のディザ。薄く敷いてブラウン管ではなくドット絵の地に見せる */
+    background-image: repeating-linear-gradient(
+      90deg,
+      rgb(255 255 255 / 0.018) 0 1px,
+      transparent 1px 3px
+    );
+  }
+
+  [data-theme="light"] body {
+    background-image: none;
   }
 
   ::selection {
-    background-color: #6b549633;
-    color: theme("colors.ink");
+    background-color: rgb(var(--c-primary) / 0.35);
+    color: rgb(var(--c-ink));
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #6b549633 transparent;
+    scrollbar-color: rgb(var(--c-hairline)) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -27,11 +122,67 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: #6b549633;
-    border-radius: 9999px;
+    background-color: rgb(var(--c-hairline));
+    border-radius: var(--radius-pill);
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: #6b549655;
+    background-color: rgb(var(--c-muted-soft));
+  }
+
+  /* ドット絵はそのまま拡大する（ぼかさない） */
+  img[data-pixel] {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+  }
+}
+
+@layer components {
+  /*
+    ドット絵の枠。2px の硬い線と、四隅を 1 ドット（2px）欠いた形。
+    clip-path で角を落とすので、外側の影やフォーカスリングは付けられない。
+    枠の色を変えたいときは --frame を上書きする。
+  */
+  .pixel-frame {
+    border: 2px solid var(--frame);
+    clip-path: polygon(
+      2px 0,
+      calc(100% - 2px) 0,
+      100% 2px,
+      100% calc(100% - 2px),
+      calc(100% - 2px) 100%,
+      2px 100%,
+      0 calc(100% - 2px),
+      0 2px
+    );
+  }
+
+  .pixel-frame-strong {
+    --frame: var(--frame-strong);
+  }
+
+  /* ボタン。ぼかしのない 2px の落ち影を持ち、押すと影の分だけ沈む */
+  .pixel-btn {
+    box-shadow: 2px 2px 0 0 var(--drop);
+    transition: none;
+  }
+
+  .pixel-btn:enabled:active,
+  a.pixel-btn:active {
+    transform: translate(2px, 2px);
+    box-shadow: none;
+  }
+
+  .pixel-btn:disabled {
+    box-shadow: none;
+  }
+
+  /* 2×2 のディザで塗った面（吹き出しの地など） */
+  .pixel-dither {
+    background-image:
+      linear-gradient(45deg, rgb(255 255 255 / 0.03) 25%, transparent 25%, transparent 75%, rgb(255 255 255 / 0.03) 75%),
+      linear-gradient(45deg, rgb(255 255 255 / 0.03) 25%, transparent 25%, transparent 75%, rgb(255 255 255 / 0.03) 75%);
+    background-size: 4px 4px;
+    background-position: 0 0, 2px 2px;
   }
 }

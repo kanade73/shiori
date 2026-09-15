@@ -30,7 +30,7 @@ const lie: Claim = {
 
 describe("store: 答え合わせ", () => {
   it("発話の claims を ID 付きで保存し、セッション単位で取り出せる", () => {
-    const session = store.createSession("w", 3);
+    const session = store.createSession("w");
     const [saved] = store.saveMessageClaims(session.id, "m1", [lie]);
     expect(saved.id).toMatch(/^claim_/);
     expect(store.getMessageClaims(session.id)).toEqual({ m1: [saved] });
@@ -38,7 +38,7 @@ describe("store: 答え合わせ", () => {
   });
 
   it("答え合わせは1回きり。2回目は最初の予想と時刻を残す", () => {
-    const session = store.createSession("w", 3);
+    const session = store.createSession("w");
     const first = store.revealSession(session.id, { c1: "lie" });
     const second = store.revealSession(session.id, { c1: "true" });
     expect(first?.reveal?.guesses).toEqual({ c1: "lie" });

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Mascot } from "@/components/ui/Mascot";
 import { PlusIcon, XIcon } from "@/components/ui/icons";
 import type { SessionSummary } from "@/lib/client/api";
+import { sessionLabel } from "@/lib/client/types";
 import type { Work } from "@/lib/server/types";
 
 interface SidebarProps {
@@ -34,8 +35,8 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
       >
         <div className="flex items-center justify-between gap-sm px-md py-md">
           <div className="flex items-center gap-sm">
-            <Mascot size={44} />
-            <span className="font-display text-[20px] font-medium leading-none text-ink">シオリ</span>
+            <Mascot size={52} />
+            <span className="font-pixel text-[24px] leading-none text-ink">シオリ</span>
           </div>
           <button
             type="button"
@@ -50,7 +51,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         <div className="px-sm">
           <Link
             href="/"
-            className="flex w-full items-center gap-sm rounded-md border border-hairline bg-canvas px-sm py-xs text-[14px] font-medium text-ink shadow-sm transition-colors hover:bg-surface-soft"
+            className="pixel-frame pixel-btn flex w-full items-center gap-sm bg-surface-soft px-sm py-xs font-pixel text-[16px] text-ink hover:bg-surface-card"
           >
             <PlusIcon width={17} height={17} />
             新しいセッション
@@ -58,17 +59,16 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         </div>
 
         <div className="mt-md px-sm">
-          <p className="px-sm pb-xxs text-[12px] font-medium uppercase tracking-[1.5px] text-muted-soft">作品</p>
-          <div className="rounded-lg bg-surface-card px-sm py-sm">
+          <p className="px-sm pb-xxs font-pixel text-[16px] uppercase tracking-[1.5px] text-muted-soft">作品</p>
+          <div className="pixel-frame pixel-dither bg-surface-card px-sm py-sm">
             <p className="text-[15px] font-medium text-ink">{work.title}</p>
-            <dl className="mt-xs space-y-[2px] text-[12px] text-muted">
+            <dl className="mt-xs space-y-[2px] font-pixel text-[16px] text-muted">
               <div className="flex justify-between gap-sm">
-                <dt className="shrink-0">視聴話数</dt>
+                <dt className="shrink-0">話題</dt>
                 <dd className="text-right">
                   {(() => {
                     const active = sessions.find((s) => s.id === activeSessionId);
-                    if (!active) return "-";
-                    return active.progressDescription ?? `第${active.currentEpisode}話まで`;
+                    return active ? sessionLabel(active) : "-";
                   })()}
                 </dd>
               </div>
@@ -85,24 +85,24 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         </div>
 
         <div className="mt-sm flex-1 overflow-y-auto px-sm pb-sm">
-          <p className="px-sm pb-xxs pt-sm text-[12px] font-medium uppercase tracking-[1.5px] text-muted-soft">
+          <p className="px-sm pb-xxs pt-sm font-pixel text-[16px] uppercase tracking-[1.5px] text-muted-soft">
             セッション
           </p>
           {sessions.map((s) => (
             <Link
               key={s.id}
               href={`/chat/${s.id}`}
-              className={`block rounded-md px-sm py-xs text-[13px] transition-colors ${
+              className={`block rounded-md px-sm py-xs text-[15px] transition-colors ${
                 s.id === activeSessionId ? "bg-surface-card font-medium text-ink" : "text-body hover:bg-surface-soft hover:text-ink"
               }`}
             >
               <div className="flex items-center justify-between gap-xs">
-                <span className="truncate">{s.progressDescription ?? `第${s.currentEpisode}話まで`}</span>
-                <span className="shrink-0 text-[11px] text-muted-soft">
+                <span className="truncate">{sessionLabel(s)}</span>
+                <span className="shrink-0 font-pixel text-[16px] text-muted-soft">
                   {s.reveal ? "答え合わせ済み" : `${s.fabricatedFactCount}件`}
                 </span>
               </div>
-              <span className="text-[11px] text-muted-soft">{formatDateTime(s.updatedAt)}</span>
+              <span className="font-pixel text-[16px] text-muted-soft">{formatDateTime(s.updatedAt)}</span>
             </Link>
           ))}
         </div>

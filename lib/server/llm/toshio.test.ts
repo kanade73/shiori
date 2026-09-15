@@ -161,3 +161,26 @@ describe("generateToshioCommentary: シオリがこの返答で語った設定�
     expect(text).not.toContain("この返答でついた嘘");
   });
 });
+
+describe("pickTheoryAngle", () => {
+  it("乱数で切り口を1つ選ぶ", async () => {
+    const { pickTheoryAngle, THEORY_ANGLES } = await import("./toshio");
+    expect(pickTheoryAngle(() => 0)).toBe(THEORY_ANGLES[0]);
+    expect(pickTheoryAngle(() => 0.999)).toBe(THEORY_ANGLES[THEORY_ANGLES.length - 1]);
+  });
+});
+
+describe("formatCreators", () => {
+  it("作り手が無ければ何も出さない", async () => {
+    const { formatCreators } = await import("./toshio");
+    expect(formatCreators([])).toBe("");
+  });
+
+  it("作風を箇条書きで出し、発言・私生活を作らない注意を添える", async () => {
+    const { formatCreators } = await import("./toshio");
+    const text = formatCreators([{ role: "原作", name: "A", style: ["小物で語る", "説明しない"] }]);
+    expect(text).toContain("## A（原作）");
+    expect(text).toContain("- 小物で語る");
+    expect(text).toContain("発言・私生活は作らない");
+  });
+});

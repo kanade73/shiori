@@ -6,6 +6,26 @@
     "episodeCount": 377,
     "createdAt": "2026-09-14T00:00:00.000Z"
   },
+  "sources": [
+    {
+      "kind": "mediawiki",
+      "endpoint": "https://ja.wikipedia.org/w/api.php",
+      "page": "ちいかわ なんか小さくてかわいいやつ",
+      "sections": ["概要", "世界観", "連作エピソード", "登場キャラクター", "用語"]
+    }
+  ],
+  "creators": [
+    {
+      "role": "原作",
+      "name": "ナガノ",
+      "source": {
+        "kind": "mediawiki",
+        "endpoint": "https://ja.wikipedia.org/w/api.php",
+        "page": "ナガノ (イラストレーター)",
+        "sections": ["概要", "人物"]
+      }
+    }
+  ],
   "arcs": [
     {
       "id": "arc-nantoka-vania",

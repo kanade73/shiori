@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { Arc, CanonFact, Entity, Episode, Work } from "./types";
+import type { Arc, CanonFact, Creator, Entity, Episode, Work, WorkSource } from "./types";
 
 type WorkFile = {
   work: Work;
@@ -8,6 +8,10 @@ type WorkFile = {
   entities?: Entity[];
   episodes: Episode[];
   canonFacts: CanonFact[];
+  /** 会話の話題を調べにいく外部の知識源 */
+  sources?: WorkSource[];
+  /** 作り手（作風から考察を組むため） */
+  creators?: Creator[];
 };
 
 // One directory per work under data/, each holding a work.json (and cards.jsonl).
@@ -62,15 +66,6 @@ export function getAllCanonFacts(workId: string): CanonFact[] {
   return loadAll().get(workId)?.canonFacts ?? [];
 }
 
-/**
- * All episodes for the work, regardless of spoiler level. Only for the
- * viewing-progress resolver, which must search past the (not yet known)
- * spoiler boundary to figure out where that boundary is.
- */
-export function getAllEpisodes(workId: string): Episode[] {
-  return loadAll().get(workId)?.episodes ?? [];
-}
-
 export function getArcs(workId: string): Arc[] {
   return loadAll().get(workId)?.arcs ?? [];
 }
@@ -78,4 +73,13 @@ export function getArcs(workId: string): Arc[] {
 /** Named entities (characters, places, items) with aliases, used to normalize lies before storing them. */
 export function getEntities(workId: string): Entity[] {
   return loadAll().get(workId)?.entities ?? [];
+}
+
+/** 会話の話題を調べにいく外部の知識源。書かれていなければ外部は引かない。 */
+export function getCreators(workId: string): Creator[] {
+  return loadAll().get(workId)?.creators ?? [];
+}
+
+export function getSources(workId: string): WorkSource[] {
+  return loadAll().get(workId)?.sources ?? [];
 }

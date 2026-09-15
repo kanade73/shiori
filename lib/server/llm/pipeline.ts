@@ -5,7 +5,10 @@ import { countUserMessages, decideDirective, decideSessionPhase, toshioCooldownT
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
+import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
+import { detectTopicShift } from "../topic-shift";
 import { getCanonFactsUpTo, getEntities } from "../works";
+import { getCreatorProfiles } from "../creator";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import { createTurnEmitter, type TraceClaim } from "../events";
 import type {
@@ -14,6 +17,7 @@ import type {
   Message,
   ResponseEvaluation,
   SessionPhase,
+  SessionTopic,
   TurnDirective,
   UserMessageAnalysis,
 } from "../types";
@@ -31,6 +35,12 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
+  /** この発話で新しく把握した話題の場面（最初の話題、または切り替わった先）。変わらなければ null */
+  newTopic: SessionTopic | null;
+  /** この発話で話題が切り替わったなら、切り替わる前の話題 */
+  previousTopic: SessionTopic | null;
+  /** 話題の場面を踏まえたネタバレ境界。セッションに保存し、としおにも同じ値を渡す */
+  currentEpisode: number;
   /** この発話分のイベントをまとめる id（開発者モードのパネル用）。 */
   turnId: string;
 };
@@ -39,6 +49,12 @@ export type PipelineResult = {
 function toTraceClaim(c: Claim): TraceClaim {
   return { subject: c.subject, relation: c.relation, object: c.object, negated: c.negated, claim: c.claim, grounding: c.grounding };
 }
+
+// としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない。
+// 頻度はコードが決める（としお本人の shouldComment は材料の有無で true に倒れやすく、頻度の調整には使えない）。
+// ユーザーが考察・理由を求めた／疑ったときは短い間隔で乗り、シオリが嘘をついただけの回はもっと間を空ける。
+export const TOSHIO_COOLDOWN_ON_QUESTION = 2;
+export const TOSHIO_COOLDOWN_ON_CLAIMS = 5;
 
 /** 直近のとしお発話から何ターン（シオリの返答）経ったか。一度も話していなければ Infinity。 */
 export function turnsSinceLastToshio(history: Message[]): number {
@@ -52,40 +68,102 @@ export function turnsSinceLastToshio(history: Message[]): number {
   return Infinity;
 }
 
-/** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
-export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
+/**
+ * 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。
+ * ユーザーが考察・理由を求めている／疑っている回は主な出番なので短い間隔で通し、
+ * シオリが嘘をついただけの回は長い間隔でしか通さない。
+ */
+export function worthAskingToshio(
+  generation: GenerationResult,
+  analysis: UserMessageAnalysis,
+  turnsSince: number = Infinity,
+  phase: SessionPhase = "early",
+): boolean {
   // としおは evaluate を通らない。シオリが分からないふりで主張を避けた話題
   // （差し戻し2回後の定型文もここに落ちる）に、検査の無い経路で乗せない。
   if (generation.strategy === "admit_uncertainty") return false;
-  if (generation.claims.length > 0) return true;
-  return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
+  // 終盤はクールダウンそのものを外す（directive.ts の TOSHIO_COOLDOWN_TURNS が 0）。
+  // 嘘の密度と同じで、上げるのは頻度だけ。何を語るかには触れない。
+  const scale = toshioCooldownTurns(phase) === 0 ? 0 : 1;
+  const asked = analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
+  if (asked) return turnsSince >= TOSHIO_COOLDOWN_ON_QUESTION * scale;
+  if (generation.claims.length > 0) return turnsSince >= TOSHIO_COOLDOWN_ON_CLAIMS * scale;
+  return false;
+}
+
+/**
+ * 話題が途中で切り替わったら、切り替わる前の履歴はシオリに渡さない（前の場面の話に引っ張られない
+ * ようにし、文脈も小さく保つ）。前の話題で語った嘘は FabricatedFact として別に渡るので、
+ * 履歴を落としても矛盾は検査できる。最初の話題（since なし）では何も落とさない。
+ */
+export function historyForTopic(history: Message[], topic: SessionTopic | null): Message[] {
+  if (!topic?.since) return history;
+  return history.filter((m) => m.createdAt >= topic.since!);
 }
 
 const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一度言って。";
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
+ * (topic lookup until the session has one, topic-shift check after) ->
  * analyze (local) -> retrieve -> decide phase / directive (local) -> generate
  * (返答文だけ) -> extract (主張の取り出し) -> evaluate -> flagged なら feedback
  * 付きで generate → extract → evaluate をもう一度。API 呼び出しは1発話あたり
  * generate 1回 + extract 1回（差し戻し時は各2回）。
  *
  * 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する数件の嘘
- * だけで、整合は evaluate が全件と照合して担保する。
+ * だけで、整合は evaluate が視聴済み全件と照合して担保する。
  */
 export async function runConversationPipeline(params: {
   workId: string;
   workTitle: string;
   sessionId: string;
   currentEpisode: number;
+  /** セッションで既に把握している話題の場面。無ければこの発話から調べる（issue #14） */
+  topic?: SessionTopic | null;
+  /** 切り替わる前の話題（古い順） */
+  pastTopics?: SessionTopic[];
+  /** 今回の発話より前の履歴（切り替えがあれば、ここから切り替え後の分だけをシオリに渡す） */
   history: Message[];
   userMessage: string;
   /** 今回の発話を含むユーザー発話数。history は打ち切られているので呼び出し側が実数を渡す */
   userMessageCount?: number;
+  /** 今回のユーザー発話を保存した時刻。話題が切り替わったら、これより前の履歴を落とす */
+  userMessageAt?: string;
   /** 開発者モードのパネルで1発話分のイベントをまとめる id。省略すればここで発番する */
   turnId?: string;
 }): Promise<PipelineResult> {
-  const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
+  const { workId, workTitle, sessionId, history, userMessage } = params;
+  const pastTopics = params.pastTopics ?? [];
+
+  // 話題が決まるまでは発話のたびに外部の知識源で調べる。決まった後は、話題が切り替わったと
+  // 判定したとき（ゲート → 判定役）だけ、判定役が組み直した検索語で引き直す
+  let topic = params.topic ?? null;
+  let newTopic: SessionTopic | null = null;
+  let previousTopic: SessionTopic | null = null;
+  if (!topic) {
+    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage, ordinal: pastTopics.length + 1 });
+    topic = newTopic;
+  } else {
+    const shift = await detectTopicShift({ workId, workTitle, topic, history, userMessage });
+    if (shift) {
+      const found = await lookupSessionTopic({
+        workId,
+        workTitle,
+        userMessage,
+        query: shift.query,
+        ordinal: pastTopics.length + 2,
+      });
+      if (found && !isSameTopic(found, topic)) {
+        previousTopic = topic;
+        newTopic = { ...found, since: params.userMessageAt ?? new Date().toISOString() };
+        topic = newTopic;
+      }
+    }
+  }
+  const topicsBefore = previousTopic ? [...pastTopics, previousTopic] : pastTopics;
+  const currentEpisode = Math.max(params.currentEpisode, episodeBoundaryFor(workId, topic));
+  const topicFacts = topic?.facts ?? [];
 
   // 開発者モードのパネルへの中継。購読者が居なければ何もしない。
   const turnId = params.turnId ?? crypto.randomUUID();
@@ -99,9 +177,10 @@ export async function runConversationPipeline(params: {
     mentionedEvents: analysis.mentionedEvents,
     questionType: analysis.questionType,
   });
-  // 生成には関係する数件、照合と検査には視聴済み全件。守りは evaluate に寄せる。
-  const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
-  const watchedCanonFacts = getCanonFactsUpTo(workId, currentEpisode);
+  // 生成には関係する数件、照合と検査には視聴済み全件（話題の場面について資料で
+  // 確かめた設定も本物として数える）。守りは evaluate に寄せる。
+  const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis, topicFacts);
+  const watchedCanonFacts = [...topicFacts, ...getCanonFactsUpTo(workId, currentEpisode)];
   const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
@@ -114,6 +193,7 @@ export async function runConversationPipeline(params: {
   const directive = decideDirective({
     analysis,
     history,
+    userMessage,
     fabricatedFacts: existingFabricatedFacts,
     relevantFacts: promptFabricatedFacts,
     phase,
@@ -129,10 +209,12 @@ export async function runConversationPipeline(params: {
   const genArgs = {
     workTitle,
     currentEpisode,
+    topic,
+    pastTopics: topicsBefore,
     canonFacts: promptCanonFacts,
     fabricatedFacts: promptFabricatedFacts,
     directive,
-    history,
+    history: historyForTopic(history, topic),
     userMessage,
   };
 
@@ -226,6 +308,9 @@ export async function runConversationPipeline(params: {
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
+    newTopic,
+    previousTopic,
+    currentEpisode,
     turnId,
   };
 }
@@ -241,7 +326,10 @@ export async function runToshioInterjection(params: {
   workId: string;
   workTitle: string;
   sessionId: string;
+  /** シオリのパイプラインが返した境界（話題の場面を踏まえたもの） */
   currentEpisode: number;
+  /** セッションの話題の場面（この発話で決まったものも含む） */
+  topic?: SessionTopic | null;
   /** シオリのパイプラインに渡したのと同じ、今回の発話より前の履歴 */
   history: Message[];
   userMessage: string;
@@ -252,23 +340,28 @@ export async function runToshioInterjection(params: {
   /** シオリと同じターンとしてパネルに並べるための id */
   turnId?: string;
 }): Promise<string | null> {
-  const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation, phase } = params;
+  const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation, phase } = params;
   const emit = createTurnEmitter(sessionId, params.turnId ?? crypto.randomUUID());
 
-  if (turnsSinceLastToshio(history) < toshioCooldownTurns(phase)) {
+  const turnsSince = turnsSinceLastToshio(history);
+  if (turnsSince < toshioCooldownTurns(phase)) {
     emit({ stage: "toshio", interjected: false, skipped: "cooldown" });
     return null;
   }
-  if (!worthAskingToshio(generation, analysis)) {
+  if (!worthAskingToshio(generation, analysis, turnsSince, phase)) {
     emit({ stage: "toshio", interjected: false, skipped: "material" });
     return null;
   }
 
   try {
+    // 作風は取れなくても割り込みは成立する（作り手の記事が無い作品もある）
+    const creators = await getCreatorProfiles(workId).catch(() => []);
     const commentary = await generateToshioCommentary({
+      creators,
       workTitle,
       currentEpisode,
-      canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis),
+      topic: topic ?? null,
+      canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis, topic?.facts ?? []),
       fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,
