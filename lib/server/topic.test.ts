@@ -30,7 +30,7 @@ vi.mock("./embeddings", () => ({
   ensureChunkEmbeddings: mocks.ensureChunkEmbeddings,
 }));
 
-import { episodeBoundaryFor, lookupSessionTopic, matchArc, prepareTopicSearch, selectCandidates } from "./topic";
+import { arcNameCore, episodeBoundaryFor, lookupSessionTopic, matchArc, prepareTopicSearch, selectCandidates } from "./topic";
 
 const kenteiArc: Arc = {
   id: "arc-kentei",
@@ -84,6 +84,46 @@ describe("matchArc: 場面の名前から arc を引く", () => {
 
   it("一致しなければ null", () => {
     expect(matchArc([kenteiArc, tsueArc], ["ハチワレ"])).toBeNull();
+  });
+
+  describe("別名を足さなくても、資料の見出しの表記ゆれを吸収する（issue #33）", () => {
+    const arc = (id: string, title: string, aliases: string[] = []) => ({ id, title, episodeFrom: 1, episodeTo: 2, aliases });
+    const star = arc("arc-star", "黒い流れ星編", ["流れ星編", "ループ編"]);
+    const shisa = arc("arc-shisa", "シーサーの資格編", ["シーサー編", "お酒の資格編"]);
+    const restaurant = arc("arc-rest", "三ツ星レストラン編", ["レストラン編"]);
+    const beetle = arc("arc-beetle", "カブトムシ編（擬態型）", ["擬態型編"]);
+    const arcs = [star, shisa, restaurant, beetle];
+
+    it("前後編などの飾り（<後>・（…））を除いた芯が同じなら引ける", () => {
+      expect(matchArc(arcs, ["『黒い流れ星<後>』編"])?.id).toBe("arc-star");
+      expect(matchArc(arcs, ["黒い流れ星<前>編"])?.id).toBe("arc-star");
+      expect(matchArc(arcs, ["『カブトムシ』編"])?.id).toBe("arc-beetle");
+    });
+
+    it("見出しが途中で切れていても、3文字以上の芯が arc の名前の頭と一致すれば引ける", () => {
+      expect(matchArc(arcs, ["『シーサーの』編"])?.id).toBe("arc-shisa");
+    });
+
+    it("小書きの仮名の違い（三ッ星／三ツ星）は同じに見る", () => {
+      expect(matchArc(arcs, ["『三ッ星』編"])?.id).toBe("arc-rest");
+    });
+
+    it("編の名前の形でない話題の名前（人物名など）は、arc の名前の頭と一致しても引かない", () => {
+      // 人物の話題（シーサー）を、その人物の編に対応させると視聴済み話数を先まで開けてしまう
+      expect(matchArc(arcs, ["シーサー"])).toBeNull();
+      expect(matchArc(arcs, ["黒い流れ"])).toBeNull();
+    });
+
+    it("2文字以下の途中で切れた芯は頭の一致では引かない", () => {
+      expect(matchArc(arcs, ["『三ッ』編"])).toBeNull();
+    });
+
+    it("arcNameCore: 編の名前の形のときだけ芯を返す", () => {
+      expect(arcNameCore("『黒い流れ星<後>』編")).toBe("黒い流れ星");
+      expect(arcNameCore("カブトムシ編（擬態型）")).toBe("カブトムシ");
+      expect(arcNameCore("『お買い物編』")).toBe("お買い物");
+      expect(arcNameCore("シーサー")).toBeNull();
+    });
   });
 });
 
