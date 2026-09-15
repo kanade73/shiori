@@ -4,6 +4,33 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出を自前の LoRA 推論サーバ（Qwen3-1.7B）に確定（`feat/local-extract`、PR 作成済み・未マージ）
+
+**検証用だった `feat/local-extract` を「これが正」に昇格させた。** claims 抽出は常に自前の LoRA 推論サーバ（`ml/`）で行い、**Gemini の抽出は使わない**。
+
+- **採用モデルは Qwen3-1.7B + LoRA（マージ済み）**。4B は精度は上（厳密F1 0.392 vs 0.267）だが 1件 6秒前後かかり、抽出は1発話ごとに逐次で走るので会話が止まる。1.7B は 1〜2秒。取りこぼした主張は「その嘘が保存されない」だけで矛盾は生まないため、速さを取った。4B に戻すなら `EXTRACT_ENDPOINT` のポートを差し替えるだけ
+- このブランチに `feat/reveal-no-explanation`（= origin/dev の取り込み済み）と `feat/lora-extractor`（`ml/` 一式）をマージ済み。**`ml/` がリポジトリに入った**
+- `.env.example` / `AGENTS.md` を「`EXTRACT_ENDPOINT` は必須・抽出は `ml/` のサーバ・Gemini は使わない」に統一。`GEMINI_EXTRACT_MODEL` と `client.ts` の `EXTRACTION_MODEL` は消えている
+- `ml/README.md` / `ml/HANDOFF.md` の冒頭に採用を明記。既定の起動は 1.7B マージ済み（`$SCRATCH/out/lora/merged`）をポート 8123、4B は別ポート（8124）の比較用
+- **PR は `dev` 向きで、PR #27（`feat/reveal-no-explanation` → dev）に依存している。#27 がマージされれば差分は抽出と `ml/` だけに縮む**
+
+### 現在つながっている推論サーバ（手元）
+
+リモート gpu04 で 2 本立っていて、SSH トンネルで手元に出ている。**ドキュメントの既定（1.7B = 8123）と手元の割り当てが逆**なので注意。
+
+| 手元のポート | モデル | リモートのパス |
+|---|---|---|
+| 8124 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
+| 8123 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+
+`../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8124`（= 1.7B）にしてある。
+
+### 通しの確認（3004 の dev サーバ）
+
+`npm install`（`sqlite-vec` など dev 由来の新しい依存が入る）→ `npm run dev -- -p 3004`。セッションを作って「ハチワレってなんで洞窟に住んでるの？」を1発話送り、`GET /api/sessions/<id>/events` の `stage: "extract"` が **`backend: "local"`・claims 6件**（`lives_in / 小さな洞窟` が canon、残り5件が fabricated）で返るところまで確認。`failed` は立たず、待ちも体感で 1〜2秒。
+
+検証: `npm test` 338件 / `tsc --noEmit` / `eslint` / `next build` すべて通過。
+
 ## 2026-09-15: claims 抽出をローカルの LoRA 専用にした（worktree `../chat-local-extract` / `feat/local-extract`）
 
 **LoRA 抽出の検証用ブランチ**。`feat/reveal-no-explanation` から分岐。抽出が Gemini に落ちて「動いてしまう」と LoRA の出来が測れないので、**この 1 ブランチだけ Gemini 版の抽出を消して `EXTRACT_ENDPOINT` 必須にしてある**（本流にそのまま持っていくものではない。取り込むなら 2 実装のままの `feat/reveal-no-explanation` 側が正）。

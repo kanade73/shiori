@@ -1,5 +1,11 @@
 # ml/ — claims 抽出の軽量モデル（LoRA）
 
+> **採用は Qwen3-1.7B + LoRA（マージ済み）。4B は精度比較用に残しているだけ。**
+> アプリの抽出は常にこのサーバで行い、Gemini は使わない（`lib/server/llm/extract.ts`）。
+> 4B の方が厳密F1 は高い（0.392 vs 0.267）が、1件 6秒前後かかって会話が止まる。
+> 1.7B は 1〜2秒で、体験としてはこちらが勝つ、という判断。
+> 既定の起動は `$SCRATCH/out/lora/merged` をポート **8123**（下の「推論サーバ」節）。
+
 シオリの返答文から「作品の設定についての主張」を三つ組で取り出す工程
 （`lib/server/llm/extract.ts` の `extractClaims`）を、Gemini API ではなく
 手元の小型モデルで動かすための一式。
@@ -40,14 +46,19 @@
 | 役割 | モデル | 備考 |
 |---|---|---|
 | teacher（合成） | `Qwen/Qwen3-14B-AWQ` | A4000 16GB に 1枚で載る。ゲートなし |
-| student v1 | `Qwen/Qwen3-1.7B` | LoRA r=32 / alpha=64、bf16。厳密F1 0.267 |
-| **student v2（現行）** | `Qwen/Qwen3-4B` | LoRA r=64 / alpha=128、bf16。**厳密F1 0.392 で teacher zero-shot（0.325）を超えた** |
+| **student v1（採用・アプリが叩くもの）** | `Qwen/Qwen3-1.7B` | LoRA r=32 / alpha=64、bf16。厳密F1 0.267、**1件 1〜2秒** |
+| student v2（精度比較用） | `Qwen/Qwen3-4B` | LoRA r=64 / alpha=128、bf16。厳密F1 0.392 で teacher zero-shot（0.325）を超えたが、**1件 6秒前後** |
 
 Gemma はゲート付き（manual approval）でトークンが無いと落とせないため使っていない。
 
 教師データは v1 と同じもの（3062件）を使い回している。student を大きくしただけで
 厳密F1 は 0.267 → 0.392。**1.7B の頭打ちは容量側だった**ことがこれで確かめられた。
 代わりに 1件あたりのレイテンシは 1〜2秒台から 6秒台に落ちる（下の「レイテンシ」）。
+
+**アプリが叩くのは 1.7B の方**。抽出は1発話ごとに逐次で走るので、6秒はシオリの返答の
+後ろで会話を止める長さになる。精度 0.267 は「主張を取りこぼす／言い回しがずれる」
+程度の劣化で、取りこぼした嘘が保存されないだけ（矛盾は生まない）。
+体験の側を取って 1.7B を採用した。4B は比較のために残してある。
 
 ## 環境構築（GPU サーバ）
 
@@ -145,7 +156,7 @@ CUDA_VISIBLE_DEVICES=0 $SCRATCH/venv-vllm/bin/python eval.py \
   --model Qwen/Qwen3-1.7B --lora $SCRATCH/out/lora/adapter --out $SCRATCH/out/eval-student-lora.json
 ```
 
-### 4B（現行）の学習
+### 4B（比較用）の学習
 
 DDP は動かないので分散はしない。代わりに**ハイパーパラメータ違いを別 GPU で同時に回す**。
 A4000 1枚 = 1 設定で、3 エポックが約 2時間20分（288 step × 29 秒）。
@@ -221,10 +232,10 @@ relation 語彙だけを材料に、以下の軸をランダムに振ってシ�
 |---|---|---|---|---|---|---|---|
 | student 素 (Qwen3-1.7B, zero-shot) | 0.89 | 0.053 | 0.082 | 0.120 | 0.00 | - | 254 |
 | student 素 (Qwen3-4B, zero-shot) | 1.00 | 0.141 | 0.187 | 0.276 | 0.08 | 0.89 | 341 |
-| student + LoRA (Qwen3-1.7B) | 0.99 | 0.267 | 0.319 | 0.407 | 0.13 | 0.98 | 321 |
+| **student + LoRA (Qwen3-1.7B)（採用）** | 0.99 | **0.267** | 0.319 | 0.407 | 0.13 | 0.98 | 321 |
 | teacher zero-shot (Qwen3-14B-AWQ) | 1.00 | 0.325 | 0.420 | 0.527 | 0.18 | 0.92 | 551 |
-| **student + LoRA (Qwen3-4B)** | 1.00 | **0.392** | 0.455 | 0.534 | 0.20 | 0.99 | 262 |
-| 同・マージ済み（実際に serve しているもの） | 1.00 | 0.386 | 0.443 | 0.523 | 0.20 | 0.99 | 253 |
+| student + LoRA (Qwen3-4B) | 1.00 | 0.392 | 0.455 | 0.534 | 0.20 | 0.99 | 262 |
+| 同・4B マージ済み | 1.00 | 0.386 | 0.443 | 0.523 | 0.20 | 0.99 | 253 |
 | teacher few-shot（ラベル生成と同条件＝上限） | 1.00 | 0.946 | 0.941 | 0.944 | 0.77 | 0.92 | 659 |
 
 - **厳密F1**: 正規化した (subject, relation, object, negated) の完全一致
@@ -269,10 +280,10 @@ c と a の差（0.309 → 0.367）にエポックと lr が両方効いてい�
 
 | 構成 | 中央値 | 平均 | p90 | 備考 |
 |---|---|---|---|---|
-| **4B マージ済み・vLLM（現行）** | **6.1秒** | 5.9秒 | 8.9秒 | `serve.py --backend vllm`、n=30（holdout） |
+| 4B マージ済み・vLLM | 6.1秒 | 5.9秒 | 8.9秒 | `serve.py --backend vllm`、n=30（holdout） |
 | 4B + LoRA アダプタ・vLLM | 8.3秒 | 8.3秒 | 13.3秒 | 同 n=30。**アダプタ適用のオーバーヘッドで 27% 遅い** |
 | （参考）4B マージ済み、短い文 3例 | 1.8〜3.2秒 | - | - | 主張 1〜2個の短文ならこのくらい |
-| 1.7B + LoRA・vLLM（前回） | 約 0.9〜2.3秒 | - | - | 短い文 0.9秒 / 3主張の文 2.3秒 |
+| **1.7B + LoRA・vLLM（採用）** | **約 0.9〜2.3秒** | - | - | 短い文 0.9秒 / 3主張の文 2.3秒。**この速さで 4B を落とした** |
 | 1.7B + LoRA・transformers（GPU） | 8.3秒 | 7.1秒 | - | `--backend hf`、n=30 |
 | 1.7B + LoRA・transformers（CPU, fp32, 16スレッド） | 16.4秒 | 17.2秒 | - | n=5。動くが実用にはつらい |
 | （参考）100件まとめて vLLM に投げた場合（4B） | - | 0.25秒/件 | - | 上の精度表の「バッチ推論 ms/件」 |
@@ -283,31 +294,40 @@ A4000 の帯域だと 4B bf16 の逐次デコードは 35〜55 tok/s が上限�
 
 **serve するならアダプタではなくマージ済みを指定する**（精度は同じで 27% 速い）。
 100件まとめて投げれば 0.25秒/件まで落ちるので、バッチで回せる用途なら 4B でも困らない。
+ただしアプリの抽出は1発話ごとの逐次呼び出しなので、**採用は 1.7B マージ済み**。
 
 ## 推論サーバ
 
 ```bash
-# 現行（4B マージ済み + vLLM）。CUDA_VISIBLE_DEVICES は必ず付ける。
+# 採用（1.7B マージ済み + vLLM、ポート 8123）。CUDA_VISIBLE_DEVICES は必ず付ける。
 # 付けないと GPU 0 に載り、他の学習と衝突して "Free memory on device ..." で即死する
 source ~/chat-lora/env.sh
 export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1
 CUDA_VISIBLE_DEVICES=6 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
-  --model $SCRATCH/out/lora-4b/merged --port 8123 \
+  --model $SCRATCH/out/lora/merged --port 8123 \
+  > $ML/logs/serve.log 2>&1 < /dev/null &
+
+# 精度比較用の 4B を並べて立てるなら別ポートで（1件 6秒前後）
+CUDA_VISIBLE_DEVICES=7 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
+  --model $SCRATCH/out/lora-4b/merged --port 8124 \
   > $ML/logs/serve4b.log 2>&1 < /dev/null &
 
 # アダプタを当てる形でも動く（27% 遅い。複数アダプタを切り替えたいとき用）
 CUDA_VISIBLE_DEVICES=6 $VLLM_PY $ML/serve.py --backend vllm \
-  --model Qwen/Qwen3-4B --lora $SCRATCH/out/lora-4b/adapter --port 8123
+  --model Qwen/Qwen3-1.7B --lora $SCRATCH/out/lora/adapter --port 8123
 
 # 軽い方（transformers。GPU が無ければ --device cpu でも動く）
-$TRAIN_PY $ML/serve.py --model Qwen/Qwen3-4B \
-  --lora $SCRATCH/out/lora-4b/adapter --device cuda:0 --port 8123
+$TRAIN_PY $ML/serve.py --model Qwen/Qwen3-1.7B \
+  --lora $SCRATCH/out/lora/adapter --device cuda:0 --port 8123
 ```
 
-手元から叩くときは SSH トンネルを張る。
+手元から叩くときは SSH トンネルを張る。アプリの `EXTRACT_ENDPOINT` はこの
+トンネルの URL（例 `http://localhost:8123`）を指す。
 
 ```bash
 ssh -N -L 8123:127.0.0.1:8123 h2511188@gpu04.ced.cei.uec.ac.jp
+# 4B も並べて見るなら
+ssh -N -L 8124:127.0.0.1:8124 h2511188@gpu04.ced.cei.uec.ac.jp
 ```
 
 `Uvicorn running on http://0.0.0.0:8123` がログに出れば起動完了。
@@ -346,7 +366,7 @@ wget -q -O - --header='content-type: application/json' \
 quote が自分の入力に含まれない claim = 0件）。ただし `_gen_lock` で直列化しているので、
 同時に叩くと単に待たされる。連続して使うなら1件ずつ順番に投げるのが速い。
 
-アプリから使うときは `lib/server/llm/extract.ts` の `extractClaims` の中の
-Gemini 呼び出しを、この `/extract` への fetch に差し替える。返ってきた
-`claims` をそのまま `groundClaims(claims, canonFacts, normalize)` に渡せば、
-grounding 付きの `Claim[]` になる（**ここは今回のブランチでは変更していない**）。
+アプリ（`lib/server/llm/extract.ts` の `extractClaims`）は `EXTRACT_ENDPOINT` を
+この `/extract` に向けて叩き、返ってきた `claims` を `groundClaims(claims, canonFacts, normalize)`
+に通して grounding 付きの `Claim[]` にする。**Gemini 版の抽出は残っていない**ので、
+サーバが落ちていればその発話の claims は空になる（返答文はそのまま返り、会話は止まらない）。

@@ -1,7 +1,12 @@
 # ml/ HANDOFF
 
-このディレクトリだけで完結する作業ログ。リポジトリ直下の `HANDOFF.md` には**触っていない**
-（別セッションが編集中のため）。アプリ側のコード（`app/` `lib/` `components/`）も一切変更していない。
+> **採用は Qwen3-1.7B + LoRA（マージ済み）。4B は精度比較用。**
+> 4B の方が厳密F1 は高い（0.392 vs 0.267）が 1件 6秒前後かかり、1.7B は 1〜2秒。
+> 抽出は1発話ごとに逐次で走るので速さを取った。
+> 既定の起動は `$SCRATCH/out/lora/merged` をポート **8123**（下の「起動しっぱなしにしているもの」）。
+> アプリ側は `EXTRACT_ENDPOINT` をこのサーバに向けて叩く（Gemini 版の抽出は削除済み）。
+
+このディレクトリだけで完結する作業ログ。
 
 ## 何をしたか
 
@@ -13,8 +18,8 @@
 - `grounding`（canon / fabricated）は**モデルに出させていない**。canonFacts との照合で
   アプリ側の `groundClaims` が決める、という既存の設計をそのまま守っている
 
-**アプリ側への組み込みはまだしていない。** `extract.ts` の中の Gemini 呼び出しを
-`ml/serve.py` の `POST /extract` に差し替えるところが次の一手（README 末尾に手順）。
+**アプリ側への組み込みは完了した**（`feat/local-extract`）。`extract.ts` から Gemini 版の
+抽出を削除し、`EXTRACT_ENDPOINT`（このサーバ）専用にしてある。
 
 ### 2回目の作業（student を 4B に上げた）
 
@@ -46,10 +51,10 @@
 |---|---|
 | スクリプト一式・ログ | `~/chat-lora/`（= `/home2/y2025/h2511188/chat-lora`） |
 | venv・HFキャッシュ・重み・データ | `/var/tmp/h2511188/chat-lora/`（**ホームは quota が厳しいので置けない**） |
-| **現行 4B アダプタ** | `/var/tmp/h2511188/chat-lora/out/lora-4b/adapter`（= run b のコピー） |
-| **現行 4B マージ済み**（serve しているもの） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged`（7.6GB） |
+| **採用 1.7B アダプタ / マージ済み** | `/var/tmp/h2511188/chat-lora/out/lora/{adapter,merged}`（serve しているのは `merged`） |
+| 比較用 4B アダプタ | `/var/tmp/h2511188/chat-lora/out/lora-4b/adapter`（= run b のコピー） |
+| 比較用 4B マージ済み | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged`（7.6GB） |
 | 4B のハイパラ比較 3 本 | `/var/tmp/h2511188/chat-lora/out/lora-4b-{a,b,c}/adapter` |
-| 旧 1.7B アダプタ / マージ済み | `/var/tmp/h2511188/chat-lora/out/lora/{adapter,merged}` |
 | 教師データ（4B でもこれを使った） | `/var/tmp/h2511188/chat-lora/data/dataset/{train,holdout}.jsonl` |
 | 評価結果 | `/var/tmp/h2511188/chat-lora/out/eval-*.json`（`.preds.jsonl` に生出力）。4B は `eval-4b-*.json` |
 | 学習ログ | `~/chat-lora/logs/train4b-{a,b,c}.log` / サーバは `logs/serve4b.log` |
@@ -58,20 +63,28 @@
 
 ### 起動しっぱなしにしているもの
 
-**GPU 6 で 4B の推論サーバが動いている**（アプリから繋いで試すため、意図的に落としていない）。
+**採用の 1.7B マージ済みをポート 8123 で立てておく**（アプリの `EXTRACT_ENDPOINT` の向き先）。
+比較用の 4B を並べるなら別ポート（8124）。
 
 ```bash
 # 起動コマンド（落ちていたら同じもので立て直す）
 source ~/chat-lora/env.sh
 export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1
-CUDA_VISIBLE_DEVICES=6 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
-  --model $SCRATCH/out/lora-4b/merged --port 8123 > $ML/logs/serve4b.log 2>&1 < /dev/null &
 
-# 手元から
+# 採用（1.7B マージ済み）
+CUDA_VISIBLE_DEVICES=6 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
+  --model $SCRATCH/out/lora/merged --port 8123 > $ML/logs/serve.log 2>&1 < /dev/null &
+
+# 比較用（4B マージ済み）。要らなければ立てなくてよい
+CUDA_VISIBLE_DEVICES=7 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
+  --model $SCRATCH/out/lora-4b/merged --port 8124 > $ML/logs/serve4b.log 2>&1 < /dev/null &
+
+# 手元から（アプリの EXTRACT_ENDPOINT = http://localhost:8123）
 ssh -N -L 8123:127.0.0.1:8123 h2511188@gpu04.ced.cei.uec.ac.jp
+ssh -N -L 8124:127.0.0.1:8124 h2511188@gpu04.ced.cei.uec.ac.jp   # 4B も見るなら
 ```
 
-GPU 0〜5・7〜9 は解放済み（学習・評価のプロセスは全部落とした）。
+学習・評価のプロセスは全部落としてあるので、推論サーバ以外は GPU を掴んでいない。
 
 **`/var/tmp` はローカルディスクなので、マシンの初期化や掃除で消える可能性がある。**
 消えたら `run_all.sh` を回し直せば作り直せる（スクリプトはホーム側に残る）。
@@ -163,6 +176,9 @@ lr / r / epoch の当たりを 2時間20分で1回引けた（逐次なら 6時�
   時間の都合でここで止めた。次に振るなら lr 3e-4 / r 64 / 4 エポック
 - **`eval.py` と `serve.py` の `max_lora_rank` は 64 決め打ち**。r を 128 に上げるなら
   両方直す必要がある（今回は 64 に収めた）
+- **採用は 1.7B**。厳密F1 では 4B が上（0.392 vs 0.267）だが、抽出は1発話ごとに逐次で走るので
+  6秒は会話を止める。取りこぼした主張は「その嘘が保存されない」だけで矛盾は生まないため、
+  精度より速さを取った。**4B に戻すなら `EXTRACT_ENDPOINT` のポートを差し替えるだけ**
 - **serve するのはマージ済みにした**。アダプタ適用より 27% 速く、精度は誤差の範囲
   （0.386 vs 0.392、bf16 のマージ時の丸め）。複数アダプタを切り替える予定はないので
   マージ済みで困らない
@@ -183,10 +199,9 @@ lr / r / epoch の当たりを 2時間20分で1回引けた（逐次なら 6時�
 - **長い文での取りこぼしも未検証**。緩いF1 0.455 / 主語+関係F1 0.534 と、
   厳密F1 0.392 との差が 1.7B の頃より縮んでいるので改善はしているはずだが、
   誤りの中身は数えていない
-- **レイテンシが 1件 6秒**。1.7B の 1〜2秒から明確に悪化した。逐次で叩く用途では重い。
-  下げたいなら ① AWQ / GPTQ 量子化 ② 出力を短くする（`claim` の一文要約をやめる）
-  ③ そもそもバッチで回す（0.25秒/件）
-- アプリ（`lib/server/llm/extract.ts`）への接続は未実施
+- **4B はレイテンシが 1件 6秒**。1.7B の 1〜2秒から明確に悪化し、逐次で叩くアプリでは重い。
+  **これが 1.7B を採用した理由**。4B を使いたいなら ① AWQ / GPTQ 量子化
+  ② 出力を短くする（`claim` の一文要約をやめる）③ そもそもバッチで回す（0.25秒/件）
 - **CPU 推論は動くが遅い**（1.7B で中央値 16.4秒。4B では測っていないがさらに遅いはず）。
   本番 Fly.io の1コンテナで回すのは非現実的で、使うなら GPU サーバを別に立てて HTTP で叩く形。
   transformers バックエンドは GPU でも遅いので、**必ず `--backend vllm` で起動する**
