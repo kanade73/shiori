@@ -1,17 +1,21 @@
 import { getArcs, getSources, getWork } from "./works";
-import { loadSourceChunks, mentionedNames, rankChunks } from "./sources";
+import { fuseRankings, loadSourceChunks, mentionedNames, rankChunks } from "./sources";
+import { rankChunksByVector } from "./embeddings";
 import { extractTopic } from "./llm/topic";
 import { normalizeText } from "./claims";
 import type { Arc, CanonFact, SessionTopic } from "./types";
 
 /**
  * issue #14: セッションごとの RAG。会話の最初の返答で、ユーザーが話したい場面を外部の
- * 知識源から特定し、その場面の事実をセッションに持たせる（以後の発話では外部を引かない）。
+ * 知識源から特定し、その場面の事実をセッションに持たせる。以後は話題が切り替わったと
+ * 判定したとき（topic-shift.ts）だけ引き直す。
  * 話数を手で入れさせていたシーン検索（progress-resolver）の置き換え。
  */
 
 /** 資料係（LLM）に渡す段落の数。言い換えの大きい答えだと目的の段落が5〜6番目に来ることがある */
 const MAX_CHUNKS = 8;
+/** 順位を混ぜる前に、bigram・ベクトルそれぞれから取る段落の数 */
+const FUSION_DEPTH = 30;
 // これ未満の重なりしかない発話（挨拶など）では、資料係を呼ぶまでもなく「話題なし」とする。
 // ひらがなだけの重なりは弱く数えるので、漢字・カタカナの2文字が1つ重なる程度が目安
 const MIN_SCORE = 3;
@@ -45,27 +49,50 @@ export function episodeBoundaryFor(workId: string, topic: SessionTopic | null | 
   return count ? Math.min(arc.episodeTo, count) : arc.episodeTo;
 }
 
+/** 同じ場面を指しているか（切り替えたつもりで同じ場面を引き直したときは、切り替えとみなさない） */
+export function isSameTopic(a: SessionTopic, b: SessionTopic): boolean {
+  if (a.arcId && b.arcId) return a.arcId === b.arcId;
+  return normalizeText(a.title) === normalizeText(b.title);
+}
+
 /**
  * ユーザーの発話から話題の場面を調べる。外部の知識源が無い作品、話題が特定できない発話、
  * 取得や生成の失敗ではすべて null（シオリはそのまま返事をし、次の発話でまた調べる）。
+ *
+ * `query` は検索に使う語（話題の切り替えでは判定役が指示語を解いて組み直したもの）。
+ * 無ければ発話そのもの。`ordinal` はセッションで何番目の話題か（事実の id を話題ごとに分ける）。
  */
 export async function lookupSessionTopic(params: {
   workId: string;
   workTitle: string;
   userMessage: string;
+  query?: string;
+  ordinal?: number;
 }): Promise<SessionTopic | null> {
   const { workId, workTitle, userMessage } = params;
+  const query = params.query?.trim() || userMessage;
+  const ordinal = params.ordinal ?? 1;
   if (getSources(workId).length === 0) return null;
 
   try {
     const chunks = await loadSourceChunks(workId);
-    const candidates = rankChunks(userMessage, chunks, mentionedNames(workId, userMessage))
-      .filter((r) => r.score >= MIN_SCORE)
-      .slice(0, MAX_CHUNKS)
-      .map((r) => r.chunk);
-    if (candidates.length === 0) return null;
+    const lexical = rankChunks(query, chunks, mentionedNames(workId, query));
+    // 挨拶のように資料とほとんど重ならない発話では、埋め込みも資料係も呼ばない
+    if ((lexical[0]?.score ?? 0) < MIN_SCORE) return null;
 
-    const extraction = await extractTopic({ workTitle, userMessage, chunks: candidates });
+    // 言い換えに強いベクトル検索と順位を混ぜる。段落の埋め込みがまだ揃っていなければ bigram だけ
+    const semantic = await rankChunksByVector(query, chunks);
+    const ranked = semantic
+      ? fuseRankings([lexical.slice(0, FUSION_DEPTH), semantic.slice(0, FUSION_DEPTH)])
+      : lexical;
+    const candidates = ranked.slice(0, MAX_CHUNKS).map((r) => r.chunk);
+
+    const extraction = await extractTopic({
+      workTitle,
+      userMessage,
+      ...(query !== userMessage ? { query } : {}),
+      chunks: candidates,
+    });
     const title = extraction.title.trim();
     if (!extraction.found || !title) return null;
 
@@ -74,7 +101,7 @@ export async function lookupSessionTopic(params: {
     const arc = matchArc(getArcs(workId), [title, ...used.map((c) => c.label)]);
 
     const facts: CanonFact[] = extraction.facts.map((f, i) => ({
-      id: `topic-${i + 1}`,
+      id: `topic-${ordinal}-${i + 1}`,
       workId,
       // arc が分かればその始まりの話、分からなければ話数の境界に関係なく見せる（話題そのものなので）
       episodeFrom: arc?.episodeFrom ?? 0,
@@ -94,6 +121,7 @@ export async function lookupSessionTopic(params: {
       ...(arc ? { arcId: arc.id } : {}),
       facts,
       sources,
+      chunkIds: (used.length > 0 ? used : candidates).map((c) => c.id),
       query: userMessage,
       resolvedAt: new Date().toISOString(),
     };

@@ -17,3 +17,8 @@ export function formatViewing(currentEpisode: number): string {
 export function formatEpisodeFrom(episodeFrom: number): string {
   return episodeFrom > 0 ? `(${episodeFrom}話〜) ` : "";
 }
+
+/** 切り替わる前に話した話題。履歴は落とすので、何の話をしてきたかだけ名前で渡す */
+export function formatPastTopics(pastTopics: SessionTopic[]): string {
+  return pastTopics.map((t) => `- ${t.title}`).join("\n");
+}

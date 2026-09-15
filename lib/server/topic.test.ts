@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   getEntities: vi.fn(),
   loadSourceChunks: vi.fn(),
   extractTopic: vi.fn(),
+  rankChunksByVector: vi.fn(),
 }));
 vi.mock("./works", () => ({
   getSources: mocks.getSources,
@@ -22,6 +23,8 @@ vi.mock("./sources", async (importOriginal) => ({
   loadSourceChunks: mocks.loadSourceChunks,
 }));
 vi.mock("./llm/topic", () => ({ extractTopic: mocks.extractTopic }));
+// ベクトル検索（埋め込み API）は差し替える。既定では「まだ埋め込みが揃っていない」（null）
+vi.mock("./embeddings", () => ({ rankChunksByVector: mocks.rankChunksByVector }));
 
 import { episodeBoundaryFor, lookupSessionTopic, matchArc } from "./topic";
 
@@ -66,6 +69,7 @@ beforeEach(() => {
   mocks.getEntities.mockReturnValue([]);
   mocks.loadSourceChunks.mockResolvedValue(chunks);
   mocks.extractTopic.mockResolvedValue(extraction());
+  mocks.rankChunksByVector.mockResolvedValue(null);
 });
 
 describe("matchArc: 場面の名前から arc を引く", () => {
@@ -109,11 +113,13 @@ describe("lookupSessionTopic: ユーザーの答えから話題の場面を特�
       arcId: "arc-kentei",
       query: "草むしり検定のところ",
       sources: [{ title: "記事", url: "https://example.org/wiki/記事" }],
+      // 話題の切り替わりの判定に使う
+      chunkIds: ["src1-1"],
     });
     // 事実は本物の設定（CanonFact）の形で持つ。arc が分かればその始まりの話から見えるもの
     expect(topic?.facts).toEqual([
       {
-        id: "topic-1",
+        id: "topic-1-1",
         workId: "w",
         episodeFrom: 57,
         subject: "ハチワレ",
@@ -122,6 +128,36 @@ describe("lookupSessionTopic: ユーザーの答えから話題の場面を特�
         description: "ハチワレは検定に合格した。",
       },
     ]);
+  });
+
+  it("事実の id は話題ごとに分ける（何番目の話題か）", async () => {
+    const topic = await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "草むしり検定のところ", ordinal: 3 });
+    expect(topic?.facts[0].id).toBe("topic-3-1");
+  });
+
+  it("検索語（query）が渡されたらそれで引き、資料係にも会話から補った話題として渡す", async () => {
+    await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "あれの話もしたい", query: "草むしり検定" });
+    const args = mocks.extractTopic.mock.calls[0][0];
+    expect(args.chunks[0].id).toBe("src1-1");
+    expect(args).toMatchObject({ userMessage: "あれの話もしたい", query: "草むしり検定" });
+  });
+
+  it("ベクトル検索の順位があれば bigram と混ぜ、bigram では下の段落も資料係に渡る", async () => {
+    // bigram では「杖」の段落は検定の話に重ならないが、ベクトルでは一番近い
+    mocks.rankChunksByVector.mockResolvedValue([
+      { chunk: chunks[1], score: 0.9 },
+      { chunk: chunks[0], score: 0.8 },
+      { chunk: chunks[2], score: 0.1 },
+    ]);
+    await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "草むしり検定のところ" });
+    const passed: SourceChunk[] = mocks.extractTopic.mock.calls[0][0].chunks;
+    expect(passed.map((c) => c.id)).toContain("src1-2");
+    expect(mocks.rankChunksByVector).toHaveBeenCalledWith("草むしり検定のところ", chunks);
+  });
+
+  it("挨拶のように資料と重ならない発話では、埋め込みも呼ばない", async () => {
+    await lookupSessionTopic({ workId: "w", workTitle: "テスト作品", userMessage: "こんにちは" });
+    expect(mocks.rankChunksByVector).not.toHaveBeenCalled();
   });
 
   it("arc に対応しない話題（人物など）の事実は、話数に関係なく見せる（episodeFrom=0）", async () => {

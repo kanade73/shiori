@@ -154,7 +154,7 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
       workTitle: "テスト作品",
       sessionId: "s1",
       currentEpisode: 3,
-      topic: null,
+      topic: undefined,
       history: [],
       userMessage: "これって伏線じゃない？",
       analysis: pipeline.analysis,
@@ -240,6 +240,30 @@ describe("POST /api/sessions/[id]/messages: 話題の場面（issue #14）", () 
     expect(events[0].event).toBe("topic");
     // としおにも決まった話題と境界を渡す
     expect(mocks.runToshioInterjection.mock.calls[0][0]).toMatchObject({ topic, currentEpisode: 63 });
+  });
+
+  it("話題が切り替わったら、切り替え先を保存・通知し、としおにも切り替え先を渡す", async () => {
+    const next = { ...topic, title: "パジャマパーティーズ編", since: "2026-09-15T00:00:03.000Z" };
+    mocks.getSession.mockReturnValue({ id: "s1", workId: "w", currentEpisode: 63, topic, pastTopics: [], createdAt: "", updatedAt: "" });
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ newTopic: next, previousTopic: topic, currentEpisode: 155 }));
+    const events = await collect(await post("そういえばパジャマパーティーズも"));
+    expect(mocks.setSessionTopic).toHaveBeenCalledWith("s1", next, 155);
+    expect(events.find((e) => e.event === "topic")?.data).toEqual(next);
+    expect(mocks.runToshioInterjection.mock.calls[0][0].topic).toEqual(next);
+  });
+
+  it("パイプラインには前の話題と、今回のユーザー発話の保存時刻（履歴を切る基準）を渡す", async () => {
+    const past = [{ ...topic, title: "前の話題" }];
+    mocks.getSession.mockReturnValue({ id: "s1", workId: "w", currentEpisode: 63, topic, pastTopics: past, createdAt: "", updatedAt: "" });
+    mocks.appendMessage.mockImplementationOnce((sessionId: string, role: string, content: string) => ({
+      id: "msg-user",
+      sessionId,
+      role,
+      content,
+      createdAt: "2026-09-15T00:00:09.000Z",
+    }));
+    await collect(await post());
+    expect(mocks.runConversationPipeline.mock.calls[0][0]).toMatchObject({ pastTopics: past, userMessageAt: "2026-09-15T00:00:09.000Z" });
   });
 
   it("既に話題が決まっていれば、それを渡し、保存し直さず、topic イベントも出さない", async () => {

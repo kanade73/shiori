@@ -3,7 +3,8 @@ import { generateResponse } from "./generate";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { episodeBoundaryFor, lookupSessionTopic } from "../topic";
+import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
+import { detectTopicShift } from "../topic-shift";
 import { getAllCanonFacts, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import type {
@@ -24,8 +25,10 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
-  /** この発話で新しく把握した話題の場面。既に決まっていた、または特定できなかったなら null */
+  /** この発話で新しく把握した話題の場面（最初の話題、または切り替わった先）。変わらなければ null */
   newTopic: SessionTopic | null;
+  /** この発話で話題が切り替わったなら、切り替わる前の話題 */
+  previousTopic: SessionTopic | null;
   /** 話題の場面を踏まえたネタバレ境界。セッションに保存し、としおにも同じ値を渡す */
   currentEpisode: number;
 };
@@ -56,6 +59,16 @@ export function worthAskingToshio(generation: GenerationResult, analysis: UserMe
   return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
 }
 
+/**
+ * 話題が途中で切り替わったら、切り替わる前の履歴はシオリに渡さない（前の場面の話に引っ張られない
+ * ようにし、文脈も小さく保つ）。前の話題で語った嘘は FabricatedFact として別に渡るので、
+ * 履歴を落としても矛盾は検査できる。最初の話題（since なし）では何も落とさない。
+ */
+export function historyForTopic(history: Message[], topic: SessionTopic | null): Message[] {
+  if (!topic?.since) return history;
+  return history.filter((m) => m.createdAt >= topic.since!);
+}
+
 const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一度言って。";
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
@@ -72,34 +85,61 @@ export async function runConversationPipeline(params: {
   currentEpisode: number;
   /** セッションで既に把握している話題の場面。無ければこの発話から調べる（issue #14） */
   topic?: SessionTopic | null;
+  /** 切り替わる前の話題（古い順） */
+  pastTopics?: SessionTopic[];
+  /** 今回の発話より前の履歴（切り替えがあれば、ここから切り替え後の分だけをシオリに渡す） */
   history: Message[];
   userMessage: string;
+  /** 今回のユーザー発話を保存した時刻。話題が切り替わったら、これより前の履歴を落とす */
+  userMessageAt?: string;
 }): Promise<PipelineResult> {
   const { workId, workTitle, sessionId, history, userMessage } = params;
+  const pastTopics = params.pastTopics ?? [];
 
-  // 話題の場面が決まるまでは、発話のたびに外部の知識源で調べる。決まったら以後は引かない
+  // 話題が決まるまでは発話のたびに外部の知識源で調べる。決まった後は、話題が切り替わったと
+  // 判定したとき（ゲート → 判定役）だけ、判定役が組み直した検索語で引き直す
   let topic = params.topic ?? null;
   let newTopic: SessionTopic | null = null;
+  let previousTopic: SessionTopic | null = null;
   if (!topic) {
-    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage });
+    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage, ordinal: pastTopics.length + 1 });
     topic = newTopic;
+  } else {
+    const shift = await detectTopicShift({ workId, workTitle, topic, history, userMessage });
+    if (shift) {
+      const found = await lookupSessionTopic({
+        workId,
+        workTitle,
+        userMessage,
+        query: shift.query,
+        ordinal: pastTopics.length + 2,
+      });
+      if (found && !isSameTopic(found, topic)) {
+        previousTopic = topic;
+        newTopic = { ...found, since: params.userMessageAt ?? new Date().toISOString() };
+        topic = newTopic;
+      }
+    }
   }
+  const topicsBefore = previousTopic ? [...pastTopics, previousTopic] : pastTopics;
   const currentEpisode = Math.max(params.currentEpisode, episodeBoundaryFor(workId, topic));
   const topicFacts = topic?.facts ?? [];
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
   const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis, topicFacts);
   const existingFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
-  const allCanonFacts = [...topicFacts, ...getAllCanonFacts(workId)];
+  // 前の話題の事実も、そこでついた嘘の根拠の検査（ネタバレ・上書き）には要る。シオリに渡すのはいまの話題の分だけ
+  const allCanonFacts = [...topicFacts, ...topicsBefore.flatMap((t) => t.facts), ...getAllCanonFacts(workId)];
   const normalize = buildNormalizer(getEntities(workId));
 
   const genArgs = {
     workTitle,
     currentEpisode,
     topic,
+    pastTopics: topicsBefore,
     canonFacts: visibleCanonFacts,
     fabricatedFacts: existingFabricatedFacts,
-    history,
+    history: historyForTopic(history, topic),
     userMessage,
   };
   const evaluate = (result: GenerationResult) =>
@@ -158,6 +198,7 @@ export async function runConversationPipeline(params: {
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
     newTopic,
+    previousTopic,
     currentEpisode,
   };
 }

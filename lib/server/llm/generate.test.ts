@@ -130,6 +130,16 @@ describe("generateResponse: 今日の話題（issue #14）", () => {
     expect(system).not.toContain("第0話");
   });
 
+  it("話題が切り替わっていれば、前に話した話題を名前だけ入れる（無ければ見出しごと出さない）", async () => {
+    await generateResponse({ ...baseParams, topic, pastTopics: [{ ...topic, title: "『郎』編" }] });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# ここまでに話した話題");
+    expect(system).toContain("- 『郎』編");
+    generateContent.mockClear();
+    await generateResponse({ ...baseParams, topic });
+    expect(generateContent.mock.calls[0][0].config.systemInstruction).not.toContain("# ここまでに話した話題");
+  });
+
   it("話数の分からない設定（話題の場面について資料で確かめたもの）には話数を付けない", async () => {
     await generateResponse({
       ...baseParams,

@@ -85,8 +85,12 @@ export type SessionTopic = {
   /** 資料から読み取った、この場面についての本物の設定 */
   facts: CanonFact[];
   sources: { title: string; url: string }[];
+  /** 場面の特定に使った外部資料の段落。話題が切り替わったかの判定に使う（旧データには無い） */
+  chunkIds?: string[];
   /** 場面の特定に使ったユーザーの発話 */
   query: string;
+  /** 途中で話題が切り替わって決まった話題なら、そのきっかけのユーザー発話の時刻。これより前の履歴はシオリに渡さない */
+  since?: string;
   resolvedAt: string;
 };
 
@@ -98,8 +102,10 @@ export type ChatSession = {
    * 話題が決まるまでは 0（本物の設定を話数で出さない）。
    */
   currentEpisode: number;
-  /** 会話の最初に把握した話題の場面。まだ決まっていなければ無し */
+  /** いまの話題の場面。まだ決まっていなければ無し */
   topic?: SessionTopic;
+  /** 話題が切り替わる前の話題（古い順）。その間についた嘘の根拠や答え合わせのために残す */
+  pastTopics?: SessionTopic[];
   /** 旧データのみ: シーン検索（廃止）でユーザーが入力した視聴進捗。表示にだけ使う */
   progressDescription?: string;
   /** 答え合わせ済みなら、その時刻とユーザーの予想。答え合わせした会話は続けられない。 */

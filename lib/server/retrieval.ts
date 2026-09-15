@@ -13,12 +13,20 @@ function textIncludesAny(text: string, needles: string[]): boolean {
   return needles.some((needle) => needle.trim().length > 0 && lower.includes(needle.toLowerCase()));
 }
 
+/** セッションで話した全部の話題（切り替わる前のものも）について、外部の資料で確かめた事実 */
+export function getTopicFacts(session: Pick<ChatSession, "topic" | "pastTopics">): CanonFact[] {
+  return [...(session.topic?.facts ?? []), ...(session.pastTopics ?? []).flatMap((t) => t.facts)];
+}
+
 /**
  * セッションで見せてよい本物の設定の全部: 話題の場面について外部の資料で確かめたもの
- * （issue #14）と、work.json のうち視聴済み範囲のもの。答え合わせの根拠や debug 画面に使う。
+ * （issue #14。切り替わる前の話題の分も）と、work.json のうち視聴済み範囲のもの。
+ * 答え合わせの根拠や debug 画面に使う。
  */
-export function getVisibleCanonFacts(session: Pick<ChatSession, "workId" | "currentEpisode" | "topic">): CanonFact[] {
-  return [...(session.topic?.facts ?? []), ...getCanonFactsUpTo(session.workId, session.currentEpisode)];
+export function getVisibleCanonFacts(
+  session: Pick<ChatSession, "workId" | "currentEpisode" | "topic" | "pastTopics">,
+): CanonFact[] {
+  return [...getTopicFacts(session), ...getCanonFactsUpTo(session.workId, session.currentEpisode)];
 }
 
 /**

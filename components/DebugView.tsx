@@ -180,6 +180,23 @@ export function DebugView({ sessionId }: { sessionId: string }) {
           ) : (
             <p className="mt-sm text-[13px] text-muted">まだ特定していません（ユーザーの最初の返答から外部の資料で調べます）。</p>
           )}
+          {session.pastTopics && session.pastTopics.length > 0 && (
+            <div className="mt-sm">
+              <p className="text-[12px] text-muted-soft">切り替わる前の話題（古い順）</p>
+              <ul className="mt-xxs space-y-xxs">
+                {session.pastTopics.map((t) => (
+                  <li key={t.resolvedAt} className="text-[13px] text-muted">
+                    {t.title}（「{t.query}」から特定）
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {session.topic?.since && (
+            <p className="mt-xxs text-[12px] text-muted-soft">
+              いまの話題は会話の途中で切り替わったもの。切り替わる前の履歴はシオリに渡していない。
+            </p>
+          )}
         </section>
 
         <section className="mt-lg">

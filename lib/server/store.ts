@@ -23,6 +23,11 @@ type Db = {
 
 // DATA_DIR で永続化先を差し替えられる（コンテナではボリュームのマウント先を指す）
 const DB_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
+
+/** 永続化先のディレクトリ。db.json 以外のキャッシュ（埋め込みなど）もここに置く */
+export function dataDir(): string {
+  return DB_DIR;
+}
 const DB_PATH = path.join(DB_DIR, "db.json");
 
 function emptyDb(): Db {
@@ -73,14 +78,17 @@ export function getSession(sessionId: string): ChatSession | null {
 }
 
 /**
- * 会話の最初に把握した話題の場面と、そこから分かったネタバレ境界を保存する（issue #14）。
- * 境界は広げる方向にしか動かさない。話題は一度決まったら差し替えない。
+ * 話題の場面と、そこから分かったネタバレ境界を保存する（issue #14）。既に話題があれば、それは
+ * pastTopics に移して新しい話題に切り替える（途中の話題の切り替わり）。境界は広げる方向にしか動かさない。
  */
 export function setSessionTopic(sessionId: string, topic: SessionTopic | null, currentEpisode: number): ChatSession | null {
   const db = readDb();
   const session = db.sessions[sessionId];
   if (!session) return null;
-  if (topic && !session.topic) session.topic = topic;
+  if (topic) {
+    if (session.topic) session.pastTopics = [...(session.pastTopics ?? []), session.topic];
+    session.topic = topic;
+  }
   session.currentEpisode = Math.max(session.currentEpisode, currentEpisode);
   session.updatedAt = new Date().toISOString();
   writeDb(db);

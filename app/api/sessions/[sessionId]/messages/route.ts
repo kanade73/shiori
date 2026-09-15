@@ -72,7 +72,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   }
 
   const historyBefore: Message[] = getMessages(sessionId).slice(-HISTORY_LIMIT);
-  appendMessage(sessionId, "user", content);
+  const userRecord = appendMessage(sessionId, "user", content);
 
   // クライアントが切断（タブを閉じる/リロード等）すると controller は自動で
   // close されるが、その後も generate 等の await が続いていれば send() が
@@ -116,12 +116,14 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           sessionId,
           currentEpisode: session.currentEpisode,
           topic: session.topic,
+          pastTopics: session.pastTopics,
           history: historyBefore,
           userMessage: content,
+          userMessageAt: userRecord.createdAt,
         });
 
-        // issue #14: 最初の返答で把握した話題の場面は、以後の発話で外部を引き直さないよう残す
-        const topic = session.topic ?? newTopic;
+        // issue #14: 話題の場面（最初の話題、または途中で切り替わった先）を残し、以後の発話の材料にする
+        const topic = newTopic ?? session.topic;
         if (newTopic || currentEpisode !== session.currentEpisode) {
           setSessionTopic(sessionId, newTopic, currentEpisode);
         }

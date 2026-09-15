@@ -6,7 +6,7 @@ import type { SourceChunk } from "./types";
 const mocks = vi.hoisted(() => ({ getSources: vi.fn(), getEntities: vi.fn() }));
 vi.mock("./works", () => mocks);
 
-import { chunkArticle, clearSourceCache, loadSourceChunks, mentionedNames, rankChunks } from "./sources";
+import { chunkArticle, clearSourceCache, fuseRankings, loadSourceChunks, mentionedNames, rankChunks } from "./sources";
 
 const meta = { sourceTitle: "記事", url: "https://example.org/wiki/記事", idPrefix: "src1" };
 
@@ -197,5 +197,24 @@ describe("loadSourceChunks: work.json の sources の記事を取ってくる", 
     mocks.getSources.mockReturnValue([]);
     expect(await loadSourceChunks("w")).toEqual([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("fuseRankings: bigram とベクトルの順位を混ぜる", () => {
+  const a = chunk({ id: "a" });
+  const b = chunk({ id: "b" });
+  const c = chunk({ id: "c" });
+
+  it("点数の尺度ではなく順位で混ぜ、両方で上位のものが一番上に来る", () => {
+    const fused = fuseRankings([
+      [{ chunk: a, score: 50 }, { chunk: b, score: 40 }],
+      [{ chunk: b, score: 0.9 }, { chunk: c, score: 0.8 }],
+    ]);
+    expect(fused.map((r) => r.chunk.id)).toEqual(["b", "a", "c"]);
+  });
+
+  it("片方にしか無い段落も残る（bigram では拾えない言い換えをベクトルが拾う）", () => {
+    const fused = fuseRankings([[{ chunk: a, score: 10 }], [{ chunk: c, score: 0.9 }]]);
+    expect(fused.map((r) => r.chunk.id).sort()).toEqual(["a", "c"]);
   });
 });

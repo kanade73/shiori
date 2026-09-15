@@ -31,6 +31,14 @@ export const TopicExtractionSchema = z.object({
 
 export type TopicExtraction = z.infer<typeof TopicExtractionSchema>;
 
+/** 話題の切り替わりの判定役の出力。shift=false なら query は無視してよい */
+export const TopicRouteSchema = z.object({
+  shift: z.boolean(),
+  query: z.string(),
+});
+
+export type TopicRoute = z.infer<typeof TopicRouteSchema>;
+
 export const ToshioCommentarySchema = z.object({
   shouldComment: z.boolean(),
   message: z.string(),

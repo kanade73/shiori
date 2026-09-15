@@ -16,7 +16,7 @@ import type { SourceChunk } from "../types";
 const MAX_FACTS = 8;
 
 const SYSTEM_PROMPT = `あなたはアニメ作品についての資料係です。
-ユーザーは、ある作品について「今日は何について話したい?」と聞かれて答えました。
+ユーザーは、ある作品について「今日は何について話したい?」と聞かれて答えたか、会話の途中で別の話題に移ろうとしています。
 下の資料（外部の知識源から、答えに関係しそうな段落を選んだもの）から、ユーザーが話したい場面・エピソード・人物を特定し、
 その話題について資料から読み取れる事実を抜き出してください。
 
@@ -75,16 +75,18 @@ const topicResponseSchema = {
 export async function extractTopic(params: {
   workTitle: string;
   userMessage: string;
+  /** 話題の切り替えで、判定役が発話から組み直した検索語。ユーザーの発話が指示語だけのときの手がかり */
+  query?: string;
   chunks: SourceChunk[];
 }): Promise<TopicExtraction> {
-  const { workTitle, userMessage, chunks } = params;
+  const { workTitle, userMessage, query, chunks } = params;
 
   const prompt = `# 作品
 ${workTitle}
 
 # ユーザーの答え
 ${userMessage}
-
+${query ? `\n# ユーザーが話したい話題（会話の流れから補ったもの）\n${query}\n` : ""}
 # 資料
 ${formatChunks(chunks)}`;
 

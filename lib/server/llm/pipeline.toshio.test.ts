@@ -18,7 +18,8 @@ vi.mock("../retrieval", () => ({
   retrieveFabricatedFacts: mocks.retrieveFabricatedFacts,
 }));
 // 話題の場面の特定（外部の知識源 + Gemini）は pipeline.test 側で見る。ここでは「特定できなかった」扱い
-vi.mock("../topic", () => ({ lookupSessionTopic: async () => null, episodeBoundaryFor: () => 0 }));
+vi.mock("../topic", () => ({ lookupSessionTopic: async () => null, episodeBoundaryFor: () => 0, isSameTopic: () => false }));
+vi.mock("../topic-shift", () => ({ detectTopicShift: async () => null }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
   getEntities: () => [],

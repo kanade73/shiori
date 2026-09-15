@@ -41,11 +41,24 @@ describe("store: 話題の場面（issue #14）", () => {
     expect(store.getSession(session.id)).toMatchObject({ topic, currentEpisode: 63 });
   });
 
-  it("一度決まった話題は差し替えず、境界は狭めない", () => {
+  it("話題が切り替わったら、前の話題を pastTopics に移して差し替える。境界は狭めない", () => {
     const session = store.createSession("w");
     store.setSessionTopic(session.id, topic, 63);
     store.setSessionTopic(session.id, { ...topic, title: "別の場面" }, 10);
-    expect(store.getSession(session.id)).toMatchObject({ topic: { title: "草むしり検定編" }, currentEpisode: 63 });
+    const saved = store.getSession(session.id)!;
+    expect(saved.topic?.title).toBe("別の場面");
+    expect(saved.pastTopics?.map((t) => t.title)).toEqual(["草むしり検定編"]);
+    expect(saved.currentEpisode).toBe(63);
+  });
+
+  it("話題なし（null）なら境界だけ動かし、話題はそのまま", () => {
+    const session = store.createSession("w");
+    store.setSessionTopic(session.id, topic, 63);
+    store.setSessionTopic(session.id, null, 80);
+    const saved = store.getSession(session.id)!;
+    expect(saved.topic?.title).toBe("草むしり検定編");
+    expect(saved.pastTopics).toBeUndefined();
+    expect(saved.currentEpisode).toBe(80);
   });
 
   it("無いセッションは null", () => {

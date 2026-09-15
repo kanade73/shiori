@@ -250,3 +250,22 @@ export function rankChunks(query: string, chunks: SourceChunk[], names: string[]
     .filter((r) => r.score > 0)
     .sort((a, b) => b.score - a.score);
 }
+
+// Reciprocal Rank Fusion の定数。上位の差をなだらかにする一般的な値
+const RRF_K = 60;
+
+/**
+ * 複数の順位（bigram とベクトル）を Reciprocal Rank Fusion で1つにまとめる。
+ * 点数の尺度が違う（IDF の和とコサイン類似度）ので、点数ではなく順位で混ぜる。
+ */
+export function fuseRankings(rankings: RankedChunk[][]): RankedChunk[] {
+  const fused = new Map<string, RankedChunk>();
+  for (const ranking of rankings) {
+    ranking.forEach(({ chunk }, rank) => {
+      const entry = fused.get(chunk.id) ?? { chunk, score: 0 };
+      entry.score += 1 / (RRF_K + rank + 1);
+      fused.set(chunk.id, entry);
+    });
+  }
+  return Array.from(fused.values()).sort((a, b) => b.score - a.score);
+}

@@ -1,7 +1,7 @@
 import { Type } from "@google/genai";
 import { ai, GENERATION_MODEL } from "./client";
 import { GenerationResultSchema } from "./schemas";
-import { formatEpisodeFrom, formatTopic, formatViewing } from "./context";
+import { formatEpisodeFrom, formatPastTopics, formatTopic, formatViewing } from "./context";
 import { CLAIM_RELATIONS } from "../claims";
 import type { CanonFact, FabricatedFact, GenerationResult, Message, SessionTopic } from "../types";
 
@@ -37,6 +37,8 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 会話はあなたの「今日は何について話したい……?」という問いかけから始まります。
 「今日の話題」は、ユーザーの答えから外部の資料で特定した場面です。まずはその場面の話に乗ってください。
 今日の話題がまだ決まっていないときは、ユーザーの話を受け止めたうえで、どの場面の話かを短く聞き返してかまいません。
+会話の途中でユーザーが話題を変えると、「今日の話題」も新しい場面に変わります。新しい話題に乗ってください。
+それまでの話題で語った設定（既に語った設定）は、話題が変わっても変わらず守ってください。
 
 ## 返答方針の選択（strategy）
 - no_new_lie: 嘘なしで普通に共感・返答する
@@ -61,6 +63,13 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 - 犯人や黒幕を断定する
 - 作品の結末に直接関係する内容
 - ユーザーの視聴済み範囲と明白に矛盾する内容
+
+## 嘘をつく際の例
+- ふんどし石を身につけて討伐に行くと、力が強くなると言われている（実際はただの石）
+- ラーメンの器を三回まわしてから食べると、おかわりが出てくる（お店の言い伝え、実際は何も起きない）
+- うさぎの声が甲高いのは、叫びすぎて喉が伸びきったから（生まれつきなだけ）
+- 素材を集めすぎると夜に光りだす（そんな性質はない）
+- 鎧さんの鎧は脱げない体質で、脱ぐと寿命が縮むと言われている（ただの言い伝え）
 
 ## claims（必ず記録すること）
 message の中で述べた「作品の設定に関する主張」を、真偽を問わず**すべて** claims に列挙してください。
@@ -160,22 +169,25 @@ const generationResponseSchema = {
 export async function generateResponse(params: {
   workTitle: string;
   currentEpisode: number;
-  /** 会話の最初に把握した話題の場面（issue #14）。まだ決まっていなければ null */
+  /** いまの話題の場面（issue #14）。まだ決まっていなければ null */
   topic?: SessionTopic | null;
+  /** 切り替わる前に話した話題（古い順） */
+  pastTopics?: SessionTopic[];
   canonFacts: CanonFact[];
   fabricatedFacts: FabricatedFact[];
   history: Message[];
   userMessage: string;
   feedback?: string;
 }): Promise<GenerationResult> {
-  const { workTitle, currentEpisode, topic, canonFacts, fabricatedFacts, history, userMessage, feedback } = params;
+  const { workTitle, currentEpisode, topic, pastTopics = [], canonFacts, fabricatedFacts, history, userMessage, feedback } =
+    params;
 
   const contextBlock = `# 作品
 ${workTitle}（${formatViewing(currentEpisode)}）
 
 # 今日の話題
 ${formatTopic(topic)}
-
+${pastTopics.length > 0 ? `\n# ここまでに話した話題（この会話で、今日の話題の前に話していた場面）\n${formatPastTopics(pastTopics)}\n` : ""}
 # 本物の設定（視聴済み範囲のみ・これ以外の情報は存在しないものとして扱うこと）
 ${formatCanonFacts(canonFacts)}
 
