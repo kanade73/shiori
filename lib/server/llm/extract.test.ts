@@ -1,7 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildNormalizer } from "../claims";
 import type { CanonFact, Entity } from "../types";
-import { EXTRACT_TIMEOUT_MS, extractClaims, extractEndpoint, groundClaims, matchCanonFacts, type ExtractedClaim } from "./extract";
+import {
+  EXTRACT_PROMPT,
+  EXTRACT_TIMEOUT_MS,
+  extractClaims,
+  extractEndpoint,
+  groundClaims,
+  matchCanonFacts,
+  ollamaConfig,
+  parseClaimsText,
+  type ExtractedClaim,
+} from "./extract";
 
 // このブランチの抽出はローカルの推論サーバ専用。Gemini は経路ごと無いので、
 // 実 API のモック（generateContent）も持たない。叩くのは fetch だけ。
@@ -229,5 +239,106 @@ describe("extractClaims: 取り出しは常にローカルの推論サーバ", (
     vi.stubEnv("EXTRACT_ENDPOINT", "");
     await expect(extractClaims(params)).rejects.toThrow("EXTRACT_ENDPOINT");
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("ollamaConfig", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  it("EXTRACT_OLLAMA_MODEL が無ければ null（LoRA サーバの経路）", () => {
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "");
+    expect(ollamaConfig()).toBeNull();
+  });
+
+  it("ホストは OLLAMA_HOST。既定 localhost:11434、スキーム無し・末尾 / も整える", () => {
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "qwen3:8b");
+    vi.stubEnv("OLLAMA_HOST", "");
+    expect(ollamaConfig()).toEqual({ host: "http://localhost:11434", model: "qwen3:8b" });
+    vi.stubEnv("OLLAMA_HOST", "127.0.0.1:11435/");
+    expect(ollamaConfig()).toEqual({ host: "http://127.0.0.1:11435", model: "qwen3:8b" });
+  });
+});
+
+describe("parseClaimsText: ``` 囲みや前後の文が付いていても JSON を拾う", () => {
+  it("素の JSON", () => {
+    expect(parseClaimsText('{"claims":[]}')).toEqual({ claims: [] });
+  });
+  it("```json 囲み", () => {
+    expect(parseClaimsText('```json\n{"claims":[]}\n```')).toEqual({ claims: [] });
+  });
+  it("前後に説明文", () => {
+    expect(parseClaimsText('はい。{"claims":[]} 以上です')).toEqual({ claims: [] });
+  });
+  it("JSON が無ければ例外", () => {
+    expect(() => parseClaimsText("なし")).toThrow();
+  });
+});
+
+describe("extractClaims: EXTRACT_OLLAMA_MODEL があれば Ollama を使う", () => {
+  const fetchMock = vi.fn();
+  let warn: ReturnType<typeof vi.spyOn>;
+
+  function ollamaReply(content: string) {
+    return { ok: true, status: 200, json: async () => ({ message: { role: "assistant", content } }) };
+  }
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    vi.stubEnv("EXTRACT_ENDPOINT", "");
+    vi.stubEnv("EXTRACT_OLLAMA_MODEL", "qwen3:8b");
+    vi.stubEnv("OLLAMA_HOST", "");
+    vi.stubGlobal("fetch", fetchMock);
+    warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
+  });
+
+  it("/api/chat に同じ指示文を JSON schema・思考オフで投げ、EXTRACT_ENDPOINT は要らない", async () => {
+    fetchMock.mockResolvedValue(
+      ollamaReply(
+        JSON.stringify({
+          claims: [
+            { subject: "ハチワレ", relation: "lives_in", object: "洞窟", negated: false, claim: "ハチワレは洞窟に住む", quote: "洞窟に住んでる" },
+            { subject: "ハチワレ", relation: "unknown_rel", object: "x", negated: false, claim: "", quote: "" },
+          ],
+        }),
+      ),
+    );
+    const { claims, backend, failed } = await extractClaims(params);
+    expect(backend).toBe("ollama");
+    expect(failed).toBeUndefined();
+    expect(claims.map((c) => [c.relation, c.grounding])).toEqual([["lives_in", "canon"]]);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://localhost:11434/api/chat");
+    const body = JSON.parse(String(init.body));
+    expect(body.model).toBe("qwen3:8b");
+    expect(body.stream).toBe(false);
+    expect(body.think).toBe(false);
+    expect(body.format.properties.claims.items.properties.relation.enum).toContain("lives_in");
+    expect(body.messages[0]).toEqual({ role: "system", content: EXTRACT_PROMPT });
+    expect(body.messages[1].content).toContain("# 返答文");
+    expect(body.messages[1].content).toContain(params.userMessage);
+    expect(body.messages[1].content).not.toContain("洞窟に住んでいる（canonFact）");
+  });
+
+  it("Ollama が落ちていれば warn 1行 + claims 空（backend は ollama のまま）", async () => {
+    fetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+    const result = await extractClaims(params);
+    expect(result).toEqual({ claims: [], backend: "ollama", failed: true });
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  it("message.content が JSON でなければ claims 空", async () => {
+    fetchMock.mockResolvedValue(ollamaReply("わかりません"));
+    const result = await extractClaims(params);
+    expect(result.claims).toEqual([]);
+    expect(result.failed).toBe(true);
   });
 });

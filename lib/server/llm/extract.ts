@@ -13,10 +13,12 @@ import type { CanonFact, Claim, ClaimRelation } from "../types";
  * （`groundClaims`）の仕事。ここを LLM に任せると、作り話が canon 扱いになって
  * 嘘として保存されない取りこぼしが出る。
  *
- * **このブランチの取り出しは自前の LoRA 推論サーバ（`EXTRACT_ENDPOINT`）専用**。
- * Gemini 版は削除してあり、フォールバックも持たない。LoRA の出来をそのまま見る
- * ための検証用ブランチなので、Gemini に落ちて「動いてしまう」道を塞いである。
- * サーバが使えなければその発話の claims は空（返答文はそのまま返る）。
+ * **取り出しは手元の推論に限る（Gemini は使わない。フォールバックも無い）**。
+ * 経路は2つで、環境変数で選ぶ:
+ * - `EXTRACT_OLLAMA_MODEL` があれば Ollama（`OLLAMA_HOST`、既定 http://localhost:11434）の
+ *   `/api/chat` に、ml/common.py と同じ指示（EXTRACT_PROMPT）を JSON schema 付きで投げる
+ * - なければ自前の LoRA 推論サーバ（`EXTRACT_ENDPOINT`、ml/serve.py）の `POST /extract`
+ * どちらも使えなければその発話の claims は空（返答文はそのまま返る）。
  */
 
 /** 推論サーバが出す1件分。grounding はここには無い（コードが決める）。 */
@@ -29,14 +31,16 @@ export type ExtractedClaim = {
   quote?: string;
 };
 
-/**
- * どの実装で三つ組を取り出したか（開発者モードのパネルに1語出すだけ）。
- * このブランチでは local しかないが、イベントの型は他ブランチと揃えて残してある。
- */
-export type ExtractBackend = "local";
+/** どの実装で三つ組を取り出したか（開発者モードのパネルに1語出すだけ）。 */
+export type ExtractBackend = "local" | "ollama";
 
 /** 自前の推論サーバの待ち時間。デモ中に会話が止まらない長さに切る。 */
 export const EXTRACT_TIMEOUT_MS = 10_000;
+/**
+ * Ollama の待ち時間。手元の CPU/GPU で 8B 級を回すと初回のモデル読み込みと
+ * 数百トークンの生成で 10 秒を超えることがあるので、別枠で長めに取る。
+ */
+export const OLLAMA_TIMEOUT_MS = 60_000;
 
 const CLOSED_RELATIONS = new Set<string>(CLAIM_RELATIONS.map((r) => normalizeText(r)));
 const RELATION_VOCABULARY = new Set<string>(CLAIM_RELATIONS);
@@ -142,15 +146,98 @@ type ExtractInput = {
 
 /**
  * 自前の推論サーバの URL。末尾の / は落とす。
- * **必須**。未設定は設定漏れなので、黙って別の経路に逃げず呼び出し時に例外にする
- * （起動時に落とさないのは、抽出を使わない画面まで開けなくなるのを避けるため）。
+ * Ollama を使わないときは**必須**。未設定は設定漏れなので、黙って別の経路に逃げず
+ * 呼び出し時に例外にする（起動時に落とさないのは、抽出を使わない画面まで開けなく
+ * なるのを避けるため）。
  */
 export function extractEndpoint(): string {
   const raw = process.env.EXTRACT_ENDPOINT?.trim();
   if (!raw) {
-    throw new Error("EXTRACT_ENDPOINT が未設定です。このブランチの claims 抽出はローカルの推論サーバ専用で、Gemini へのフォールバックはありません");
+    throw new Error(
+      "EXTRACT_ENDPOINT が未設定です。claims 抽出は手元の推論専用で、Gemini へのフォールバックはありません（Ollama を使うなら EXTRACT_OLLAMA_MODEL を設定）",
+    );
   }
   return raw.replace(/\/+$/, "");
+}
+
+/**
+ * Ollama の設定。`EXTRACT_OLLAMA_MODEL`（例 qwen3:8b）が設定されていれば Ollama を使う。
+ * ホストは `OLLAMA_HOST`（Ollama 本体と同じ変数名。既定 http://localhost:11434）。
+ */
+export function ollamaConfig(): { host: string; model: string } | null {
+  const model = process.env.EXTRACT_OLLAMA_MODEL?.trim();
+  if (!model) return null;
+  const rawHost = process.env.OLLAMA_HOST?.trim() || "http://localhost:11434";
+  const host = (/^https?:\/\//.test(rawHost) ? rawHost : `http://${rawHost}`).replace(/\/+$/, "");
+  return { host, model };
+}
+
+/**
+ * 記録係への指示。ml/common.py の EXTRACT_PROMPT と同文（LoRA の学習データもこれで
+ * 作ってある）。ここを変えるなら common.py も変える。
+ */
+export const EXTRACT_PROMPT = `あなたはアニメ考察チャットの返答文を読んで、内容を機械可読な形に書き起こす記録係です。
+渡された「返答文」の中で述べられている、作品の設定に関する主張を**すべて**列挙してください。
+感想・相槌・問いかけ・自分の気持ちは主張ではありません。設定に触れていなければ空配列で構いません。
+記録漏れは後で矛盾を生むので、迷ったら入れてください。
+返答文に書かれていないことを補ってはいけません。書かれている内容だけを分解します。
+
+各主張は subject / relation / object / negated に分解します。
+- subject と object はキャラクター名・場所・物などの名詞。呼び名は作品での正式な名前に揃える
+- relation は次から選ぶ:
+  is（性質・属性）, identity（正体・本名・種族）, origin（由来・元ネタ・モチーフ）, lives_in（住んでいる場所）,
+  first_appeared（初登場の場面・時期）, has（所有）, likes, dislikes, fears, can, cannot,
+  did（過去にした行為・出来事）, related_to（家族・師弟・因縁などの関係）, secret（隠している事実）, other
+- negated は「〜ではない」「〜していない」のような否定の主張なら true
+- claim は主張を一文にしたもの
+- quote は、返答文の中でその主張を述べている部分の**一字一句そのままの抜き出し**。要約・言い換えはしない
+一つの文に複数の設定が入っていたら、それぞれ別の主張にしてください。
+
+出力は {"claims": [...]} の JSON のみ。説明文や \`\`\`json のような囲みは付けない。`;
+
+/** ml/common.py の build_user_prompt と同じ組み立て。 */
+export function buildExtractUserPrompt({ text, workTitle, userMessage }: ExtractInput): string {
+  const context = userMessage ? `\n# 直前のユーザーの発言（文脈。ここからは主張を取り出さない）\n${userMessage}\n` : "";
+  return `# 作品\n${workTitle}\n${context}\n# 返答文\n${text}`;
+}
+
+/** Ollama の `format` に渡す JSON schema。relation は閉じた語彙に絞る。 */
+const OLLAMA_CLAIMS_SCHEMA = {
+  type: "object",
+  properties: {
+    claims: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          subject: { type: "string" },
+          relation: { type: "string", enum: [...CLAIM_RELATIONS] },
+          object: { type: "string" },
+          negated: { type: "boolean" },
+          claim: { type: "string" },
+          quote: { type: "string" },
+        },
+        required: ["subject", "relation", "object", "negated", "claim", "quote"],
+      },
+    },
+  },
+  required: ["claims"],
+} as const;
+
+/**
+ * モデルが返した文字列 → JSON。素の JSON を期待するが、\`\`\` 囲みや前後の文が
+ * 付いていても最初の {...} を拾う（ml/common.py の parse_claims_json と同じ救済）。
+ */
+export function parseClaimsText(raw: string): unknown {
+  const s = raw.replace(/^\s*\`\`\`(?:json)?\s*|\s*\`\`\`\s*$/gm, "").trim();
+  try {
+    return JSON.parse(s);
+  } catch {
+    const start = s.indexOf("{");
+    const end = s.lastIndexOf("}");
+    if (start < 0 || end <= start) throw new Error("JSON が見つからない");
+    return JSON.parse(s.slice(start, end + 1));
+  }
 }
 
 /**
@@ -175,11 +262,46 @@ async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }
   }
 }
 
+/**
+ * Ollama の `/api/chat`。`format` に JSON schema を渡して構造化出力にし、
+ * qwen3 系の思考は `think: false` で切る（思考込みだと数十秒かかる）。
+ * temperature 0 で決定的に。返答は `message.content` に JSON 文字列で入る。
+ */
+async function extractViaOllama({ host, model }: { host: string; model: string }, input: ExtractInput): Promise<ExtractedClaim[]> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
+  try {
+    const response = await fetch(`${host}/api/chat`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        think: false,
+        format: OLLAMA_CLAIMS_SCHEMA,
+        options: { temperature: 0 },
+        messages: [
+          { role: "system", content: EXTRACT_PROMPT },
+          { role: "user", content: buildExtractUserPrompt(input) },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const body = (await response.json()) as { message?: { content?: unknown } };
+    const content = body?.message?.content;
+    if (typeof content !== "string") throw new Error("message.content が無い");
+    return parseExtractedClaims(parseClaimsText(content));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export type ExtractResult = {
   claims: Claim[];
-  /** 取り出しに使った側。このブランチは常に local */
+  /** 取り出しに使った側（local: LoRA 推論サーバ / ollama） */
   backend: ExtractBackend;
-  /** 推論サーバが使えず claims を取り出せなかった（パネルに「取り出せず」と出す） */
+  /** 推論が使えず claims を取り出せなかった（パネルに「取り出せず」と出す） */
   failed?: boolean;
 };
 
@@ -188,7 +310,7 @@ export type ExtractResult = {
  * canonFacts は grounding の照合にだけ使い、プロンプトには載せない
  * （記録係に本物の設定を見せると、返答文に無いことを補い始める）。
  *
- * 推論サーバが落ちていても会話は止めない。warn を1行出して claims 空を返すだけで、
+ * 推論が落ちていても会話は止めない。warn を1行出して claims 空を返すだけで、
  * その発話の嘘が保存されないという結果になる。
  */
 export async function extractClaims(params: {
@@ -202,15 +324,19 @@ export async function extractClaims(params: {
   userMessage?: string;
 }): Promise<ExtractResult> {
   const { text, workTitle, canonFacts, normalize, userMessage } = params;
+  const ollama = ollamaConfig();
   // 設定漏れは例外（pipeline が claims 空として握るが、ログには明示的に出る）
-  const endpoint = extractEndpoint();
-  if (text.trim().length === 0) return { claims: [], backend: "local" };
+  const endpoint = ollama ? null : extractEndpoint();
+  const backend: ExtractBackend = ollama ? "ollama" : "local";
+  if (text.trim().length === 0) return { claims: [], backend };
 
+  const input: ExtractInput = { text, workTitle, userMessage };
+  const where = ollama ? `Ollama ${ollama.host} / ${ollama.model}` : `抽出サーバ ${endpoint}`;
   try {
-    const extracted = await extractViaHttp(endpoint, { text, workTitle, userMessage });
-    return { claims: groundClaims(extracted, canonFacts, normalize), backend: "local" };
+    const extracted = ollama ? await extractViaOllama(ollama, input) : await extractViaHttp(endpoint!, input);
+    return { claims: groundClaims(extracted, canonFacts, normalize), backend };
   } catch (error) {
-    console.warn(`claims 抽出サーバ（${endpoint}）から取り出せませんでした: ${String(error)}`);
-    return { claims: [], backend: "local", failed: true };
+    console.warn(`claims を取り出せませんでした（${where}）: ${String(error)}`);
+    return { claims: [], backend, failed: true };
   }
 }
