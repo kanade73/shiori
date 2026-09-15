@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   retrieveFabricatedFacts: vi.fn(),
   getActiveFabricatedFacts: vi.fn(),
   getAllCanonFacts: vi.fn(),
+  getCanonFactsUpTo: vi.fn(),
 }));
 vi.mock("./generate", () => ({ generateReply: mocks.generateReply }));
 vi.mock("./extract", () => ({ extractClaims: mocks.extractClaims }));
@@ -26,6 +27,7 @@ vi.mock("../retrieval", () => ({
 }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
+  getCanonFactsUpTo: mocks.getCanonFactsUpTo,
   getEntities: () => [],
   getArcs: () => [],
   getEpisodesUpTo: () => [],
@@ -45,6 +47,8 @@ const visibleFact: CanonFact = {
   description: "A は B が好き",
 };
 const hiddenFact: CanonFact = { ...visibleFact, id: "cf-hidden", episodeFrom: 10, description: "未視聴範囲の事実" };
+// 視聴済みだが今回の発話とは関係が薄く、プロンプト用の retrieval には選ばれない事実
+const otherVisibleFact: CanonFact = { ...visibleFact, id: "cf-other", subject: "C", object: "D", description: "C は D が好き" };
 
 const existingLie: FabricatedFact = {
   id: "ff-1",
@@ -106,6 +110,8 @@ beforeEach(() => {
   mocks.retrieveFabricatedFacts.mockReturnValue([existingLie]);
   mocks.getActiveFabricatedFacts.mockReturnValue([existingLie]);
   mocks.getAllCanonFacts.mockReturnValue([visibleFact, hiddenFact]);
+  // 視聴済み全件。プロンプト用の retrieveCanonFacts より広い
+  mocks.getCanonFactsUpTo.mockReturnValue([visibleFact, otherVisibleFact]);
   mocks.generateReply.mockResolvedValue(SHIORI_REPLY);
   mocks.extractClaims.mockResolvedValue([lieClaim]);
   mocks.generateToshioCommentary.mockResolvedValue({ shouldComment: true, message: "結論から言うとね……" });
@@ -120,12 +126,13 @@ describe("runConversationPipeline: 会話（generate）と主張の取り出し�
     expect(result.generation.claims).toEqual([lieClaim]);
   });
 
-  it("extract には生成された返答文と、grounding 判定用の視聴済み canonFacts を渡す", async () => {
+  it("extract には生成された返答文と、grounding 判定用の視聴済み canonFacts 全件（プロンプト用の数件より広い）を渡す", async () => {
     await runConversationPipeline(sessionParams);
     const args = mocks.extractClaims.mock.calls[0][0];
     expect(args.text).toBe(SHIORI_REPLY);
     expect(args.workTitle).toBe("テスト作品");
-    expect(args.canonFacts).toEqual([visibleFact]);
+    expect(args.canonFacts).toEqual([visibleFact, otherVisibleFact]);
+    expect(mocks.getCanonFactsUpTo).toHaveBeenCalledWith("w", 3);
     expect(args.userMessage).toBe("これって伏線じゃない？");
     expect(typeof args.normalize).toBe("function");
   });

@@ -5,7 +5,7 @@ import { countUserMessages, decideDirective, decideSessionPhase, toshioCooldownT
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { getEntities } from "../works";
+import { getCanonFactsUpTo, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import type {
   Claim,
@@ -78,8 +78,9 @@ export async function runConversationPipeline(params: {
   const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
-  const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
-  // 生成には関係する数件、検査には全件。守りは evaluate に寄せる。
+  // 生成には関係する数件、照合と検査には視聴済み全件。守りは evaluate に寄せる。
+  const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
+  const watchedCanonFacts = getCanonFactsUpTo(workId, currentEpisode);
   const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
@@ -100,7 +101,7 @@ export async function runConversationPipeline(params: {
   const genArgs = {
     workTitle,
     currentEpisode,
-    canonFacts: visibleCanonFacts,
+    canonFacts: promptCanonFacts,
     fabricatedFacts: promptFabricatedFacts,
     directive,
     history,
@@ -113,7 +114,7 @@ export async function runConversationPipeline(params: {
       return await extractClaims({
         text: message,
         workTitle,
-        canonFacts: visibleCanonFacts,
+        canonFacts: watchedCanonFacts,
         normalize,
         userMessage,
       });
@@ -131,7 +132,7 @@ export async function runConversationPipeline(params: {
   const evaluate = (claims: Claim[]) =>
     evaluateGeneration({
       claims,
-      visibleCanonFacts,
+      visibleCanonFacts: watchedCanonFacts,
       existingFabricatedFacts,
       normalize,
     });
