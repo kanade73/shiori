@@ -6,10 +6,26 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/vectorDB`**（dev `47d6378` から切った）。issue #22「初回話題特定の RAG にベクトルDBを追加」を実装済み・**未コミット**（コミット・PR はユーザー判断）
-- dev には #18（話題の切り替わり・RAG の引き直し）、#20/#21（ドット絵ダークテーマ・字の大きさ）までマージ済み
+- **作業ブランチ: `fix/issue-26`**（dev `e38df88` から切った）。issue #26「……そこはちょっとうまく思い出せない。」問題の修正と、issue #11（API キー2本の自動切り替え）を別々のコミットにして push し、dev への PR を1本出した（ユーザー指示）。マージ待ち
+- dev には #23（ベクトルDB、issue #22）と #25（嘘を場面の細部に寄せる・としおの作風）までマージ済み
+- dev サーバーは 3000〜3003 番をこのツリーで起動中（ユーザー指示。3001〜3003 は `NEXT_DIST_DIR=.next-300X`）。調査・動作確認は 3004 番をスクラッチの `DATA_DIR` で使った（停止済み）
 
-## 直近のセッション: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、`feat/vectorDB`、未コミット）
+## 直近のセッション: API キー2本の自動切り替え（issue #11、`fix/issue-26` の2つ目のコミット）
+- ユーザー指示: issue #11 を「3.5-flash-lite + 無料枠の上限で2人のキーを自動で切り替える」に書き換えて計画をコメントに（済み）→「先輩の API を入力できる場所をつくり、2個使えるように。自分のが切れたら先輩の、先輩のが切れたら自分のに」
+- 実装: `lib/server/llm/key-pool.ts`（新規）+ `client.ts`。設計は AGENTS.md「LLM 呼び出しの ON/OFF」節。要点: モデルごとに今のキーを持ち、429 で同じリクエストをもう1本で送り直して以後そちらを使う（元のキーへは、今のキーが切れたときに戻る）。(キー, モデル) 単位で休ませ、1日の上限は quotaId の `PerDay` で見分けて太平洋時間0時まで。無効なキー（400 API_KEY_INVALID / 401 / 403）は外す。状態は `globalThis.__geminiKeyRotation`（キーは sha256 の指紋で識別）。`ai` を包んだので呼び出し側6か所とそのテストのモックは変えていない
+- 既定の `GEMINI_MODEL` を `gemini-3.6-flash` → `gemini-3.5-flash-lite` に（issue #11 の合意）。`.env.example` / AGENTS.md を更新。`.env.local` の末尾に空の `GEMINI_API_KEY_2=` を追記した（中身は読んでいない）
+- 検証: `npm test` 283件（`key-pool.test.ts` 13件・`client.test.ts` 2件追加）・`tsc`・`eslint`。実 API: 1本目に偽のキー・2本目に本物のキーで `ai.models.generateContent` → 1本目を無効として外し、2本目で応答が返った。**本物の 429 での切り替えは未確認**（本文の形はテストで再現。1分15回を超えて流すか、日次の上限に当たったときにログ `[gemini] ... に切り替えた` を見ること）
+- issue #11 のコメントに書いた利用規約の注意（Google APIs 利用規約の「利用上限を回避しない」）は未解決のまま
+
+## その前: 嘘が本物の設定の「上書き」と誤判定される問題（issue #26、`fix/issue-26` の1つ目のコミット）
+- 症状:「モモンガ」と打つと、話題は特定できるのに毎回「……そこはちょっとうまく思い出せない。別のところの話、聞かせて。」（evaluate に2回弾かれて `SAFE_UNCERTAIN_MESSAGE`）
+- 原因: `evaluate.ts` の `contradictsCanon` が「主語・関係が同じで目的語が違う」だけで上書きとみなしていた（本物の設定の関係が自由記述だった頃の前提）。話題の事実は閉じた語彙なので、「モモンガ did 無茶振り」があると「モモンガ did 尻尾を叩く」のような嘘が全部弾かれる。#25 で嘘が「誰が何をしていたか」（did）に寄ったので、資料係が did で事実を抜いた人物（モモンガ）では毎回起きた。ハチワレ・うさぎは事実が is/has/can なので通っていた。本物の db の嘘35件のうち、話題の事実と主語・関係が重なるものは0件（黙って落とされていた）
+- 修正: `claims.ts` に `contradictionReason`（2つの三つ組の矛盾理由）と `isClaimRelation` を切り出し、`findContradiction` と evaluate の本物の設定との照合の両方で使う。本物の設定との照合でも、1つに決まる関係の別の値・肯定と否定・likes/dislikes と can/cannot の反転だけを矛盾とする（否定と反転は以前は本物の設定に対して見ていなかったので、そこは厳しくなった）。関係が自由記述の work.json の canonFacts は照合しない（以前も実質一致しなかった）。差し戻し理由に本物の設定の説明文を入れた
+- テスト: `lib/server/llm/evaluate.test.ts`（新規7件。修正前のコードでは4件落ちる）。`npm test` 267件・`tsc`・`eslint` 通過
+- 実際に動かして確認（3004 番、スクラッチの `DATA_DIR`）:「モモンガ」3セッションとも差し戻しなしで返事し、保存された嘘（「モモンガ｜did｜尻尾を三回巻き直す」など）は3件とも修正前なら弾かれていた形だった
+- issue #26 に書いた別件（未着手）: 15:43〜15:45 の「……ちょっと分からなくなった。」は API キーまわりの一時的な失敗と思われる（`.env.local` の書き換え後は正常）。話題の切り替え直後にシオリが冒頭の問いかけを言い直すことがある。人物の段落からのネタバレ（「でかつよから何かを奪った」）。`components/reveal/ResultPhase.tsx:218` の `data.reveal` undefined の例外
+
+## その前: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、PR #23 で dev にマージ済み）
 - ユーザー指示:「issue#22 を実行して。必要に応じて AGENTS.md の方針も書き換えて。ベクトルDBを使うのが優先」。issue の目的は「曖昧なワードを初回の話題特定で拾えるように」、補足は「コンテキストの逼迫に注視」
 - 選んだ DB: **sqlite-vec**（`node:sqlite` に拡張として読み込む組み込み型）。`DATA_DIR/vectors/<モデル>-<次元>.sqlite` のファイル1本、作品ごとの partition key、近傍探索も DB 内。サーバーを立てる DB（Chroma・Qdrant・pgvector）はコンテナ1台・Route Handler だけの構成を崩すので外した。AGENTS.md の「意図的に選んでいない技術」を書き換え済み（ベクトルDBは外部資料の段落の検索にだけ使う。db.json は据え置き）
 - 変更点:
@@ -178,7 +194,8 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 環境メモ
 
-- `gemini-3.6-flash` の無料枠は 1日20リクエスト程度。使い切ったら `.env.local` に `GEMINI_MODEL=gemini-3.5-flash-lite`（gitignore 対象）。2.x 系は新規ユーザー向けに廃止済み（404）
+- 既定モデルは `gemini-3.5-flash-lite`（issue #11）。`gemini-3.6-flash` の無料枠は 1日20リクエスト程度。2.x 系は新規ユーザー向けに廃止済み（404）
+- 先輩のキーは `.env.local` の `GEMINI_API_KEY_2=` に入れる（空欄の行を用意済み）。本番は `fly secrets set GEMINI_API_KEY_2=...`
 - dev サーバーの並行起動: `NEXT_DIST_DIR=.next-3001 npm run dev -- -p 3001`（`next.config.mjs` で distDir を切り替える）。別 distDir で起動すると `tsconfig.json` の include に `.next-XXXX` が自動追加されるので、コミット前に戻すこと
 - 実画面の確認は本物の `.data/db.json` を汚さないよう `DATA_DIR` をスクラッチに向けた別サーバーでデモセッションを作って行う（答え合わせすると会話が終わるため）
 - ユーザー環境に Herdr の Claude 連携（`~/.claude/hooks/herdr-agent-state.sh`）が入っている。リポジトリの実装とは無関係
