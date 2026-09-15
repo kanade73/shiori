@@ -4,6 +4,17 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出に Gemini の経路を戻した（`fix/extract-gemini`、dev `4913fd5` から切った。**PR #40** → `dev`、未マージ）
+
+`31caf67`（PR #37）で抽出から Gemini の経路を消していたので、手元の推論（Ollama / LoRA サーバ）を何も設定していないと claims が毎回空になり、**答え合わせの嘘/本当の印が1つも付かなかった**（印は claims の `quote` の位置に付けるため。描画のコードは消えていない）。Ollama の経路（PR #39）は残したまま、Gemini だけでも動くようにした。
+
+- `lib/server/llm/extract.ts`: 経路は `extractRoute` が **Ollama（`EXTRACT_OLLAMA_MODEL`）→ LoRA サーバ（`EXTRACT_ENDPOINT`）→ Gemini** の順に、設定のある最初の1つを選ぶ。`ExtractBackend` に `"gemini"` を戻した。Gemini には Ollama と同じ `EXTRACT_PROMPT` / `buildExtractUserPrompt` を構造化出力（`GEMINI_CLAIMS_SCHEMA`）で投げる
+- **フォールバックはしない**（#37 の「Gemini に落ちて動いてしまうと LoRA の出来が測れない」という判断を残した）。選んだ経路が落ちたら warn 1行 + claims 空。Gemini が 429 などで失敗したときも同じ（以前は例外を投げて pipeline の catch で拾っていた）
+- `extractEndpoint()` は未設定で例外 → `null` を返すように戻した
+- `client.ts` に `EXTRACTION_MODEL`（`GEMINI_EXTRACT_MODEL`、既定 `gemini-3.1-flash-lite`）を戻した。以前の既定 `gemini-3.5-flash-lite` はいまシオリの `GEMINI_MODEL` の既定と同じで、無料枠（モデルごとに1分15回）を食い合うため、判定役（`GEMINI_ROUTER_MODEL`）と同じモデルにした
+- `.env.example` / `AGENTS.md` を3経路の記述に直した
+- 検証: `npm test` 407件・`tsc --noEmit`（`.next/` 以外）・eslint 通過。実際の Gemini での抽出はまだ試していない
+
 ## 2026-09-15: 画面の整理（`fix/feature-tweaks`、dev `be08761` から切り、#37 マージ後の `origin/dev` を取り込み済み。**PR #38** → `dev`、未マージ）
 
 ユーザー指示の4点 + 追加の8点（結果画面の考察バッジ・話数の表示・結果画面の「話の答え」・嘘の件数と印の番号・サイドバーの「生成された嘘」・削除の確認ダイアログ・セッション一覧の件数・「新しいセッション」と「別の会話を始める」の遷移先）。ユーザー指示で PR まで出した（マージは未）。#37（claims 抽出の LoRA 化）とは HANDOFF.md 以外で触るファイルが重ならない。
