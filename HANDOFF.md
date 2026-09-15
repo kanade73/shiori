@@ -16,14 +16,14 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ### 現在つながっている推論サーバ（手元）
 
-リモート gpu04 で 2 本立っていて、SSH トンネルで手元に出ている。**ドキュメントの既定（1.7B = 8123）と手元の割り当てが逆**なので注意。
+リモート gpu04 で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
 
-| 手元のポート | モデル | リモートのパス |
+| ポート | モデル | リモートのパス |
 |---|---|---|
-| 8124 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
-| 8123 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
+| 8124 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
 
-`../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8124`（= 1.7B）にしてある。
+`../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8123`（= 1.7B）にしてある。サーバは `setsid nohup` だと SSH 切断で落ちたことがあるので tmux で起動する。
 
 ### 通しの確認（3004 の dev サーバ）
 
