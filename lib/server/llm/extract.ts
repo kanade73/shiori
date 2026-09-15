@@ -201,28 +201,6 @@ export function buildExtractUserPrompt({ text, workTitle, userMessage }: Extract
   return `# 作品\n${workTitle}\n${context}\n# 返答文\n${text}`;
 }
 
-/** Ollama の `format` に渡す JSON schema。relation は閉じた語彙に絞る。 */
-const OLLAMA_CLAIMS_SCHEMA = {
-  type: "object",
-  properties: {
-    claims: {
-      type: "array",
-      items: {
-        type: "object",
-        properties: {
-          subject: { type: "string" },
-          relation: { type: "string", enum: [...CLAIM_RELATIONS] },
-          object: { type: "string" },
-          negated: { type: "boolean" },
-          claim: { type: "string" },
-          quote: { type: "string" },
-        },
-        required: ["subject", "relation", "object", "negated", "claim", "quote"],
-      },
-    },
-  },
-  required: ["claims"],
-} as const;
 
 /**
  * モデルが返した文字列 → JSON。素の JSON を期待するが、\`\`\` 囲みや前後の文が
@@ -263,9 +241,15 @@ async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }
 }
 
 /**
- * Ollama の `/api/chat`。`format` に JSON schema を渡して構造化出力にし、
- * qwen3 系の思考は `think: false` で切る（思考込みだと数十秒かかる）。
- * temperature 0 で決定的に。返答は `message.content` に JSON 文字列で入る。
+ * Ollama の `/api/chat`。`format: "json"`（素の JSON モード）で受け、qwen3 系の思考は
+ * `think: false` で切る（思考込みだと数十秒かかる）。temperature 0 で決定的に。
+ * 返答は `message.content` に JSON 文字列で入る。
+ *
+ * **JSON schema による制約付き生成は使わない**。LoRA で学習した抽出モデル
+ * （ml/ の Qwen3-1.7B）に schema を当てると object に subject が写るなど三つ組が
+ * 崩れた（文法制約が学習した出力の並びと噛み合わない）。素の JSON モードなら
+ * 学習どおりに出る。relation の語彙は指示文に書いてあり、外れた1件は
+ * `parseExtractedClaims` が捨てる。
  */
 async function extractViaOllama({ host, model }: { host: string; model: string }, input: ExtractInput): Promise<ExtractedClaim[]> {
   const controller = new AbortController();
@@ -278,7 +262,7 @@ async function extractViaOllama({ host, model }: { host: string; model: string }
         model,
         stream: false,
         think: false,
-        format: OLLAMA_CLAIMS_SCHEMA,
+        format: "json",
         options: { temperature: 0 },
         messages: [
           { role: "system", content: EXTRACT_PROMPT },

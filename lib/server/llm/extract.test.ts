@@ -299,7 +299,7 @@ describe("extractClaims: EXTRACT_OLLAMA_MODEL があれば Ollama を使う", ()
     vi.unstubAllGlobals();
   });
 
-  it("/api/chat に同じ指示文を JSON schema・思考オフで投げ、EXTRACT_ENDPOINT は要らない", async () => {
+  it("/api/chat に同じ指示文を JSON モード・思考オフで投げ、EXTRACT_ENDPOINT は要らない", async () => {
     fetchMock.mockResolvedValue(
       ollamaReply(
         JSON.stringify({
@@ -321,7 +321,8 @@ describe("extractClaims: EXTRACT_OLLAMA_MODEL があれば Ollama を使う", ()
     expect(body.model).toBe("qwen3:8b");
     expect(body.stream).toBe(false);
     expect(body.think).toBe(false);
-    expect(body.format.properties.claims.items.properties.relation.enum).toContain("lives_in");
+    // schema 制約は LoRA の出力を崩すので素の json モード
+    expect(body.format).toBe("json");
     expect(body.messages[0]).toEqual({ role: "system", content: EXTRACT_PROMPT });
     expect(body.messages[1].content).toContain("# 返答文");
     expect(body.messages[1].content).toContain(params.userMessage);

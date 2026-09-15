@@ -8,3 +8,9 @@ data/
 venv*/
 __pycache__/
 *.pyc
+
+# gguf の生成物
+gguf/*.gguf
+gguf/merged/
+gguf/llama.cpp/
+gguf/venv/
