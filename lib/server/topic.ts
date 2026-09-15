@@ -24,17 +24,56 @@ const MIN_SCORE = 3;
 // 最も近い段落は 0.60〜0.65、文字では重ならない場面の言い換えは 0.66〜0.68 だった（差は小さい）
 const MIN_SIMILARITY = 0.66;
 
-/** 場面の名前（や資料の段落の見出し）に、arc の名前・別名が含まれていればその arc。長く一致したものを優先する */
+/** 小書きの仮名を並字に寄せる（資料の「三ッ星」と arc の「三ツ星」を同じに見る） */
+function foldSmallKana(text: string): string {
+  return text.replace(/[ぁぃぅぇぉっゃゅょゎァィゥェォッャュョヮ]/g, (c) => String.fromCharCode(c.charCodeAt(0) + 1));
+}
+
+function matchForm(text: string): string {
+  return foldSmallKana(normalizeText(text));
+}
+
+// 見出しの前後編・副題などの飾り（<後>・（擬態型）・〈…〉・[…]）
+const NAME_QUALIFIER = /<[^>]*>|〈[^〉]*〉|\([^)]*\)|\[[^\]]*\]/g;
+// 見出しの芯が途中で切れている（『シーサーの』編）とき、arc の名前の頭と照らすのに要る長さ。
+// 短いと、人物名だけの芯（シーサー）がその人物の編に吸い寄せられる
+const MIN_PREFIX_CORE = 3;
+
+/**
+ * 編の名前から飾りを除いた芯。「『黒い流れ星<後>』編」→「黒い流れ星」、「カブトムシ編（擬態型）」→「カブトムシ」。
+ * 『』で囲まれているか「編」で終わる、編の名前の形のときだけ返す（人物名などの話題の名前は null）。
+ */
+export function arcNameCore(text: string): string | null {
+  const stripped = text.normalize("NFKC").replace(NAME_QUALIFIER, "").trim();
+  const bare = stripped.replace(/[『』「」]/g, "");
+  if (!stripped.includes("『") && !bare.endsWith("編")) return null;
+  const core = matchForm(bare.replace(/編$/, ""));
+  return core.length > 0 ? core : null;
+}
+
+/**
+ * 場面の名前（や資料の段落の見出し）から arc を引く。長く一致したものを優先する。
+ * - 名前に arc の名前・別名が含まれている
+ * - 編の名前の形なら、飾りを除いた芯が arc の名前・別名の芯と同じか（『黒い流れ星<後>』編 → 黒い流れ星編）、
+ *   3文字以上の芯が arc の芯の頭と一致する（見出しが途中で切れた『シーサーの』編 → シーサーの資格編）
+ * 資料の見出しの呼び方に合わせて作品ごとに別名を足さなくても、表記のゆれは吸収する（issue #33）。
+ */
 export function matchArc(arcs: Arc[], texts: string[]): Arc | null {
-  const haystacks = texts.map(normalizeText).filter((t) => t.length > 0);
+  const haystacks = texts.map(matchForm).filter((t) => t.length > 0);
+  const headingCores = texts.map(arcNameCore).filter((c): c is string => c !== null);
   let best: { arc: Arc; length: number } | null = null;
   for (const arc of arcs) {
     for (const form of [arc.title, ...arc.aliases]) {
-      const needle = normalizeText(form);
-      if (needle.length < 2) continue;
-      if (haystacks.some((h) => h.includes(needle)) && (!best || needle.length > best.length)) {
-        best = { arc, length: needle.length };
-      }
+      const needle = matchForm(form);
+      const formCore = arcNameCore(form);
+      const lengths = [
+        needle.length >= 2 && haystacks.some((h) => h.includes(needle)) ? needle.length : 0,
+        ...headingCores.map((core) =>
+          formCore && (core === formCore || (core.length >= MIN_PREFIX_CORE && formCore.startsWith(core))) ? core.length : 0,
+        ),
+      ];
+      const length = Math.max(...lengths);
+      if (length > 0 && (!best || length > best.length)) best = { arc, length };
     }
   }
   return best?.arc ?? null;
