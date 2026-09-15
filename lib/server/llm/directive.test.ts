@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LIE_STREAK_LIMIT, decideDirective, quotesMessage, recentLieCount, theoryInQuestion } from "./directive";
-import type { FabricatedFact, Message, QuestionType, UserMessageAnalysis } from "../types";
+import { LIE_STREAK_LIMIT, decideDirective, isSceneKnown, quotesMessage, recentLieCount, theoryInQuestion } from "./directive";
+import type { FabricatedFact, Message, QuestionType, SessionTopic, UserMessageAnalysis } from "../types";
 
 function msg(id: string, role: Message["role"], speaker?: Message["speaker"]): Message {
   return { id, sessionId: "s1", role, content: id, createdAt: "2026-01-01T00:00:00Z", speaker };
@@ -118,6 +118,30 @@ describe("decideDirective", () => {
       fabricatedFacts: [fact("f1", "a1")],
       relevantFacts: [],
     });
+    expect(directive).toEqual({ kind: "introduce" });
+  });
+});
+
+describe("どの場面の話か分からないとき（ask_scene、issue #32）", () => {
+  const topic: SessionTopic = { title: "草むしり検定", summary: "…", query: "草むしり検定", facts: [], sources: [], resolvedAt: "2026-01-01T00:00:00Z" };
+
+  it("isSceneKnown: 話題の場面か、見た話数のどちらかが分かっていれば true", () => {
+    expect(isSceneKnown(null, 0)).toBe(false);
+    expect(isSceneKnown(undefined, 0)).toBe(false);
+    expect(isSceneKnown(topic, 0)).toBe(true);
+    // 話題の仕組みより前の、話数を聞いていたセッション
+    expect(isSceneKnown(null, 63)).toBe(true);
+  });
+
+  it("場面が分からなければ、質問・感想・「なんでもいい」のどれでも ask_scene", () => {
+    for (const q of ["theory", "fact_question", "impression", "other", "doubt"] as QuestionType[]) {
+      const directive = decideDirective({ analysis: analysis(q, ["ハチワレ"]), history: [], fabricatedFacts: [], relevantFacts: [], sceneKnown: false });
+      expect(directive).toEqual({ kind: "ask_scene" });
+    }
+  });
+
+  it("場面が分かっていれば従来どおり（既定は分かっている扱い）", () => {
+    const directive = decideDirective({ analysis: analysis("theory"), history: [], fabricatedFacts: [], relevantFacts: [], sceneKnown: true });
     expect(directive).toEqual({ kind: "introduce" });
   });
 });

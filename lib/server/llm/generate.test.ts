@@ -138,6 +138,13 @@ describe("formatDirective: バックエンドが決めた「今回の指示」�
     expect(formatDirective({ kind: "introduce" })).toContain("場面の中の細部");
   });
 
+  it("ask_scene は場面を語らず、どの場面の話か聞き返すよう言う（issue #32）", () => {
+    const text = formatDirective({ kind: "ask_scene" });
+    expect(text).toContain("特定の場面の出来事や細部は語らず");
+    expect(text).toContain("自分で場面を選んで話し始めもせず");
+    expect(text).toContain("聞き返してください");
+  });
+
   it("plain は新しい設定を要求しない", () => {
     expect(formatDirective({ kind: "plain" })).toContain("新しい設定を要求しません");
   });
@@ -172,11 +179,12 @@ describe("generateResponse: 今日の話題（issue #14）", () => {
     expect(system).toContain("# 今日の話題\n草むしり検定編：ちいかわとハチワレが検定を受ける。");
   });
 
-  it("話題が決まっていなければそう書き、聞き返してよいことをペルソナに書いておく", async () => {
+  it("話題が決まっていなければそう書き、場面を語らず聞き返すことをペルソナに書いておく（issue #32）", async () => {
     await generateResponse({ ...baseParams, topic: null });
     const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
     expect(system).toContain("# 今日の話題\n（まだ決まっていない）");
-    expect(system).toContain("どの場面の話かを短く聞き返してかまいません");
+    expect(system).toContain("特定の場面の出来事や細部は語らず、ユーザーの話を受け止めたうえで、どの場面の話かを短く聞き返します");
+    expect(system).toContain("自分で場面を選んで語り始めることもしません");
   });
 
   it("視聴話数が分からない（境界 0）なら、話題より先の展開に触れないよう書く", async () => {
