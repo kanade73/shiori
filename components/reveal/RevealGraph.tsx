@@ -59,12 +59,31 @@ function edgePath(e: LaidOutEdge): string {
   return `M${x1},${y1} C${cx},${y1} ${cx},${y2} ${x2},${y2}`;
 }
 
-function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolean; active: boolean }) {
+function NodeShape({
+  item,
+  dimmed,
+  active,
+  highlighted,
+}: {
+  item: LaidOutNode;
+  dimmed: boolean;
+  active: boolean;
+  highlighted?: boolean;
+}) {
   const { node, w, h } = item;
   const common = `transition-opacity duration-200 ${dimmed ? "opacity-25" : "opacity-100"}`;
-  const ring = active ? (
-    <rect x={-3} y={-3} width={w + 6} height={h + 6} rx={h / 2 + 3} className="fill-none stroke-primary" strokeWidth={1.5} />
-  ) : null;
+  const ring =
+    active || highlighted ? (
+      <rect
+        x={-3}
+        y={-3}
+        width={w + 6}
+        height={h + 6}
+        rx={h / 2 + 3}
+        className={`fill-none stroke-primary ${highlighted && !active ? "animate-fade-up" : ""}`}
+        strokeWidth={1.5}
+      />
+    ) : null;
 
   switch (node.kind) {
     case "statement":
@@ -133,8 +152,21 @@ function LegendItem({ children, label }: { children: React.ReactNode; label: str
   );
 }
 
-export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onNavigate?: (anchorId: string) => void }) {
+export function RevealGraph({
+  graph,
+  onNavigate,
+  highlightNodeIds,
+  compact,
+}: {
+  graph: RevealGraphData;
+  onNavigate?: (anchorId: string) => void;
+  /** 直前に増えたノード。軽く強調する */
+  highlightNodeIds?: string[];
+  /** 見出し・説明・凡例を省き、図だけを出す（開発者モードのパネル用） */
+  compact?: boolean;
+}) {
   const layout = useMemo(() => layoutGraph(graph), [graph]);
+  const highlighted = useMemo(() => new Set(highlightNodeIds ?? []), [highlightNodeIds]);
   const [hovered, setHovered] = useState<string | null>(null);
 
   const neighbors = useMemo(() => {
@@ -166,24 +198,31 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
   }
 
   return (
-    <section className="mt-sm rounded-lg border border-hairline bg-canvas px-md py-sm" data-testid="reveal-graph">
-      <div className="flex flex-wrap items-baseline justify-between gap-x-sm gap-y-xxs">
-        <h2 className="text-title-sm font-medium text-ink">嘘の構造図</h2>
-        <p className="text-[12px] text-muted">
-          {lies > 0 ? `嘘 ${lies}件` : "語られた設定"}
-          {canonCount > 0 ? `は本物の設定 ${canonCount}件の上に` : "は"}
-          {toshioCount > 0 ? `乗り、としおの考察 ${toshioCount}回に広がりました` : "あります"}
-        </p>
-      </div>
-      <p className="mt-xxs text-[12px] leading-[1.6] text-muted">
-        左から右へ、本物の設定がキャラの話になり、シオリの主張（上から会話順）になり、としおの考察に広がる流れです。ノードを押すと、ふりかえりの該当箇所へ飛びます。
-      </p>
+    <section
+      className={compact ? "" : "mt-sm rounded-lg border border-hairline bg-canvas px-md py-sm"}
+      data-testid="reveal-graph"
+    >
+      {!compact && (
+        <>
+          <div className="flex flex-wrap items-baseline justify-between gap-x-sm gap-y-xxs">
+            <h2 className="text-title-sm font-medium text-ink">嘘の構造図</h2>
+            <p className="text-[12px] text-muted">
+              {lies > 0 ? `嘘 ${lies}件` : "語られた設定"}
+              {canonCount > 0 ? `は本物の設定 ${canonCount}件の上に` : "は"}
+              {toshioCount > 0 ? `乗り、としおの考察 ${toshioCount}回に広がりました` : "あります"}
+            </p>
+          </div>
+          <p className="mt-xxs text-[12px] leading-[1.6] text-muted">
+            左から右へ、本物の設定がキャラの話になり、シオリの主張（上から会話順）になり、としおの考察に広がる流れです。ノードを押すと、ふりかえりの該当箇所へ飛びます。
+          </p>
+        </>
+      )}
 
-      <div className="mt-xs overflow-x-auto">
+      <div className={`overflow-x-auto ${compact ? "" : "mt-xs"}`}>
         <svg
           viewBox={`0 0 ${layout.width} ${layout.height}`}
           width="100%"
-          style={{ display: "block", maxWidth: layout.width, minWidth: Math.min(layout.width, 640) }}
+          style={{ display: "block", maxWidth: layout.width, minWidth: Math.min(layout.width, compact ? 360 : 640) }}
           role="img"
           aria-label="嘘の構造図"
           onMouseLeave={() => setHovered(null)}
@@ -236,6 +275,7 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
                 key={item.node.id}
                 transform={`translate(${item.x}, ${item.y})`}
                 data-node-kind={item.node.kind}
+                data-highlighted={highlighted.has(item.node.id) ? "true" : undefined}
                 onMouseEnter={() => setHovered(item.node.id)}
                 onFocus={() => setHovered(item.node.id)}
                 onBlur={() => setHovered(null)}
@@ -252,14 +292,19 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
                 style={{ cursor: clickable ? "pointer" : "default", outline: "none" }}
               >
                 <title>{title}</title>
-                <NodeShape item={item} dimmed={isDimmed(item.node.id)} active={hovered === item.node.id} />
+                <NodeShape
+                  item={item}
+                  dimmed={isDimmed(item.node.id)}
+                  active={hovered === item.node.id}
+                  highlighted={highlighted.has(item.node.id)}
+                />
               </g>
             );
           })}
         </svg>
       </div>
 
-      <div className="mt-xs flex flex-wrap gap-x-sm gap-y-xxs text-[11px] text-muted">
+      <div className={`mt-xs flex-wrap gap-x-sm gap-y-xxs text-[11px] text-muted ${compact ? "hidden" : "flex"}`}>
         <LegendItem label="嘘">
           <rect x="2" y="2" width="22" height="10" rx="5" className="fill-error/10 stroke-error" strokeWidth={1.5} />
         </LegendItem>

@@ -56,7 +56,7 @@ function stored(partial: Partial<FabricatedFact>): FabricatedFact {
 
 function evaluate(claims: Claim[], canonFacts: CanonFact[], existing: FabricatedFact[] = []) {
   return evaluateGeneration({
-    result: { message: "", strategy: "no_new_lie", claims },
+    claims,
     visibleCanonFacts: canonFacts,
     existingFabricatedFacts: existing,
     normalize,

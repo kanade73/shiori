@@ -3,14 +3,17 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import type { SendMessageHandlers } from "@/lib/client/api";
 
 // issue #6: 1回の送信でシオリ→としおと複数の吹き出しが積まれること、
-// としおの吹き出しに名前と「考察」バッジが付くことを固定する。API は差し替える。
+// としおの吹き出しに名前が付くことを固定する。API は差し替える。
 const mocks = vi.hoisted(() => ({
   getSessionData: vi.fn(),
-  getFabricatedFacts: vi.fn(),
   listSessions: vi.fn(),
   sendMessage: vi.fn(),
+  deleteSession: vi.fn(),
+  createSession: vi.fn(),
+  push: vi.fn(),
 }));
 vi.mock("@/lib/client/api", () => mocks);
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push: mocks.push }) }));
 
 import { ChatApp } from "./ChatApp";
 
@@ -26,7 +29,7 @@ function streamed(bubbles: [speaker: "shiori" | "toshio", text: string][]) {
       h.onMetadata({ fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
       h.onMessageEnd();
     }
-    h.onDone();
+    h.onDone({ phase: "early" });
   };
 }
 
@@ -48,12 +51,11 @@ beforeEach(() => {
   vi.clearAllMocks();
   Element.prototype.scrollTo = vi.fn();
   mocks.getSessionData.mockResolvedValue({ work, session, messages: [], fabricatedFactCount: 0 });
-  mocks.getFabricatedFacts.mockResolvedValue([]);
   mocks.listSessions.mockResolvedValue([]);
 });
 
 describe("ChatApp: 1回の送信で複数の吹き出しを積む", () => {
-  it("シオリの吹き出しの後にとしおの吹き出しが別に増え、としおには「考察」バッジが付く", async () => {
+  it("シオリの吹き出しの後にとしおの吹き出しが別に増える。としおの名前の横に「考察」の印は付けない", async () => {
     mocks.sendMessage.mockImplementation(streamed([["shiori", "そうだね。"], ["toshio", "結論から言うとね。"]]));
     await renderAndSend("これって伏線じゃない？");
 
@@ -64,7 +66,7 @@ describe("ChatApp: 1回の送信で複数の吹き出しを積む", () => {
     expect(within(shiori).queryByText("考察")).toBeNull();
     expect(within(toshio).getByText("としお")).toBeTruthy();
     expect(within(toshio).getByText("結論から言うとね。")).toBeTruthy();
-    expect(within(toshio).getByText("考察")).toBeTruthy();
+    expect(within(toshio).queryByText("考察")).toBeNull();
   });
 
   // issue #10: プロフ画像も話者ごとに出し分ける（以前はとしおにもシオリの画像を代用していた）
@@ -149,7 +151,7 @@ describe("ChatApp: 返答を待つ間の表示", () => {
           release = () => {
             h.onToken("結論から言うとね。");
             h.onMessageEnd();
-            h.onDone();
+            h.onDone({ phase: "early" });
             resolve();
           };
         }),
@@ -180,6 +182,13 @@ describe("ChatApp: 途中で切れたストリーム", () => {
 });
 
 describe("ChatApp: 話題の場面（issue #14）", () => {
+  it("話題の無いセッションは、視聴済み話数が分かっていても話数を出さない", async () => {
+    render(<ChatApp sessionId="s1" />);
+    const header = await screen.findByRole("banner");
+    expect(within(header).getByText("話題はこれから")).toBeTruthy();
+    expect(screen.queryByText(/話まで/)).toBeNull();
+  });
+
   it("話題が決まるまではヘッダーに「話題はこれから」、topic が届いたらその場面の名前を出す", async () => {
     const topic = {
       title: "草むしり検定編",
@@ -211,11 +220,12 @@ describe("ChatApp: 話題の場面（issue #14）", () => {
 });
 
 describe("ChatApp: 答え合わせ", () => {
-  it("答え合わせ前はヘッダーに答え合わせへの導線があり、入力欄が出る", async () => {
+  it("答え合わせ前はヘッダーに答え合わせへの導線があり、入力欄が出る。偽設定の確認画面への導線は無い", async () => {
     render(<ChatApp sessionId="s1" />);
     const link = await screen.findByRole("link", { name: "答え合わせ" });
     expect(link.getAttribute("href")).toBe("/reveal/s1");
     expect(screen.getByPlaceholderText("感想やシーンの話を送ってみて...")).toBeTruthy();
+    expect(screen.queryByText("偽設定を確認")).toBeNull();
   });
 
   it("答え合わせ済みなら入力欄の代わりに、結果と新しいセッションへの導線を出す", async () => {
@@ -230,5 +240,148 @@ describe("ChatApp: 答え合わせ", () => {
     expect(screen.queryByPlaceholderText("感想やシーンの話を送ってみて...")).toBeNull();
     expect(screen.getByRole("link", { name: "答え合わせの結果" }).getAttribute("href")).toBe("/reveal/s1");
     expect(screen.getByRole("link", { name: "結果を見る" }).getAttribute("href")).toBe("/reveal/s1");
+  });
+});
+
+describe("ChatApp: 過去のセッションの削除", () => {
+  const summary = (id: string, progressDescription: string) => ({
+    id,
+    workId: "w",
+    currentEpisode: 3,
+    progressDescription,
+    createdAt: "",
+    updatedAt: "2026-09-14T00:00:00.000Z",
+    fabricatedFactCount: 0,
+  });
+
+  beforeEach(() => {
+    mocks.listSessions.mockResolvedValue([summary("s1", "いまの会話"), summary("s2", "前の会話")]);
+    mocks.deleteSession.mockResolvedValue(undefined);
+  });
+
+  async function openDialog(label: string) {
+    render(<ChatApp sessionId="s1" />);
+    fireEvent.click(await screen.findByRole("button", { name: `「${label}」のセッションを削除` }));
+    return screen.getByRole("alertdialog");
+  }
+
+  it("ゴミ箱を押すと、シオリが吹き出しで「ほんとうに消しちゃうの...?」と聞き、はい/いいえの2択を出す", async () => {
+    const dialog = await openDialog("前の会話");
+    expect(within(dialog).getByText("ほんとうに消しちゃうの...?")).toBeTruthy();
+    expect(within(dialog).getByText("「前の会話」の会話")).toBeTruthy();
+    expect(within(dialog).getByAltText("シオリ")).toBeTruthy();
+    const buttons = within(dialog).getAllByRole("button");
+    expect(buttons.map((b) => b.textContent)).toEqual(["はい", "いいえ"]);
+    // 開いた時点では「いいえ」にフォーカスがある（Enter で消してしまわない）
+    expect(document.activeElement).toBe(within(dialog).getByRole("button", { name: "いいえ" }));
+    // まだ消していない
+    expect(mocks.deleteSession).not.toHaveBeenCalled();
+  });
+
+  it("「はい」で、そのセッションを消して一覧から外す", async () => {
+    const dialog = await openDialog("前の会話");
+    fireEvent.click(within(dialog).getByRole("button", { name: "はい" }));
+
+    await waitFor(() => expect(screen.queryByRole("button", { name: "「前の会話」のセッションを削除" })).toBeNull());
+    expect(mocks.deleteSession).toHaveBeenCalledWith("s2");
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    expect(mocks.push).not.toHaveBeenCalled();
+  });
+
+  it("「いいえ」・Esc・背景のクリックでは消さずに閉じる", async () => {
+    fireEvent.click(within(await openDialog("前の会話")).getByRole("button", { name: "いいえ" }));
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "「前の会話」のセッションを削除" }));
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "「前の会話」のセッションを削除" }));
+    fireEvent.click(screen.getByRole("alertdialog").parentElement!);
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+
+    expect(mocks.deleteSession).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "「前の会話」のセッションを削除" })).toBeTruthy();
+  });
+
+  it("削除に失敗したら、ダイアログを閉じずにエラーを出す", async () => {
+    mocks.deleteSession.mockRejectedValue(new Error("session not found"));
+    const dialog = await openDialog("前の会話");
+    fireEvent.click(within(dialog).getByRole("button", { name: "はい" }));
+
+    expect(await within(dialog).findByText("session not found")).toBeTruthy();
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+  });
+
+  it("開いているセッションを消したら、最初の画面へ移る", async () => {
+    const dialog = await openDialog("いまの会話");
+    fireEvent.click(within(dialog).getByRole("button", { name: "はい" }));
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/"));
+    expect(mocks.deleteSession).toHaveBeenCalledWith("s1");
+  });
+});
+
+describe("ChatApp: サイドバー", () => {
+  it("作品の欄にもセッション一覧にも、生成された嘘の件数は出さない。答え合わせ済みの印は出す", async () => {
+    mocks.listSessions.mockResolvedValue([
+      { ...session, progressDescription: "いまの会話", updatedAt: "2026-09-14T00:00:00.000Z", fabricatedFactCount: 4 },
+      {
+        ...session,
+        id: "s2",
+        progressDescription: "前の会話",
+        updatedAt: "2026-09-13T00:00:00.000Z",
+        fabricatedFactCount: 7,
+        reveal: { revealedAt: "2026-09-13T01:00:00.000Z", guesses: {} },
+      },
+    ]);
+    render(<ChatApp sessionId="s1" />);
+    expect(await screen.findByText("前の会話")).toBeTruthy();
+    expect(screen.queryByText("生成された嘘")).toBeNull();
+    expect(screen.queryByText(/^\d+件$/)).toBeNull();
+    expect(screen.getByText("答え合わせ済み")).toBeTruthy();
+  });
+});
+
+describe("ChatApp: 新しいセッション", () => {
+  beforeEach(() => {
+    mocks.createSession.mockResolvedValue({ sessionId: "s-new", openingMessage: "……今日は何について話したい?" });
+  });
+
+  it("サイドバーの「新しいセッション」は、スタート画面に戻らず、今の作品で新しいセッションを作ってそのチャットに移る", async () => {
+    render(<ChatApp sessionId="s1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "新しいセッション" }));
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/chat/s-new"));
+    expect(mocks.createSession).toHaveBeenCalledWith("w");
+    expect(mocks.push).not.toHaveBeenCalledWith("/");
+    expect(screen.queryByRole("link", { name: "新しいセッション" })).toBeNull();
+  });
+
+  it("答え合わせ済みの会話の下の「新しいセッション」も同じ", async () => {
+    mocks.getSessionData.mockResolvedValue({
+      work,
+      session: { ...session, reveal: { revealedAt: "2026-09-14T00:00:00.000Z", guesses: {} } },
+      messages: [],
+      fabricatedFactCount: 0,
+    });
+    render(<ChatApp sessionId="s1" />);
+    await screen.findByText("この会話は答え合わせ済み。ここから先は、新しいセッションで。");
+    const buttons = screen.getAllByRole("button", { name: "新しいセッション" });
+    expect(buttons).toHaveLength(2);
+    fireEvent.click(buttons[1]);
+
+    await waitFor(() => expect(mocks.push).toHaveBeenCalledWith("/chat/s-new"));
+    expect(mocks.createSession).toHaveBeenCalledTimes(1);
+  });
+
+  it("作成に失敗したら、画面を移らずにエラーを出す", async () => {
+    mocks.createSession.mockRejectedValue(new Error("work not found"));
+    render(<ChatApp sessionId="s1" />);
+    fireEvent.click(await screen.findByRole("button", { name: "新しいセッション" }));
+
+    expect(await screen.findByText("work not found")).toBeTruthy();
+    expect(mocks.push).not.toHaveBeenCalled();
+    expect((screen.getByRole("button", { name: "新しいセッション" }) as HTMLButtonElement).disabled).toBe(false);
   });
 });

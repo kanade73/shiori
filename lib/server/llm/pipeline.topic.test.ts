@@ -1,20 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { CanonFact, GenerationResult, Message, SessionTopic } from "../types";
+import type { CanonFact, Claim, Message, SessionTopic } from "../types";
 
 // issue #14: 話題の場面が決まるまでは発話のたびに調べ、決まったら以後は調べないこと、
 // 場面から分かった境界と事実が generate / evaluate に届くことを固定する。
-// Gemini を叩く generate・topic と、data/ を読む works / retrieval は差し替え、evaluate は本物を通す。
+// Gemini を叩く generate・extract・topic と、data/ を読む works / retrieval は差し替え、evaluate は本物を通す。
 const mocks = vi.hoisted(() => ({
-  generateResponse: vi.fn(),
+  generateReply: vi.fn(),
+  extractClaims: vi.fn(),
   lookupSessionTopic: vi.fn(),
   episodeBoundaryFor: vi.fn(),
   detectTopicShift: vi.fn(),
   retrieveCanonFacts: vi.fn(),
   retrieveFabricatedFacts: vi.fn(),
   getAllCanonFacts: vi.fn(),
+  getCanonFactsUpTo: vi.fn(),
 }));
-vi.mock("./generate", () => ({ generateResponse: mocks.generateResponse }));
+vi.mock("./generate", () => ({ generateReply: mocks.generateReply }));
+vi.mock("./extract", () => ({ extractClaims: mocks.extractClaims }));
 vi.mock("./toshio", () => ({ generateToshioCommentary: vi.fn() }));
+vi.mock("../creator", () => ({ getCreatorProfiles: async () => [] }));
 vi.mock("../topic", () => ({
   lookupSessionTopic: mocks.lookupSessionTopic,
   episodeBoundaryFor: mocks.episodeBoundaryFor,
@@ -30,6 +34,7 @@ vi.mock("../retrieval", () => ({
 }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
+  getCanonFactsUpTo: mocks.getCanonFactsUpTo,
   getEntities: () => [],
   getArcs: () => [],
   getEpisodesUpTo: () => [],
@@ -67,8 +72,9 @@ const params = {
   userMessage: "検定のところ",
 };
 
-function generation(overrides: Partial<GenerationResult> = {}): GenerationResult {
-  return { message: "そうだね。", strategy: "no_new_lie", claims: [], ...overrides };
+/** extractClaims の返り値。claims に加えて、どちらのバックエンドで取り出したかを返す */
+function extracted(claims: Claim[] = []) {
+  return { claims, backend: "gemini" as const };
 }
 
 beforeEach(() => {
@@ -78,7 +84,9 @@ beforeEach(() => {
   mocks.retrieveCanonFacts.mockImplementation((_w: string, _e: number, _a: unknown, facts: CanonFact[] = []) => facts);
   mocks.retrieveFabricatedFacts.mockReturnValue([]);
   mocks.getAllCanonFacts.mockReturnValue([workFact]);
-  mocks.generateResponse.mockResolvedValue(generation());
+  mocks.getCanonFactsUpTo.mockReturnValue([workFact]);
+  mocks.generateReply.mockResolvedValue("そうだね。");
+  mocks.extractClaims.mockResolvedValue(extracted());
   mocks.detectTopicShift.mockResolvedValue(null);
 });
 
@@ -93,7 +101,7 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
   it("決まった話題の事実を本物の設定として取り出し、話題と境界ごとシオリに渡す", async () => {
     await runConversationPipeline(params);
     expect(mocks.retrieveCanonFacts).toHaveBeenCalledWith("w", 63, expect.anything(), [topicFact]);
-    expect(mocks.generateResponse.mock.calls[0][0]).toMatchObject({ topic, currentEpisode: 63, canonFacts: [topicFact] });
+    expect(mocks.generateReply.mock.calls[0][0]).toMatchObject({ topic, currentEpisode: 63, canonFacts: [topicFact] });
   });
 
   it("既に話題が決まっていて、切り替わっていなければ調べ直さない", async () => {
@@ -101,7 +109,7 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
     expect(mocks.detectTopicShift).toHaveBeenCalledTimes(1);
     expect(mocks.lookupSessionTopic).not.toHaveBeenCalled();
     expect(result.newTopic).toBeNull();
-    expect(mocks.generateResponse.mock.calls[0][0].topic).toBe(topic);
+    expect(mocks.generateReply.mock.calls[0][0].topic).toBe(topic);
   });
 
   it("特定できなければ話題なしのまま返事をする（境界は動かない）", async () => {
@@ -109,7 +117,7 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
     const result = await runConversationPipeline(params);
     expect(result.newTopic).toBeNull();
     expect(result.currentEpisode).toBe(0);
-    expect(mocks.generateResponse.mock.calls[0][0]).toMatchObject({ topic: null, currentEpisode: 0 });
+    expect(mocks.generateReply.mock.calls[0][0]).toMatchObject({ topic: null, currentEpisode: 0 });
   });
 
   it("境界は狭めない（保存済みの境界の方が先なら、そちらを使う）", async () => {
@@ -127,7 +135,7 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
       grounding: "canon" as const,
       sourceCanonFactIds: ["cf-60", "topic-1"],
     };
-    mocks.generateResponse.mockResolvedValue(generation({ claims: [claim] }));
+    mocks.extractClaims.mockResolvedValue(extracted([claim]));
     const result = await runConversationPipeline(params);
     expect(result.evaluation.shouldRegenerate).toBe(false);
     expect(result.regenerated).toBe(false);
@@ -194,7 +202,7 @@ describe("runConversationPipeline: 話題の切り替わり", () => {
 
   it("シオリには切り替え後の履歴だけを渡し（この発話では空）、前の話題は名前だけ、事実は新しい話題の分だけを渡す", async () => {
     await runConversationPipeline(shiftParams);
-    const args = mocks.generateResponse.mock.calls[0][0];
+    const args = mocks.generateReply.mock.calls[0][0];
     expect(args.history).toEqual([]);
     expect(args.pastTopics).toEqual([topic]);
     expect(args.canonFacts).toEqual([pajamaFact]);
@@ -211,7 +219,7 @@ describe("runConversationPipeline: 話題の切り替わり", () => {
       grounding: "canon" as const,
       sourceCanonFactIds: ["topic-1"],
     };
-    mocks.generateResponse.mockResolvedValue(generation({ claims: [claim] }));
+    mocks.extractClaims.mockResolvedValue(extracted([claim]));
     const result = await runConversationPipeline(shiftParams);
     expect(result.evaluation.shouldRegenerate).toBe(false);
   });
@@ -221,14 +229,14 @@ describe("runConversationPipeline: 話題の切り替わり", () => {
     const result = await runConversationPipeline(shiftParams);
     expect(result.newTopic).toBeNull();
     expect(result.previousTopic).toBeNull();
-    expect(mocks.generateResponse.mock.calls[0][0].history).toEqual(history);
+    expect(mocks.generateReply.mock.calls[0][0].history).toEqual(history);
   });
 
   it("引き直して特定できなければ、いまの話題のまま続ける", async () => {
     mocks.lookupSessionTopic.mockResolvedValue(null);
     const result = await runConversationPipeline(shiftParams);
     expect(result.newTopic).toBeNull();
-    expect(mocks.generateResponse.mock.calls[0][0].topic).toBe(topic);
+    expect(mocks.generateReply.mock.calls[0][0].topic).toBe(topic);
   });
 
   it("切り替わっていなければ（判定が null）引き直さない", async () => {

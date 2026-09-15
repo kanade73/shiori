@@ -107,6 +107,19 @@ export function revealSession(sessionId: string, guesses: Record<string, Verdict
   return session;
 }
 
+/** セッションと、それに属するメッセージ・嘘・主張の記録をまとめて消す。無ければ false */
+export function deleteSession(sessionId: string): boolean {
+  const db = readDb();
+  if (!db.sessions[sessionId]) return false;
+  delete db.sessions[sessionId];
+  delete db.messages[sessionId];
+  delete db.fabricatedFacts[sessionId];
+  delete db.fabricatedRelations[sessionId];
+  delete db.messageClaims[sessionId];
+  writeDb(db);
+  return true;
+}
+
 export function listSessions(workId?: string): ChatSession[] {
   const db = readDb();
   const all = Object.values(db.sessions);

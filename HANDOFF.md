@@ -4,7 +4,130 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: 答え合わせで本文に位置を付けられなかった主張を表示（dev に直コミット）
+
+dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。
+
+## 2026-09-15: claims 抽出に Gemini の経路を戻した（`fix/extract-gemini`、dev `4913fd5` から切った。**PR #40** → `dev`、未マージ）
+
+`31caf67`（PR #37）で抽出から Gemini の経路を消していたので、手元の推論（Ollama / LoRA サーバ）を何も設定していないと claims が毎回空になり、**答え合わせの嘘/本当の印が1つも付かなかった**（印は claims の `quote` の位置に付けるため。描画のコードは消えていない）。Ollama の経路（PR #39）は残したまま、Gemini だけでも動くようにした。
+
+- `lib/server/llm/extract.ts`: 経路は `extractRoute` が **Ollama（`EXTRACT_OLLAMA_MODEL`）→ LoRA サーバ（`EXTRACT_ENDPOINT`）→ Gemini** の順に、設定のある最初の1つを選ぶ。`ExtractBackend` に `"gemini"` を戻した。Gemini には Ollama と同じ `EXTRACT_PROMPT` / `buildExtractUserPrompt` を構造化出力（`GEMINI_CLAIMS_SCHEMA`）で投げる
+- **フォールバックはしない**（#37 の「Gemini に落ちて動いてしまうと LoRA の出来が測れない」という判断を残した）。選んだ経路が落ちたら warn 1行 + claims 空。Gemini が 429 などで失敗したときも同じ（以前は例外を投げて pipeline の catch で拾っていた）
+- `extractEndpoint()` は未設定で例外 → `null` を返すように戻した
+- `client.ts` に `EXTRACTION_MODEL`（`GEMINI_EXTRACT_MODEL`、既定 `gemini-3.1-flash-lite`）を戻した。以前の既定 `gemini-3.5-flash-lite` はいまシオリの `GEMINI_MODEL` の既定と同じで、無料枠（モデルごとに1分15回）を食い合うため、判定役（`GEMINI_ROUTER_MODEL`）と同じモデルにした
+- `.env.example` / `AGENTS.md` を3経路の記述に直した
+- 検証: `npm test` 407件・`tsc --noEmit`（`.next/` 以外）・eslint 通過。実際の Gemini での抽出はまだ試していない
+
+## 2026-09-15: 画面の整理（`fix/feature-tweaks`、dev `be08761` から切り、#37 マージ後の `origin/dev` を取り込み済み。**PR #38** → `dev`、未マージ）
+
+ユーザー指示の4点 + 追加の8点（結果画面の考察バッジ・話数の表示・結果画面の「話の答え」・嘘の件数と印の番号・サイドバーの「生成された嘘」・削除の確認ダイアログ・セッション一覧の件数・「新しいセッション」と「別の会話を始める」の遷移先）。ユーザー指示で PR まで出した（マージは未）。#37（claims 抽出の LoRA 化）とは HANDOFF.md 以外で触るファイルが重ならない。
+
+- **セッションの削除**: サイドバーの各セッションの右にゴミ箱（`components/ui/icons.tsx` の `TrashIcon`）。確認は `components/chat/DeleteSessionDialog.tsx`（画面中央にシオリの絵と吹き出し「ほんとうに消しちゃうの...?」+ 対象の見出し。はい/いいえの2択で、「いいえ」は「はい」の1.5倍 = 144×60px・24px 対 96×40px・16px。開いたときのフォーカスは「いいえ」、Esc・背景のクリックも「いいえ」扱い。失敗したら閉じずにエラーを出す）→ `DELETE /api/sessions/[sessionId]` → `store.deleteSession`（sessions・messages・fabricatedFacts・fabricatedRelations・messageClaims をまとめて消す）。開いているセッションを消したら `/` へ移る。ダイアログの開閉と削除は `ChatApp`（`requestDeleteSession` / `confirmDeleteSession`）、`Sidebar` は `onDeleteSession` を呼ぶだけ
+- **「新しいセッション」**: サイドバーのボタンと、答え合わせ済みの会話の下のボタンは、スタート画面（`/`）へのリンクをやめ、`ChatApp.startNewSession` で今の作品のセッションを作ってそのチャットに移る（スタート画面の「シオリと話す」と同じ `createSession` → `router.push`）。同じ `ChatApp` のまま別セッションに移るので、作成中の状態（`creatingSession`）は読み込みの effect で戻す。失敗したら入力欄の上のエラー欄に出す。答え合わせの結果画面の「別の会話を始める」も同じ（`RevealView.startNewSession` → `ResultPhase` の `onNewSession`。失敗したらボタンの下にエラー）。新しいセッションを作る処理は SetupScreen・ChatApp・RevealView に同じ形で3つある
+- **サイドバーの嘘の件数**: 「作品」欄の「生成された嘘 N件」の行と、セッション一覧の各行の「N件」を削除（答え合わせ済みの印は残した）。スタート画面（`SetupScreen.tsx`）の「続きから」の一覧の「・嘘N件」も削除（`SetupScreen.test.tsx` を新設）。ユーザー向けの画面で嘘の件数を出す所はもう無い。開発者モードのパネルの「嘘」の件数だけは残している（API の `fabricatedFactCount` もそのため残す）
+- **としおの「考察」バッジ**: チャット画面（`ChatMessageItem`）と答え合わせの結果画面（`ResultPhase.tsx` の Transcript）の両方から外した
+- **話数の表示をやめた**: 答え合わせ画面の見出しは `sessionLabel`（話題の名前）を出す（以前は話題のセッションでも「第0話まで」と出ていた）。`sessionLabel` の「第N話まで」の fallback も削除し、話題も旧データの進捗の入力も無ければ「話題はこれから」。開発者モードのパネルの図（`RevealGraph`）の「第N話〜」は本物の設定が明かされる話数なので残した
+- **偽設定の確認画面を廃止**: ヘッダーの「偽設定を確認」、メッセージにカーソルを乗せると出た「設定を確認」、`app/debug/`・`components/debug/`、その画面専用の API（`canon-facts` / `fabricated-facts` / `fabricated-graph`）と client 関数を削除。ChatApp が嘘の一覧を読むのもやめた（`ViewMessage.fabricatedFactIds` は削除。SSE の `metadata` にはまだ載っている）。`store.getFabricatedRelations`・`works.getAllCanonFacts` は本番のコードから呼ばれなくなったが残してある
+- **答え合わせの予想画面を廃止**: `RevealView` は開いた時点で `revealSession`（client。`POST .../reveal` に空の guesses）を呼び、いきなり結果を出す。`GuessPhase.tsx` と client の `getReveal` / `submitReveal` を削除。サーバー側（GET の pending・POST の guesses）は変えていない。旧セッションに記録された予想は保存したまま、画面には出さない
+- **結果画面を会話だけに**: `ResultPhase` から「話の答え」（主張ごとの本当/嘘のラベル・引用・予想の当たり外れの一覧、`StatementRow`）、「会話をふりかえる」の見出し、嘘の件数の概要（`ResultSummary`。「会話に混ざっていた嘘 N件／確認できる話 M件」と旧セッションの正解数）、本文の印の右上の番号を外した。残るのは凡例 → 印付きの会話 → 戻る/新しい会話のボタン。`verdict.ts` の `VERDICT_LABEL` / `PILL_CLASS` / `outcomeOf` は使われなくなったので削除
+- 検証: `npm test` 398件（#37 を取り込んだ後は 392件。#37 で抽出の Gemini 経路のテストが減ったため）・eslint 通過。削除のダイアログは headless Chrome を CDP（`--remote-debugging-port` + Node の WebSocket、スクラッチの `cdp.mjs`）で操作してゴミ箱を押し、見た目・ボタンの実寸・フォーカスを確かめた。`tsc` は `.next/types/validator.ts`（12:52 の古いビルド出力。3000 番の dev サーバーと同じ distDir なので触っていない）が消したページを参照して4件落ちるので、それを除いた設定で通した。スクラッチの `DATA_DIR` と 3004 番で API（削除 → 404、答え合わせ後の送信 → 409、消したページ → 404）を確認し、headless Chrome でチャット画面（ゴミ箱）と答え合わせ画面（予想なしで結果）を目視した
+
+## 2026-09-15: claims 抽出を自前の LoRA 推論サーバ（Qwen3-1.7B）に確定（`feat/local-extract`、PR #37 で dev にマージ済み）
+
+**検証用だった `feat/local-extract` を「これが正」に昇格させた。** claims 抽出は常に自前の LoRA 推論サーバ（`ml/`）で行い、**Gemini の抽出は使わない**。
+
+- **採用モデルは Qwen3-1.7B + LoRA（マージ済み）**。4B は精度は上（厳密F1 0.392 vs 0.267）だが 1件 6秒前後かかり、抽出は1発話ごとに逐次で走るので会話が止まる。1.7B は 1〜2秒。取りこぼした主張は「その嘘が保存されない」だけで矛盾は生まないため、速さを取った。4B に戻すなら `EXTRACT_ENDPOINT` のポートを差し替えるだけ
+- このブランチに `feat/reveal-no-explanation`（= origin/dev の取り込み済み）と `feat/lora-extractor`（`ml/` 一式）をマージ済み。**`ml/` がリポジトリに入った**
+- `.env.example` / `AGENTS.md` を「`EXTRACT_ENDPOINT` は必須・抽出は `ml/` のサーバ・Gemini は使わない」に統一。`GEMINI_EXTRACT_MODEL` と `client.ts` の `EXTRACTION_MODEL` は消えている
+- `ml/README.md` / `ml/HANDOFF.md` の冒頭に採用を明記。既定の起動は 1.7B マージ済み（`$SCRATCH/out/lora/merged`）をポート 8123、4B は別ポート（8124）の比較用
+- **PR は `dev` 向き（#37）。依存していた PR #27（`feat/reveal-no-explanation` → dev）は `be08761` でマージ済み**なので、いまの差分は claims 抽出（Gemini 版の削除）と `ml/` 一式だけ
+- **2026-09-15: `origin/dev` を再取り込みした**（#27 がマージ前に dev を再取り込みしていて、このブランチはその前の #27 を土台にしていたため衝突していた）。衝突は `.env.example` と `AGENTS.md` の2ファイルだけで、**dev の記述（`GEMINI_API_KEY_2` の2本キー・既定モデル `gemini-3.5-flash-lite`・`fly secrets` 2本）を採り、`GEMINI_EXTRACT_MODEL` は消したまま `EXTRACT_ENDPOINT` 必須の記述を残した**。`client.ts` は自動マージで dev のキー切り替えが入り、`EXTRACTION_MODEL` は消えたまま（下の dev 側の節には「`EXTRACTION_MODEL` を残して自動マージ」とあるが、それは #27 側の記録でこのブランチには当てはまらない）。`extract.ts` / `extract.test.ts` は dev が触っていないのでこのブランチの版がそのまま残った
+
+### 現在つながっている推論サーバ（手元）
+
+リモート gpu04 で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
+
+| ポート | モデル | リモートのパス |
+|---|---|---|
+| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
+| 8124 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+
+`../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8123`（= 1.7B）にしてある。サーバは `setsid nohup` だと SSH 切断で落ちたことがあるので tmux で起動する。
+
+### 通しの確認（3004 の dev サーバ）
+
+`npm install`（`sqlite-vec` など dev 由来の新しい依存が入る）→ `npm run dev -- -p 3004`。セッションを作って「ハチワレってなんで洞窟に住んでるの？」を1発話送り、`GET /api/sessions/<id>/events` の `stage: "extract"` が **`backend: "local"`・claims 6件**（`lives_in / 小さな洞窟` が canon、残り5件が fabricated）で返るところまで確認。`failed` は立たず、待ちも体感で 1〜2秒。
+
+検証: `npm test` 338件 / `tsc --noEmit` / `eslint` / `next build` すべて通過。
+
+## 2026-09-15: claims 抽出をローカルの LoRA 専用にした（worktree `../chat-local-extract` / `feat/local-extract`）
+
+**LoRA 抽出の検証用ブランチ**。`feat/reveal-no-explanation` から分岐。抽出が Gemini に落ちて「動いてしまう」と LoRA の出来が測れないので、**この 1 ブランチだけ Gemini 版の抽出を消して `EXTRACT_ENDPOINT` 必須にしてある**（本流にそのまま持っていくものではない。取り込むなら 2 実装のままの `feat/reveal-no-explanation` 側が正）。
+
+- `lib/server/llm/extract.ts`: `extractViaGemini` とそのプロンプト・構造化出力のスキーマを削除。`extractEndpoint()` は未設定なら**呼び出し時に**例外（起動時には落とさない）。pipeline は既存の try/catch で握り、claims 空のまま返答文は返す
+- 推論サーバが落ちている・遅い・形が違うときは `console.warn` 1行 + claims 空（`ExtractResult.failed = true`）。**Gemini へのフォールバックは無い**
+- `client.ts` の `EXTRACTION_MODEL` と `GEMINI_EXTRACT_MODEL` を削除。`.env.example` / `AGENTS.md` は `EXTRACT_ENDPOINT` 必須の記述に直した。`ExtractBackend` は `"local"` のみ（イベントの型は他ブランチと揃えて残す）
+- テストは Gemini 経路を削除し、失敗系は「warn 1行 + claims 空」を確認するものに置き換え（`npm test` 206件）
+
+### 起動方法
+
+```
+cd ../chat-local-extract
+npm install                      # node_modules は worktree ごとに要る
+cp ../chat-checking/.env.local .env.local
+echo 'EXTRACT_ENDPOINT=http://localhost:8123' >> .env.local   # 大学の GPU サーバへの SSH トンネル
+nohup npm run dev -- -p 3004 > /tmp/local-extract-dev.log 2>&1 &
+```
+
+3000〜3003 は他の worktree が使っていることが多いので空きポートを確認してから。通しの確認は
+`POST /api/sessions` → `POST /api/sessions/<id>/messages`、抽出の様子は
+`GET /api/sessions/<id>/events`（開発者モードのパネルと同じ SSE）の `stage: "extract"` に
+`backend: "local"` が載る。
+
+**推論サーバは初回リクエストが遅い**（コールドスタート。1回目は 10 秒の `EXTRACT_TIMEOUT_MS` を
+超えて abort → claims 空になった。温まった後は 7 秒前後で返り、3件の claims が fabricated として
+保存されるところまで確認済み）。デモ前に1発叩いて温めること。
+
+## 2026-09-15: claims 抽出のバックエンドを差し替え可能にした（`EXTRACT_ENDPOINT`）
+
+`extractClaims`（`lib/server/llm/extract.ts`）の「モデルに三つ組を出させる」部分だけを 2 実装にした。**`EXTRACT_ENDPOINT` が未設定なら今までどおり Gemini**（flash-lite）、設定されていれば `POST <endpoint>/extract` に投げる（`feat/lora-extractor` ブランチの `ml/serve.py`。FastAPI、`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。
+
+- どちらの経路も `ExtractedClaim[]` を返し、その後の **relation 語彙の検証 → `groundClaims`（canonFacts と照合して grounding を決める）は共通**。語彙外の relation は**その1件だけ**捨てる（`parseExtractedClaims`）。`schemas.ts` の `ExtractedClaimsSchema` は `z.array(z.unknown())` に緩め、1件の逸脱で全件を失わないようにした
+- HTTP 版が失敗（接続不可・タイムアウト 10 秒・不正な JSON・非 2xx）したら `console.warn` を1行出して **Gemini にフォールバック**。Gemini も失敗したら従来どおり例外（pipeline が claims 空として握り、会話は止まらない）。**デモ当日に GPU サーバへ繋がらなくても壊れない**
+- `extractClaims` の戻り値を `Claim[]` → **`{ claims, backend }`**（`backend: "gemini" | "local"`、実際に使った側）に変更。pipeline がそれを `extract` のイベントに載せ、開発者モードのパネルの extract 段に `2件 / local` のように1語だけ出る
+- 実サーバは未接続（GPU で学習中のため）。**テストはすべてモック**（正常系・語彙外の除外・接続失敗/タイムアウト/不正 JSON のフォールバック・未設定時に fetch を呼ばないこと）。ローカルの `http.createServer` を立てた通しの確認だけ手元で1回やって捨てた
+
+## 2026-09-15: claims 抽出の分離 + 嘘のエスカレーション（`feat/claims-extractor` を取り込み済み）
+
+詳細は [docs/handoff-claims-extractor.md](docs/handoff-claims-extractor.md)。generate は返答文（プレーンテキスト）だけを書き、主張の三つ組は `lib/server/llm/extract.ts` が別呼び出しで取り出す。**grounding はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。セッションの進行度 `SessionPhase`（early/middle/late）で嘘の頻度と密度だけを上げる。閾値の定数は `lib/server/llm/directive.ts` の先頭に集約。
+
+マージ時に消えた挙動: **fabricated な claim の `sourceCanonFactIds` は常に空になった**（canonFact に一致しないものが fabricated なので当然そうなる）。型と `reveal/build.ts`・`graph.ts` の参照はそのまま動くが、構造図の「本物の設定」列は嘘からは繋がらなくなっている。復活させるなら extract 側で「元にした設定」を別に推定する必要がある。
+
+## 2026-09-15: 開発者モードの右パネル（リアルタイム可視化）
+
+デモ・審査向けに「チャットの裏で何が起きているか」をその場で見せる。**チャット画面の右側のパネル**で、ヘッダーの「開発者モード」ボタンで開閉（localStorage に記憶。1024px 未満では出さない）。閉じれば今までのチャットの見た目に戻る。既存の `/debug/[sessionId]` 画面は当時は残したが、`fix/feature-tweaks` で削除した。
+
+- **イベントバス**: `lib/server/events.ts`。セッション ID ごとの in-process な EventEmitter（HMR で切れないよう globalThis に1本）。`lib/server/llm/pipeline.ts` の各段の直後で emit するだけで、**パイプラインのロジックは変えていない**。購読者が居なければ no-op
+- **SSE**: `GET /api/sessions/[sessionId]/events`（debug 専用。**チャットの SSE には載せない**）。接続時に `init`（進行度・その段階の上限値・嘘の件数・グラフ）、以降は各段を `stage` として中継、`saved` のときだけ `graph`（描き直した図 + 増えたノード）を足す
+- **パネル**: `components/devpanel/`。`DevPanel.tsx`（接続と3セクション）/ `TurnTrace.tsx`（1発話ぶんの段の点灯）/ `trace.ts`（イベント → ターンの純粋関数）/ `useDevMode.ts`（開閉の記憶）
+- **グラフ**: 答え合わせの `components/reveal/RevealGraph.tsx` を流用（`compact` と `highlightNodeIds` を足しただけ）。サーバー側は `lib/server/lie-graph.ts` が保存済みの嘘を `buildRevealGraph` に通す。**RevealGraph は答え合わせ画面ではまだ使っていない**が、これでパネルからは使われている
+- 進行度の上限値（連続嘘の上限・裏付けの数・としおの間隔）は `directive.ts` の `phaseLimits()` がサーバー側で読んで SSE に載せる（client から `lib/server` の値を import しないため）
+- `vitest.config.ts`: `components/**/*.test.ts`（描画を伴わない純粋関数）を node 側のプロジェクトに追加
+
 ## 現在の状態（最終更新: 2026-09-15）
+
+- **いまの作業ブランチ: `fix/feature-tweaks`**（上の「画面の整理」節）。以下はそれ以前の記録
+- `feat/reveal-no-explanation` は PR #27 で dev にマージ済み（当時の記録: worktree `../chat-checking`、`feat/checking_mockup` から分岐）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル + claims 抽出の `EXTRACT_ENDPOINT` 切り替え
+- LoRA 一式（`ml/`。合成・学習・評価・推論サーバ）は別ブランチ **`feat/lora-extractor`** にある。本ブランチはそれを**叩く側**だけを持つ（`ml/` は含めていない）
+- 親ブランチ: **`feat/checking_mockup`**。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
+- 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
+- `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
+- 検証: `npm test` 212件・`tsc`・`eslint`・`next build` 通過。パイプラインと開発者モードの SSE は **実 API（3002 の dev サーバー）で通しで確認済み**（generate → extract → evaluate → saved → graph → としお まで流れ、嘘が7件まで育つところまで見た）。ブラウザでの見た目の確認だけは未実施（Chrome 拡張が繋がらなかった）
+- **2026-09-15: `origin/dev` をこのブランチに取り込んだ**（merge。#18 話題ごとの RAG / #20・#21 ドット絵テーマ / #23 ベクトルDB / #25 嘘を場面の細部に寄せる・としおの作風）。衝突の解消方針は「dev 側の中身、このブランチの構造」。generate は dev の #25 のプロンプトを採りつつ **返答文だけを返す**構造（claims の schema と記録規則は持たない）のまま、pipeline は dev の話題（topic）と履歴クレンジング（`historyForTopic`）の流れに generate → extract → evaluate と phase / directive / イベント emit を重ねた。としおのクールダウンは dev の材料別（質問 2 ターン / 嘘だけ 5 ターン）に進行度を掛け合わせ、late では 0 になる
+- **2026-09-15: `origin/dev` を再度取り込んだ**（2回目の merge。#28 issue #26 の上書き誤判定 + issue #11 の API キー2本切り替え / #34 issue #30 としお直後の扱い / #35 issue #32(a) 場面が決まるまで聞き返す / #36 issue #33 見出しの表記ゆれ）。方針は前回と同じ「dev 側の中身、このブランチの構造」。evaluate は dev の `contradictionReason` による判定を採りつつ引数は `claims`（extract 由来）+ 視聴済み canonFacts 全件のまま、directive は dev の `theoryInQuestion`（`analysis` 無し）と `ask_scene` を採ってどの directive にも `phase` を載せる形に揃え、pipeline は `isSceneKnown` のゲートをとしおのクールダウン判定の前に置いた（開発者モードには `skipped: "material"` として出る）。client.ts は dev の2本キー切り替えに `EXTRACTION_MODEL` を残して自動マージ
+
+## 取り込み前の dev 側のセッション記録
 
 - **dev に PR #28・#36・#34・#35 をこの順でマージ済み**（ユーザー指示「マージまでやっていい」）。main への取り込み（`/promote-to-main`）はまだ
   - PR #28（`fix/issue-26`）: issue #26 の上書き誤判定 + issue #11 の API キー2本の切り替え。下の「API キー2本の自動切り替え」「嘘が本物の設定の『上書き』と誤判定される問題」の節
@@ -12,6 +135,9 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
   - #35 は #34 の後で `decideDirective` の同じ行（`theoryInQuestion` の引数から `analysis` を外した行と `ask_scene` の追加）が衝突したので、dev を取り込んで解いてからマージした
 - 開いたままの issue: #32 の (b)（根拠の id が無い canon の主張の扱い）、#33 の残り（『プリズン』編・『小さな友達』編）、#29・#31（方針未定）、#24、#16、#9
 - dev サーバーは 3000〜3003 番をこのツリーで起動中（ユーザー指示。3001〜3003 は `NEXT_DIST_DIR=.next-300X`）。調査・動作確認は 3004 番をスクラッチの `DATA_DIR` で使った（停止済み）
+
+- **作業ブランチ: `feat/vectorDB`**（dev `47d6378` から切った）。issue #22「初回話題特定の RAG にベクトルDBを追加」を実装済み・**未コミット**（コミット・PR はユーザー判断）
+- dev には #18（話題の切り替わり・RAG の引き直し）、#20/#21（ドット絵ダークテーマ・字の大きさ）までマージ済み
 
 ## 直近のセッション: issue #30・#32(a)・#33（3ブランチ）
 - 選び方: 方針が決まっている #30・#32(a) と、制約（作品ごとに別名を足さない）の範囲で汎用に直せる #33 の一部。#29（嘘の回数を縛る案は不採用で方針未定）・#31（方針未定）・#32(b)（方針未定）・#24（本文なし）・#16/#9（調査・大きい機能）は触っていない
@@ -192,10 +318,13 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 ### としお
 - `toshio.ts` は「題材（premises）」方式: そのターンの fabricated claims を本作の事実として渡し、乗って考察を重ねさせる。`markLies`（【嘘】印で位置を教える方式）は廃止済み
 - 割り込みはシオリのストリームを流し切って保存した後（`runToshioInterjection`）。直近2ターン以内に割り込んでいれば見送り、`admit_uncertainty` の返答には乗せない
-- としおの発言は `FabricatedFact` 化されておらず、答え合わせでも一文ごとの真偽は出さない（直前のシオリの嘘に「乗った」ことだけ示す）
+- としおの発言は `FabricatedFact` 化されておらず、答え合わせでも一文ごとの真偽は出さない。どの嘘に乗ったか（`premiseStatementIds`）はデータには残っているが、結果画面には出さない
 
 ### 答え合わせ
-- 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要 → 発言順の答えと根拠 → 真偽をマークした会話 → 折りたたみの構造図」、幅 800px 1カラム
+- 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要（件数だけ）→ 発言順の答え → 真偽をマークした会話」、幅 800px 1カラム
+- **結果画面は差分のハイライトだけ。解説文・根拠・注釈は出さない**（ユーザー判断。理由は「アニメを見ればわかる」ので不親切でよい）。`ResultPhase.tsx` から削ったもの: 各行の「根拠: …」「元にした本物の設定: …」「この会話で作られた設定です。」「本文中の位置は特定できませんでした」、凡例の「印のない部分は、真偽を判定していません」「記録を始める前のシオリの発話は…」、としおの注記（ToshioNote 全体。としおの発言は本文だけ出す）、「答え合わせできる話は記録されていません。」、「会話に出てきた順に…」、構造図の details。**「〜は判定していません」の類の一言を足し直さないこと**
+- 予想フェーズ（`GuessPhase`）は変えていない。本文の印・番号・「話の答え」リストの行（ラベル + 引用文 + 予想の結果ピル）・凡例の「嘘 / 本当」2つは残っている
+- 構造図（`components/reveal/RevealGraph.tsx` + `lib/client/graph-layout.ts` + `lib/server/reveal/graph.ts`）は結果画面から外しただけで、コードもテストも API の `graph` フィールドも残してある。**答え合わせの結果画面からは描画していない**（開発者モードのパネルが `compact` で使っている）。結果画面に復活させるなら `RevealGraph` を import し、飛び先の `id`（`statementAnchorId` / `toshioAnchorId`）を `ResultPhase` 側に戻す必要がある
 - 構造図は左から右へ一方向の層状レイアウト（本物の設定 → キャラ・物 → シオリの主張 → としお）。目的語の辺（`object`）は逆向きになるので図には描かない（データには残る）
 
 ## 既知の問題・未解決

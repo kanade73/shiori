@@ -1,15 +1,20 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { TypingIndicator } from "./TypingIndicator";
 import { ChatInput } from "./ChatInput";
+import { DeleteSessionDialog } from "./DeleteSessionDialog";
+import { DevPanel } from "@/components/devpanel/DevPanel";
+import { useDevMode } from "@/components/devpanel/useDevMode";
 import { Mascot } from "@/components/ui/Mascot";
 import {
-  getFabricatedFacts,
+  createSession,
+  deleteSession,
   getSessionData,
   listSessions,
   sendMessage,
@@ -18,13 +23,12 @@ import {
 import type { ChatSession, Message, Work } from "@/lib/server/types";
 import { sessionLabel, type ViewMessage } from "@/lib/client/types";
 
-function toViewMessage(message: Message, factIdsByMessage: Map<string, string[]>): ViewMessage {
+function toViewMessage(message: Message): ViewMessage {
   return {
     id: message.id,
     role: message.role,
     content: message.content,
     createdAt: message.createdAt,
-    fabricatedFactIds: factIdsByMessage.get(message.id),
     speaker: message.speaker,
   };
 }
@@ -39,7 +43,15 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 }
 
 /** 答え合わせ済みの会話は続けられない。入力欄の代わりに結果と次のセッションへの導線を出す */
-function RevealedFooter({ sessionId }: { sessionId: string }) {
+function RevealedFooter({
+  sessionId,
+  onNewSession,
+  creatingSession,
+}: {
+  sessionId: string;
+  onNewSession: () => void;
+  creatingSession: boolean;
+}) {
   return (
     <div className="border-t border-hairline bg-canvas px-md py-sm">
       <div className="pixel-frame pixel-dither mx-auto flex max-w-[860px] flex-col gap-sm bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
@@ -51,12 +63,14 @@ function RevealedFooter({ sessionId }: { sessionId: string }) {
           >
             結果を見る
           </Link>
-          <Link
-            href="/"
-            className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[16px] text-on-primary hover:bg-primary-active"
+          <button
+            type="button"
+            onClick={onNewSession}
+            disabled={creatingSession}
+            className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[16px] text-on-primary enabled:hover:bg-primary-active disabled:bg-primary-disabled"
           >
             新しいセッション
-          </Link>
+          </button>
         </div>
       </div>
     </div>
@@ -64,7 +78,9 @@ function RevealedFooter({ sessionId }: { sessionId: string }) {
 }
 
 export function ChatApp({ sessionId }: { sessionId: string }) {
+  const router = useRouter();
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [devMode, toggleDevMode] = useDevMode();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [work, setWork] = useState<Work | null>(null);
@@ -74,6 +90,12 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
   const [input, setInput] = useState("");
   const [isSending, setIsSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
+  // サイドバーのゴミ箱で消そうとしているセッション（確認のダイアログを出している間だけ）
+  const [deleteTarget, setDeleteTarget] = useState<SessionSummary | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  // 「新しいセッション」を押してから、新しいセッションの画面に移るまで
+  const [creatingSession, setCreatingSession] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -83,20 +105,15 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     async function load() {
       setLoading(true);
       setLoadError(null);
+      // 同じ画面のまま別のセッションに移るので、「新しいセッション」を作っている途中の状態はここで戻す
+      setCreatingSession(false);
       try {
-        const [data, facts] = await Promise.all([getSessionData(sessionId), getFabricatedFacts(sessionId)]);
+        const data = await getSessionData(sessionId);
         if (cancelled) return;
-
-        const factIdsByMessage = new Map<string, string[]>();
-        for (const fact of facts) {
-          const list = factIdsByMessage.get(fact.introducedMessageId) ?? [];
-          list.push(fact.id);
-          factIdsByMessage.set(fact.introducedMessageId, list);
-        }
 
         setWork(data.work);
         setSession(data.session);
-        setMessages(data.messages.map((m) => toViewMessage(m, factIdsByMessage)));
+        setMessages(data.messages.map(toViewMessage));
 
         const list = await listSessions(data.work.id);
         if (!cancelled) setSessions(list);
@@ -168,11 +185,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         onMetadata: (data) => {
           const id = currentId;
           if (!id) return;
-          setMessages((prev) =>
-            prev.map((m) =>
-              m.id === id ? { ...m, fabricatedFactIds: data.fabricatedFactIds, strategy: data.strategy } : m,
-            ),
-          );
+          setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, strategy: data.strategy } : m)));
         },
         onMessageEnd: () => {
           const id = currentId;
@@ -213,6 +226,49 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     }
   }
 
+  /** スタート画面の「シオリと話す」と同じく、今の作品で新しいセッションを作ってそのチャットに移る */
+  async function startNewSession() {
+    if (!work || creatingSession) return;
+    setCreatingSession(true);
+    setSendError(null);
+    try {
+      const { sessionId: newSessionId } = await createSession(work.id);
+      router.push(`/chat/${newSessionId}`);
+    } catch (e) {
+      setSendError(e instanceof Error ? e.message : "セッションの作成に失敗しました");
+      setCreatingSession(false);
+    }
+  }
+
+  function requestDeleteSession(id: string) {
+    const target = sessions.find((s) => s.id === id);
+    if (!target) return;
+    setDeleteError(null);
+    setDeleteTarget(target);
+  }
+
+  async function confirmDeleteSession() {
+    if (!deleteTarget) return;
+    const id = deleteTarget.id;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      await deleteSession(id);
+    } catch (e) {
+      setDeleteError(e instanceof Error ? e.message : "削除に失敗しました");
+      setDeleting(false);
+      return;
+    }
+    setDeleting(false);
+    setDeleteTarget(null);
+    // 開いている会話を消したら、ここには居られないので最初の画面へ
+    if (id === sessionId) {
+      router.push("/");
+      return;
+    }
+    setSessions((prev) => prev.filter((s) => s.id !== id));
+  }
+
   if (loading) return <CenteredNote>読み込み中……</CenteredNote>;
   if (loadError || !work || !session) {
     return <CenteredNote>{loadError ?? "セッションが見つかりませんでした。"}</CenteredNote>;
@@ -226,6 +282,9 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         work={work}
         sessions={sessions}
         activeSessionId={sessionId}
+        onDeleteSession={requestDeleteSession}
+        onNewSession={startNewSession}
+        creatingSession={creatingSession}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -235,6 +294,8 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           sessionId={sessionId}
           revealed={Boolean(session.reveal)}
           onOpenSidebar={() => setSidebarOpen(true)}
+          devMode={devMode}
+          onToggleDevMode={toggleDevMode}
         />
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -243,7 +304,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
               message.isStreaming && message.content === "" ? (
                 <TypingIndicator key={message.id} speaker={message.speaker} />
               ) : (
-                <ChatMessageItem key={message.id} message={message} sessionId={sessionId} />
+                <ChatMessageItem key={message.id} message={message} />
               ),
             )}
           </div>
@@ -256,11 +317,23 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         )}
 
         {session.reveal ? (
-          <RevealedFooter sessionId={sessionId} />
+          <RevealedFooter sessionId={sessionId} onNewSession={startNewSession} creatingSession={creatingSession} />
         ) : (
           <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending} />
         )}
       </div>
+
+      {devMode && <DevPanel sessionId={sessionId} onClose={toggleDevMode} />}
+
+      {deleteTarget && (
+        <DeleteSessionDialog
+          sessionLabel={sessionLabel(deleteTarget)}
+          deleting={deleting}
+          error={deleteError}
+          onConfirm={confirmDeleteSession}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }
