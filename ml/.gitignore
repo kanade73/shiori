@@ -1,0 +1,10 @@
+# モデル重みと生成データはリポジトリに入れない（ml/samples.jsonl だけ例外）
+out/
+data/
+*.safetensors
+*.bin
+*.gguf
+.venv/
+venv*/
+__pycache__/
+*.pyc
