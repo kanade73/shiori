@@ -42,18 +42,18 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 function RevealedFooter({ sessionId }: { sessionId: string }) {
   return (
     <div className="border-t border-hairline bg-canvas px-md py-sm">
-      <div className="pixel-frame pixel-dither mx-auto flex max-w-[760px] flex-col gap-sm bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="pixel-frame pixel-dither mx-auto flex max-w-[860px] flex-col gap-sm bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[13px] text-body">この会話は答え合わせ済み。ここから先は、新しいセッションで。</p>
         <div className="flex shrink-0 gap-xs">
           <Link
             href={`/reveal/${sessionId}`}
-            className="pixel-btn border-2 border-hairline bg-canvas px-sm py-xxs font-pixel text-[14px] text-ink hover:bg-surface-soft"
+            className="pixel-btn border-2 border-hairline bg-canvas px-sm py-xxs font-pixel text-[16px] text-ink hover:bg-surface-soft"
           >
             結果を見る
           </Link>
           <Link
             href="/"
-            className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[14px] text-on-primary hover:bg-primary-active"
+            className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[16px] text-on-primary hover:bg-primary-active"
           >
             新しいセッション
           </Link>
@@ -238,7 +238,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         />
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[760px] py-sm">
+          <div className="mx-auto max-w-[860px] py-sm">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
                 <TypingIndicator key={message.id} speaker={message.speaker} />
@@ -250,7 +250,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         </div>
 
         {sendError && (
-          <div className="mx-auto w-full max-w-[760px] px-md pb-xs">
+          <div className="mx-auto w-full max-w-[860px] px-md pb-xs">
             <p className="rounded-md bg-[#c6435a1a] px-sm py-xs text-[13px] text-error">{sendError}</p>
           </div>
         )}

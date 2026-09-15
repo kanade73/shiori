@@ -71,11 +71,11 @@ export function SetupScreen() {
 
   return (
     <div className="flex h-dvh flex-col items-center overflow-y-auto bg-canvas px-md py-xl">
-      <div className="w-full max-w-[460px]">
+      <div className="w-full max-w-[640px]">
         <div className="flex flex-col items-center text-center">
-          <Mascot size={128} variant="display" />
-          <h1 className="mt-md font-pixel text-display-sm text-ink">そんなシーンあった？</h1>
-          <p className="mt-xs text-[14px] text-muted">
+          <Mascot size={160} variant="display" />
+          <h1 className="mt-md font-pixel text-display-md text-ink">そんなシーンあった？</h1>
+          <p className="mt-sm text-[16px] leading-[1.7] text-muted">
             話したい場面を教えて。シオリが本物の設定と、時々小さな嘘を混ぜて話すよ。
           </p>
         </div>
@@ -86,15 +86,15 @@ export function SetupScreen() {
           <p className="mt-lg text-center text-[14px] text-muted">利用できる作品がまだ登録されていません。</p>
         ) : (
           <div className="pixel-frame pixel-dither mt-lg bg-surface-card p-md">
-            <p className="font-pixel text-[12px] uppercase tracking-[1.5px] text-muted-soft">作品</p>
-            <p className="mt-xxs text-[16px] font-medium text-ink">{selectedWork.title}</p>
-            {selectedWork.description && <p className="mt-xxs text-[13px] text-muted">{selectedWork.description}</p>}
+            <p className="font-pixel text-[16px] uppercase tracking-[1.5px] text-muted-soft">作品</p>
+            <p className="mt-xxs text-[18px] font-medium text-ink">{selectedWork.title}</p>
+            {selectedWork.description && <p className="mt-xs text-[15px] leading-[1.7] text-muted">{selectedWork.description}</p>}
 
             <button
               type="button"
               onClick={handleStart}
               disabled={starting}
-              className="pixel-btn mt-md flex w-full items-center justify-center bg-primary px-sm py-xs font-pixel text-[15px] text-on-primary enabled:hover:bg-primary-active disabled:bg-primary-disabled"
+              className="pixel-btn mt-md flex w-full items-center justify-center bg-primary px-sm py-sm font-pixel text-[18px] text-on-primary enabled:hover:bg-primary-active disabled:bg-primary-disabled"
             >
               {starting ? "はじめています……" : "シオリと話す"}
             </button>
@@ -103,17 +103,17 @@ export function SetupScreen() {
 
         {sessions.length > 0 && (
           <div className="mt-lg">
-            <p className="px-xxs font-pixel text-[12px] uppercase tracking-[1.5px] text-muted-soft">続きから</p>
+            <p className="px-xxs font-pixel text-[16px] uppercase tracking-[1.5px] text-muted-soft">続きから</p>
             <div className="mt-xs space-y-xxs">
               {sessions.map((s) => (
                 <button
                   key={s.id}
                   type="button"
                   onClick={() => router.push(`/chat/${s.id}`)}
-                  className="pixel-frame flex w-full items-center justify-between px-sm py-xs text-left text-[13px] text-body hover:bg-surface-card hover:text-ink"
+                  className="pixel-frame flex w-full items-center justify-between px-sm py-xs text-left text-[15px] text-body hover:bg-surface-card hover:text-ink"
                 >
                   <span>{sessionLabel(s)}</span>
-                  <span className="font-pixel text-[12px] text-muted-soft">{formatDateTime(s.updatedAt)}・嘘{s.fabricatedFactCount}件</span>
+                  <span className="font-pixel text-[16px] text-muted-soft">{formatDateTime(s.updatedAt)}・嘘{s.fabricatedFactCount}件</span>
                 </button>
               ))}
             </div>
