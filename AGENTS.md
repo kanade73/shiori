@@ -68,6 +68,16 @@
 
 矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
 
+### 答え合わせ（会話の終わりに真偽を明かす）
+
+`/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
+
+- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getCanonFactsUpTo` の範囲だけ出す
+- 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
+- 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
+- としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
+- 記録を始める前の旧データは、`FabricatedFact` の嘘だけを本文の位置なしで出す
+
 ### 永続化
 
 `lib/server/store.ts`。JSONファイル1本（`.data/db.json`、gitignore済み）にセッション・メッセージ・嘘を全部持つ。単一プロセス・単一ユーザー前提。DBを入れる要件は今のところない。
@@ -111,12 +121,19 @@ app/
   page.tsx                          作品選択 + 視聴進捗入力（SetupScreen）
   chat/[sessionId]/page.tsx         チャット画面
   debug/[sessionId]/page.tsx        管理画面。本物の設定と生成された嘘を並べて見る
+  reveal/[sessionId]/page.tsx       答え合わせ画面（ユーザー向け）。予想 → 真偽つきの会話
   api/
     works/                          作品一覧・詳細・進捗の解決
     sessions/                       セッション作成・取得・話数更新
     sessions/[sessionId]/messages/  チャット本体（SSE）。パイプラインはここから呼ぶ
     sessions/[sessionId]/{canon-facts,fabricated-facts,fabricated-graph}/  debug 画面用
-components/                         UI。ChatApp / SetupScreen / Sidebar / DebugView / Mascot ほか
+    sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 予想を送って答え合わせ済みにする）
+components/
+  chat/                             チャット画面（ChatApp / Sidebar / ChatInput ほか）
+  reveal/                           答え合わせ画面（RevealView → GuessPhase / ResultPhase / RevealGraph、verdict.ts は表示ルール）
+  setup/SetupScreen.tsx             作品選択 + 視聴進捗入力
+  debug/DebugView.tsx               管理画面
+  ui/                               画面をまたいで使うもの（Mascot, icons）
 lib/
   server/
     works.ts                        data/ の読み込み
@@ -124,9 +141,11 @@ lib/
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
     progress-resolver.ts            自由記述 → 話数
     rate-limit.ts
-    types.ts                        データモデル
-    llm/                            analyze → generate → evaluate → pipeline（+ toshio: としおの割り込み）
-  client/                           fetch ラッパー・SSE パーサ・表示用型
+    sse.ts                          Route Handler が text/event-stream を書くための口
+    types.ts                        データモデル（答え合わせ専用の型は reveal/types.ts）
+    llm/                            analyze → directive → generate → evaluate → pipeline（+ toshio: としおの割り込み）
+    reveal/                         答え合わせ。build.ts が発話を本当/嘘の部分に区切り、graph.ts が嘘の構造図を組む
+  client/                           fetch ラッパー（api.ts）・SSE パーサ・表示用型・時刻整形（format.ts）・構造図のレイアウト
 data/
   chiikawa/work.json                ← コードはこの中身を知らない
   momotaro/cards.jsonl              次段構想用（未使用）

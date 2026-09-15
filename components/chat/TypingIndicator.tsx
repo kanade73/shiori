@@ -1,4 +1,4 @@
-import { Mascot } from "./Mascot";
+import { Mascot } from "@/components/ui/Mascot";
 import type { Speaker } from "@/lib/server/types";
 
 /** 本文がまだ届いていない返答の吹き出し。としおの割り込みでは としおの顔を出す。 */

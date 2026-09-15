@@ -1,12 +1,13 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { Sidebar } from "./Sidebar";
 import { ChatHeader } from "./ChatHeader";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { TypingIndicator } from "./TypingIndicator";
 import { ChatInput } from "./ChatInput";
-import { Mascot } from "./Mascot";
+import { Mascot } from "@/components/ui/Mascot";
 import {
   getFabricatedFacts,
   getSessionData,
@@ -33,6 +34,31 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
     <div className="flex h-dvh flex-col items-center justify-center gap-sm bg-canvas px-md text-center">
       <Mascot size={96} variant="display" animated={false} />
       <p className="max-w-[320px] text-[14px] text-muted">{children}</p>
+    </div>
+  );
+}
+
+/** 答え合わせ済みの会話は続けられない。入力欄の代わりに結果と次のセッションへの導線を出す */
+function RevealedFooter({ sessionId }: { sessionId: string }) {
+  return (
+    <div className="border-t border-hairline bg-canvas px-md py-sm">
+      <div className="mx-auto flex max-w-[760px] flex-col gap-sm rounded-xl bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-[13px] text-body">この会話は答え合わせ済み。ここから先は、新しいセッションで。</p>
+        <div className="flex shrink-0 gap-xs">
+          <Link
+            href={`/reveal/${sessionId}`}
+            className="rounded-md border border-hairline bg-canvas px-sm py-xxs text-[13px] font-medium text-ink transition-colors hover:bg-surface-soft"
+          >
+            結果を見る
+          </Link>
+          <Link
+            href="/"
+            className="rounded-md bg-primary px-sm py-xxs text-[13px] font-medium text-on-primary transition-colors hover:bg-primary-active"
+          >
+            新しいセッション
+          </Link>
+        </div>
+      </div>
     </div>
   );
 }
@@ -207,6 +233,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           currentEpisode={session.currentEpisode}
           progressDescription={session.progressDescription}
           sessionId={sessionId}
+          revealed={Boolean(session.reveal)}
           onOpenSidebar={() => setSidebarOpen(true)}
         />
 
@@ -228,7 +255,11 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           </div>
         )}
 
-        <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending} />
+        {session.reveal ? (
+          <RevealedFooter sessionId={sessionId} />
+        ) : (
+          <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending} />
+        )}
       </div>
     </div>
   );

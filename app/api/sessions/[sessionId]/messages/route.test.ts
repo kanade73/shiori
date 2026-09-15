@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   runToshioInterjection: vi.fn(),
   appendMessage: vi.fn(),
   addFabricatedFact: vi.fn(),
+  saveMessageClaims: vi.fn(),
   getMessages: vi.fn(),
   getSession: vi.fn(),
   getWork: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("@/lib/server/llm/pipeline", () => ({
 vi.mock("@/lib/server/store", () => ({
   appendMessage: mocks.appendMessage,
   addFabricatedFact: mocks.addFabricatedFact,
+  saveMessageClaims: mocks.saveMessageClaims,
   getMessages: mocks.getMessages,
   getSession: mocks.getSession,
 }));
@@ -36,11 +38,10 @@ const TOSHIO = "結論から言うとね、あれは伏線なんですよ。";
 function pipelineResult(overrides: Record<string, unknown> = {}) {
   return {
     analysis: { mentionedCharacters: [], mentionedEvents: [], sentiment: "neutral", questionType: "theory" },
-    generation: { message: SHIORI, strategy: "introduce_small_lie", claims: [], usedExistingFactIds: [], spoilerRisk: 0 },
+    generation: { message: SHIORI, strategy: "introduce_small_lie", claims: [] },
     evaluation: {
       canonContradictionScore: 0,
       fabricatedConsistencyScore: 1,
-      spoilerRiskScore: 0,
       believabilityScore: 0.85,
       shouldRegenerate: false,
       details: [],
@@ -172,6 +173,43 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     expect(bubbles(events)).toEqual([["shiori", "……ちょっと分からなくなった。もう一度言って。"]]);
     expect(events.map((e) => e.event).filter((e) => e !== "token")).toEqual(["message-start", "metadata", "message-end", "done"]);
     expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "……ちょっと分からなくなった。もう一度言って。", "shiori");
+  });
+});
+
+describe("POST /api/sessions/[id]/messages: 答え合わせ用の記録", () => {
+  it("シオリの返答の claims を、その発話の ID で真偽ごと保存する（としおの発話には保存しない）", async () => {
+    const claims = [
+      { subject: "A", relation: "has", object: "帽子", negated: false, claim: "A は帽子を持っている", grounding: "fabricated", sourceCanonFactIds: [], quote: "多分ね" },
+      { subject: "A", relation: "is", object: "友達", negated: false, claim: "A は友達", grounding: "canon", sourceCanonFactIds: ["c1"], quote: "そうだね" },
+    ];
+    mocks.runConversationPipeline.mockResolvedValue(
+      pipelineResult({ generation: { message: SHIORI, strategy: "introduce_small_lie", claims } }),
+    );
+    await collect(await post());
+    expect(mocks.saveMessageClaims.mock.calls).toEqual([["s1", "msg-2", claims]]);
+  });
+
+  it("定型文にも「主張なし」を記録する（記録前の旧データと区別するため）", async () => {
+    mocks.runConversationPipeline.mockRejectedValue(new Error("boom"));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await collect(await post());
+    spy.mockRestore();
+    expect(mocks.saveMessageClaims.mock.calls).toEqual([["s1", "msg-2", []]]);
+  });
+
+  it("答え合わせ済みのセッションには送れない（409）", async () => {
+    mocks.getSession.mockReturnValue({
+      id: "s1",
+      workId: "w",
+      currentEpisode: 3,
+      createdAt: "",
+      updatedAt: "",
+      reveal: { revealedAt: "2026-09-14T00:00:00.000Z", guesses: {} },
+    });
+    const res = await post();
+    expect(res.status).toBe(409);
+    expect(mocks.appendMessage).not.toHaveBeenCalled();
+    expect(mocks.runConversationPipeline).not.toHaveBeenCalled();
   });
 });
 

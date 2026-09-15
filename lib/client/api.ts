@@ -1,14 +1,6 @@
 import { readSse } from "./sse";
-import type {
-  CanonFact,
-  ChatSession,
-  FabricatedFact,
-  Message,
-  ProgressResolution,
-  ResponseStrategy,
-  Speaker,
-  Work,
-} from "@/lib/server/types";
+import type { CanonFact, ChatSession, FabricatedFact, Message, ProgressResolution, ResponseStrategy, Speaker, Work } from "@/lib/server/types";
+import type { RevealData, Verdict } from "@/lib/server/reveal/types";
 
 export type SessionSummary = ChatSession & { fabricatedFactCount: number };
 
@@ -100,6 +92,22 @@ export type FabricatedGraph = {
 
 export async function getFabricatedGraph(sessionId: string): Promise<FabricatedGraph> {
   const res = await fetch(`/api/sessions/${sessionId}/fabricated-graph`);
+  return asJson(res);
+}
+
+/** 答え合わせ前は問題だけ、答え合わせ後は真偽つきの会話が返る */
+export async function getReveal(sessionId: string): Promise<RevealData> {
+  const res = await fetch(`/api/sessions/${sessionId}/reveal`);
+  return asJson(res);
+}
+
+/** 予想を送って答え合わせする。これでセッションは終わり（以後メッセージは送れない） */
+export async function submitReveal(sessionId: string, guesses: Record<string, Verdict>): Promise<RevealData> {
+  const res = await fetch(`/api/sessions/${sessionId}/reveal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ guesses }),
+  });
   return asJson(res);
 }
 

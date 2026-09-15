@@ -178,3 +178,26 @@ describe("ChatApp: 途中で切れたストリーム", () => {
     expect(screen.queryByText("入力中")).toBeNull();
   });
 });
+
+describe("ChatApp: 答え合わせ", () => {
+  it("答え合わせ前はヘッダーに答え合わせへの導線があり、入力欄が出る", async () => {
+    render(<ChatApp sessionId="s1" />);
+    const link = await screen.findByRole("link", { name: "答え合わせ" });
+    expect(link.getAttribute("href")).toBe("/reveal/s1");
+    expect(screen.getByPlaceholderText("感想やシーンの話を送ってみて...")).toBeTruthy();
+  });
+
+  it("答え合わせ済みなら入力欄の代わりに、結果と新しいセッションへの導線を出す", async () => {
+    mocks.getSessionData.mockResolvedValue({
+      work,
+      session: { ...session, reveal: { revealedAt: "2026-09-14T00:00:00.000Z", guesses: {} } },
+      messages: [],
+      fabricatedFactCount: 0,
+    });
+    render(<ChatApp sessionId="s1" />);
+    expect(await screen.findByText("この会話は答え合わせ済み。ここから先は、新しいセッションで。")).toBeTruthy();
+    expect(screen.queryByPlaceholderText("感想やシーンの話を送ってみて...")).toBeNull();
+    expect(screen.getByRole("link", { name: "答え合わせの結果" }).getAttribute("href")).toBe("/reveal/s1");
+    expect(screen.getByRole("link", { name: "結果を見る" }).getAttribute("href")).toBe("/reveal/s1");
+  });
+});

@@ -1,17 +1,26 @@
 "use client";
 
 import Link from "next/link";
-import { MenuIcon } from "./icons";
+import { MenuIcon } from "@/components/ui/icons";
 
 interface ChatHeaderProps {
   workTitle: string;
   currentEpisode: number;
   progressDescription?: string;
   sessionId: string;
+  /** 答え合わせ済みか。済んでいればボタンは結果を見る導線になる */
+  revealed: boolean;
   onOpenSidebar: () => void;
 }
 
-export function ChatHeader({ workTitle, currentEpisode, progressDescription, sessionId, onOpenSidebar }: ChatHeaderProps) {
+export function ChatHeader({
+  workTitle,
+  currentEpisode,
+  progressDescription,
+  sessionId,
+  revealed,
+  onOpenSidebar,
+}: ChatHeaderProps) {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-hairline bg-canvas px-md">
       <div className="flex min-w-0 items-center gap-xs">
@@ -29,12 +38,20 @@ export function ChatHeader({ workTitle, currentEpisode, progressDescription, ses
         </div>
       </div>
 
-      <Link
-        href={`/debug/${sessionId}`}
-        className="shrink-0 rounded-md border border-hairline px-sm py-xxs text-[13px] font-medium text-body transition-colors hover:bg-surface-card hover:text-ink"
-      >
-        偽設定を確認
-      </Link>
+      <div className="flex shrink-0 items-center gap-xs">
+        <Link
+          href={`/debug/${sessionId}`}
+          className="hidden rounded-md px-sm py-xxs text-[13px] text-muted transition-colors hover:bg-surface-card hover:text-ink sm:block"
+        >
+          偽設定を確認
+        </Link>
+        <Link
+          href={`/reveal/${sessionId}`}
+          className="rounded-md bg-primary px-sm py-xxs text-[13px] font-medium text-on-primary transition-colors hover:bg-primary-active"
+        >
+          {revealed ? "答え合わせの結果" : "答え合わせ"}
+        </Link>
+      </div>
     </header>
   );
 }

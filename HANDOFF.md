@@ -2,70 +2,62 @@
 
 AIがセッションを開始する際はまずこれを読むこと（AGENTS.md参照）。作業を終えるAIは、次のAIが初見で状況を把握できるようここを更新してから終わること。
 
-## 現在の状態（最終更新: このセッションの終わり）
+コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
-- 作業ブランチ: `feat/issue-6-toshio`（`dev` から分岐）
-- 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加` → `dev` 向き。まだレビュー・マージ待ち。issue #10（としおのプロフ画像）も同乗していて、#8 のマージで #6 と #10 の両方が閉じる（PR本文に `Closes #6` / `Closes #10`）
-- `git status` はクリーン。コミット済みの内容がそのまま現在の実装
+## 現在の状態（最終更新: 2026-09-15）
 
-## 直近のセッション: issue #10「としお専用のプロフ画像」
-- ユーザーが用意した `public/character/toshio-{64,128,256}.png` / `toshio-display-512.png` を配置し、`Mascot` に `character` props を追加して話者ごとに画像を出し分け（コミット `c353a75`）
-- 追加修正: `Mascot` の `character` の型を独自の `MascotCharacter` から既存の `Speaker`（`lib/server/types`）に寄せ、`ChatMessageItem` は `message.speaker` をそのまま渡す（未設定ならシオリ）
-- 追加修正: としおの `message-start` 直後（本文が空の間）に出る `TypingIndicator` がシオリの顔固定だったので、`speaker` を受け取ってとしおの顔を出すようにした
-- テスト: `components/ChatApp.test.tsx` に吹き出しごとの画像と、としおの入力中表示の画像を検証するケースを追加
-- #10 を別PRに分けず #8 に同乗させたのはユーザー判断（#10 は #6 の `speaker` に依存しており、#8 のブランチには相方のコミットもあるため force push を避けた）
+- **作業ブランチ: `feat/checking_mockup`**（worktree `../chat-checking`）。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
+- 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
+- `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
+- 検証: `npm test` 128件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**（`gemini-3.6-flash` の日次無料枠が少ないため。動作確認はすべて vitest のモック経由）
 
-## 直近のセッション: としおにシオリの嘘の位置を教える（PR #8 に同乗）
-- ユーザー要望:「シオリの返答のどの部分が嘘かをバックエンドで記述し（ユーザーには見せない）、としおに渡してから、としおに返答させる」
-- `Claim` に `quote?`（返答文からの抜き出し）を追加。`generate.ts` のプロンプトと responseSchema で必須にした（zod 側は optional で、欠けても落とさない）
-- `toshio.ts`: `markLies(message, lies)` が嘘の quote 部分を `【嘘】〜【/嘘】` で囲む（重なる・接する範囲はまとめる。見つからない quote は `unlocated` として一覧にだけ「位置不明」で載せる）。としおへの入力に「印付きのシオリの返答」と「この返答でついた嘘の一覧」を追加し、ペルソナに印の意味と「嘘だと明かさない・印を出力に書かない」を追記。出力は `stripLieMarks` で印を取り除いてから返す
-- `pipeline.ts` の `runToshioInterjection` が、最終的なシオリの返答の claims のうち `grounding=fabricated` のものを `shioriLies` として渡す
-- 実APIで1回確認（`gemini-3.5-flash-lite`）: quote は返答文と一字一句一致して印が付き、としおは嘘（資格証の裏のレシピ）に乗って考察し、嘘だとは明かさず、印も出力しなかった。ただしシオリの返答の2文目（夜中に舐めて味見している）も作り話なのに claims に記録されず、印が付かなかった → 下の調査メモにある「作り話が claims に記録されない」問題と同じ
-- テスト: `toshio.test.ts`（markLies・入力内容・印の除去）、`pipeline.toshio.test.ts`（fabricated だけ渡す）、`generate.test.ts`（quote 必須）
+## リファクタ（2026-09-15）で変えたこと
 
-## 調査メモ: 「シオリととしおが嘘をつかなくなった」（未修正・ユーザーに報告のみ）
-ユーザー指示で**コードは直していない**。`.data/db.json` の会話と `generate.ts` / `toshio.ts` を突き合わせた結論:
-- シオリ: `generate.ts` の文脈ブロック見出し「本物の設定（…これ以外の情報は存在しないものとして扱うこと）」が捏造を抑える方向に効いている疑い。canonFact がある話題（うさぎ・ラッコ）では説明文をほぼそのまま返し、嘘は canonFact が無い話題（古本屋）でだけ出ていた
-- シオリ: ユーザーに疑われたとき自分の嘘を引っ込めた例あり（18:04 JST「テストのペラ紙のことも、単なる気のせいにすぎないしね」）。疑われたときに押し通す指示が無い
-- としお: プロンプトが「作品内の新事実」ではなく「解釈・分析」を求めていて、しかも逃げ台詞「まあ僕の勝手な妄想なんですけど」を必ず付ける設計。実際の4発話すべてが解釈で、末尾に逃げ台詞が付いていた
-- モデル: 18:02 JST から `.env.local` で `gemini-3.5-flash-lite`。切り替え前（3.6-flash）の嘘の方が具体的だったが、質問の傾向も違うので因果は未検証
-- 作り話なのに claims に記録されない（または canon 扱いされる）ことがある（例: 21:35 JST「古本屋はいつも控えめ」）。嘘として保存されず、矛盾チェックにも、としおへの嘘の印にも乗らない
-- `strategy` / `regenerated` / evaluate の結果は db に保存されておらず（SSE で流すだけ）、嘘の比率や差し戻しの頻度は後から測れない
+振る舞いは変えていない。並びとファイル名だけ。
 
-## その前のセッションでやったこと
+- `components/` を画面単位に分割: `chat/` `reveal/` `setup/` `debug/` と共有の `ui/`（Mascot, icons）
+- `RevealView.tsx` を `RevealView`（読み込みと予想/結果の切り替え）/ `GuessPhase` / `ResultPhase` / `verdict.ts`（本当/嘘の表示ルール）に分割
+- 答え合わせのサーバー側は `lib/server/reveal/`（`build.ts` 発話の区切り、`graph.ts` 嘘の構造図、`types.ts` 答え合わせ専用の型）。`lib/server/types.ts` からは reveal の型を抜いた
+- SSE の書き込み口を `lib/server/sse.ts` に切り出し、messages の Route Handler はパイプライン呼び出しと保存だけ
+- `lib/client/format.ts`（formatTime）を `lib/client/types.ts` から分離
+- テスト名を対象に揃えた（`store.test.ts`、`pipeline.test.ts` にとしおのゲーティング純粋関数のテストも統合）
+- 二重化していた `docs/HANDOFF.md` を削除（正は直下の `HANDOFF.md`）。`.agents/skills/*` は `.claude/skills/*` への参照だけにした（内容が古くなっていた）。`tsconfig.json` に混入していた `.next-3001` の include を除去
 
-### 1. issue #6「としおくん追加」の実装（PR #8, コミット `711b694`）
-- `lib/server/llm/toshio.ts`（新規）: 2人目のキャラ「としお」。モデルは岡田斗司夫（issue #6のコメント参照）。`shouldComment`/`message` を構造化出力で得る単純なプロンプト制御実装。シオリのような evaluate→差し戻しループは**持たない**（issueで明示的に将来課題）
-- `lib/server/llm/pipeline.ts`: `runToshioInterjection` として切り出し、Route Handler がシオリの返答を流し切って保存した後に呼ぶ（レビュー後の変更。もとは `runConversationPipeline` の末尾で呼んでいたが、としお分の Gemini 待ちがシオリの表示まで遅らせていた）。`claims`があるか質問種別が`theory`/`doubt`/`fact_question`のときだけ、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler`/`admit_uncertainty` で主張を避けていなければ検討する（`turnsSinceLastToshio` / `worthAskingToshio` としてexport、テスト済み）
-- `Message`型に`speaker?: "shiori" | "toshio"`を追加（省略時はシオリ扱いで既存データと後方互換）
-- SSEプロトコルに`message-start`/`message-end`を追加し、1回の送信でシオリ→としおと複数発話をストリームできるようにした（`lib/client/api.ts`の`SendMessageHandlers`も変更）。`ChatApp` は送信と同時に placeholder の吹き出し（入力中表示）を積み、最初の `message-start` をそれに充てる
-- `generate.ts`: 履歴上のとしおの発話に `【としお】` の印を付けてシオリに渡す（連続する assistant が1つの model ターンに畳まれるため、印が無いとシオリがとしおの文章を自分の発言として見る）。ペルソナにも「としおの考察を自分が言ったことにしない」を追記
-- UI: `ChatMessageItem`がとしおの発話に名前+「考察」バッジを表示。プロフ画像は当初シオリのものを代用していたが、issue #10 で専用画像に差し替え済み（上記）
-- テスト追加: `lib/server/llm/toshio.test.ts`, `lib/server/llm/pipeline.test.ts`。レビューで `pipeline.toshio.test.ts`（呼び出し条件・材料）, `app/api/sessions/[sessionId]/messages/route.test.ts`（SSE の並び・speaker 付き保存・切断後も保存）, `lib/client/api.test.ts`, `components/ChatApp.test.tsx` を追加。`vitest.config.ts` に `@/` alias と `app/api/**/*.test.ts` を追加
+## いま効いている設計判断（AGENTS.md に無いもの）
 
-### 2. SSEのenqueue-after-closeバグ修正（PR #8, コミット `7995365`）
-- 症状: ユーザーから「問いかけに返事がない」と報告
-- 原因: クライアント切断等で`ReadableStream`のcontrollerが閉じた後に`send()`が呼ばれ、`enqueue`が例外に。`catch`側のフォールバック送信も同じ理由で失敗し、何も返らないまま消えていた（ログに`TypeError [ERR_INVALID_STATE]: Invalid state: Controller is already closed`）
-- 対処: `app/api/sessions/[sessionId]/messages/route.ts`に`closed`フラグを追加し、`send()`をガード。`cancel()`でも`closed`を立てる
+### 生成: 「量と頻度はコード、中身は LLM」
+- `lib/server/llm/directive.ts`（純粋関数）が毎ターンの指示を決める。順に: `doubt` → **layer**（疑われた嘘を撤回せず裏付けの細部を1つ足す）／直近 `LIE_STREAK_LIMIT`=2 件連続で嘘を保存していれば **plain**／`impression`・`other` で言及キャラも出来事も無ければ **plain**／それ以外 **introduce**
+- 生成は1回の構造化出力（返答文 + claims）。`strategy` はモデルに選ばせず、保存結果から事後に決める（UI バッジととしおのゲーティング用）
+- **ネタバレ防止は全廃**（ユーザー方針。疑われたら嘘を重ねる制御を優先）。evaluate に残る検査は「既存の嘘との矛盾」「fabricated claim による本物の設定の直接上書き」の2つだけ。ただし `retrieveCanonFacts` が視聴話数以下しか返さない仕組み（`getCanonFactsUpTo`）は残してあり、外すかはユーザー判断待ち
+- 経緯: 長いセッションでシオリが嘘をやめる問題（プロンプトの「絶対に矛盾させるな・全件記録・quote は一字一句」が自己監視を招いた）への対処。extract 方式（返答と主張の分解を別呼び出しにする、1発話2回）も試したが「疑われると引っ込める」ので不採用
 
-### 3. Gemini呼び出しの2つの不具合対応（このセッションの前半、issue #6着手前）
-- `gemini-2.5-flash`が新規ユーザー向けに廃止されていて404だったのを`gemini-3.6-flash`に変更（`lib/server/llm/client.ts`のデフォルト。コミット済み・mainの前提）
-- **[未解決・要フォロー]** `gemini-3.6-flash`の無料枠は**1日20リクエスト**とかなり少なく、このセッション中に使い切った（`429 RESOURCE_EXHAUSTED`, `GenerateRequestsPerDayPerProjectPerModel-FreeTier`）。一時的に`.env.local`（gitignore対象・コミットされない）に
-  ```
-  GEMINI_MODEL=gemini-3.5-flash-lite
-  ```
-  を追加して回避している。**日付が変わって3.6-flashの枠が戻ったらこの行を消してデフォルトに戻してよい。** それまでは3.5-flash-liteのまま動く
-  - 試した中で `gemini-flash-latest` は動くが混雑時に503が出やすい。`gemini-2.5-flash-lite` 等の2.x系はすべて新規ユーザー向けに廃止済み(404)。`v1beta/models?key=...`で利用可能モデル一覧を確認できる
+### claims の `quote`
+- 答え合わせが本文中の位置を出すのに使う。`generate.ts` の responseSchema には**あるが必須ではない**（必須にすると上の自己監視問題に戻る）。無ければ答え合わせは「位置不明」として末尾に並べる
 
-### 4. devサーバーの並行起動（このセッションの前半、issue #6着手前）
-- このNext.js（カスタム版）は`distDir`単位でdevサーバーのロックファイルを持つため、同じディレクトリで2つ目の`next dev`を素で起動すると即終了する
-- `next.config.mjs`に`NEXT_DIST_DIR`環境変数での`distDir`切り替えを追加（未設定時は従来通り`.next`）
-- `.gitignore`に`.next-*/`、`eslint.config.mjs`のignoreに`.next-*/**`を追加
-- 使い方: `NEXT_DIST_DIR=.next-3001 npm run dev -- -p 3001`
-- **注意**: ポート3000番のdevサーバーはこのリポジトリと同じ作業ディレクトリを見ている（git worktreeは分かれていない）。ブランチ切り替えやファイル編集は3000番の表示にも即座に影響する
+### としお
+- `toshio.ts` は「題材（premises）」方式: そのターンの fabricated claims を本作の事実として渡し、乗って考察を重ねさせる。`markLies`（【嘘】印で位置を教える方式）は廃止済み
+- 割り込みはシオリのストリームを流し切って保存した後（`runToshioInterjection`）。直近2ターン以内に割り込んでいれば見送り、`admit_uncertainty` の返答には乗せない
+- としおの発言は `FabricatedFact` 化されておらず、答え合わせでも一文ごとの真偽は出さない（直前のシオリの嘘に「乗った」ことだけ示す）
+
+### 答え合わせ
+- 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要 → 発言順の答えと根拠 → 真偽をマークした会話 → 折りたたみの構造図」、幅 800px 1カラム
+- 構造図は左から右へ一方向の層状レイアウト（本物の設定 → キャラ・物 → シオリの主張 → としお）。目的語の辺（`object`）は逆向きになるので図には描かない（データには残る）
+
+## 既知の問題・未解決
+
+- **作り話が claims に記録されない（または canon 扱いになる）ことがある**。嘘として保存されず、矛盾チェックにも答え合わせの印にも乗らない。generate の記録漏れで、根本対処は未着手
+- 嘘の頻度: directive 導入後の長いセッション（20ターン以上）での頻度は未計測。`strategy` / `regenerated` は db に保存されない（SSE で流すだけ）ので、測るなら `metadata` を残すか `fabricatedFacts.createdAt` で数える
+- 構造図でラベルどうしの重なりはまだ起きうる
+
+## 環境メモ
+
+- `gemini-3.6-flash` の無料枠は 1日20リクエスト程度。使い切ったら `.env.local` に `GEMINI_MODEL=gemini-3.5-flash-lite`（gitignore 対象）。2.x 系は新規ユーザー向けに廃止済み（404）
+- dev サーバーの並行起動: `NEXT_DIST_DIR=.next-3001 npm run dev -- -p 3001`（`next.config.mjs` で distDir を切り替える）。別 distDir で起動すると `tsconfig.json` の include に `.next-XXXX` が自動追加されるので、コミット前に戻すこと
+- 実画面の確認は本物の `.data/db.json` を汚さないよう `DATA_DIR` をスクラッチに向けた別サーバーでデモセッションを作って行う（答え合わせすると会話が終わるため）
+- ユーザー環境に Herdr の Claude 連携（`~/.claude/hooks/herdr-agent-state.sh`）が入っている。リポジトリの実装とは無関係
 
 ## 次にやるとよいこと
 
-- PR #8 のレビュー・`dev`へのマージ
-- としおの発話は現状`FabricatedFact`化されていない（issue #6のスコープ外として明示的に見送った）。「シオリとの嘘共有」は別issueで
-- `GEMINI_MODEL`の日次枠状況を見て、必要なら`.env.local`を`gemini-3.6-flash`に戻す（または恒久的に3.5-flash-liteのままにするか判断する）
+- PR #8 のレビュー・`dev` へのマージ → 続けて本ブランチの PR をマージ
+- 実 API で directive 方式と答え合わせ（quote の付き方）を通しで確認する
+- としおの発言の `FabricatedFact` 化（シオリとの嘘共有）は別 issue
