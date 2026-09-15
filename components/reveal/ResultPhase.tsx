@@ -5,10 +5,10 @@ import { useMemo } from "react";
 import { Mascot } from "@/components/ui/Mascot";
 import { formatTime } from "@/lib/client/format";
 import type { RevealMessage, RevealStatement, Verdict } from "@/lib/server/reveal/types";
-import { RevealGraph, statementAnchorId, toshioAnchorId } from "./RevealGraph";
 import { MARK_CLASS, PILL_CLASS, VERDICT_LABEL, outcomeOf, speakerName, type Revealed } from "./verdict";
 
-// --- 結果フェーズ: 概要 → 話の答え → 真偽をマークした会話 → 構造図 ---
+// --- 結果フェーズ: 概要 → 話の答え → 真偽をマークした会話 ---
+// 解説・根拠・注釈は出さない（どこが嘘かの印だけを見せ、理由は作品を見て確かめてもらう）
 
 function ResultSummary({ data }: { data: Revealed }) {
   const answered = data.statements.filter((s) => data.reveal.guesses[s.id]);
@@ -29,12 +29,11 @@ function ResultSummary({ data }: { data: Revealed }) {
           <p className="text-[14px] text-body">あなたの予想は <strong className="font-medium text-primary">{answered.length}件中 {correct}件正解</strong></p>
         )}
       </div>
-      {data.statements.length === 0 && <p className="mt-sm text-[14px] text-muted">答え合わせできる話は記録されていません。</p>}
     </section>
   );
 }
 
-function Legend({ hasUntrackedMessages }: { hasUntrackedMessages: boolean }) {
+function Legend() {
   return (
     <div className="space-y-xxs text-[12px] text-muted">
       <div className="flex flex-wrap items-center gap-x-sm gap-y-xxs">
@@ -50,9 +49,7 @@ function Legend({ hasUntrackedMessages }: { hasUntrackedMessages: boolean }) {
           </mark>
           <span className="ml-xxs">本物の設定</span>
         </span>
-        <span>印のない部分は、真偽を判定していません</span>
       </div>
-      {hasUntrackedMessages && <p>※ 記録を始める前のシオリの発話は、嘘だけを本文の位置なしで示しています。</p>}
     </div>
   );
 }
@@ -91,21 +88,15 @@ function StatementRow({
   statement,
   number,
   guess,
-  located,
 }: {
   statement: RevealStatement;
   number: number;
   guess: Verdict | undefined;
-  located: boolean;
 }) {
   const outcome = outcomeOf(statement.verdict, guess);
-  const sources = statement.sources.map((s) => `第${s.episodeFrom}話〜 ${s.description}`).join(" / ");
 
   return (
-    <li
-      id={statementAnchorId(statement.id)}
-      className="flex gap-sm border-b border-hairline py-lg scroll-mt-lg target:bg-surface-soft"
-    >
+    <li className="flex gap-sm border-b border-hairline py-lg">
       <span className="w-4 shrink-0 pt-[2px] text-right text-[11px] font-medium text-muted">{number}</span>
       <div className="min-w-0 flex-1">
         <div className="flex flex-wrap items-center gap-xs">
@@ -123,40 +114,8 @@ function StatementRow({
             </span>
           )}
         </div>
-        <p className="mt-[2px] text-[12px] leading-[1.5] text-muted">
-          {statement.verdict === "true"
-            ? sources
-              ? `根拠: ${sources}`
-              : "根拠の設定は記録されていません"
-            : sources
-              ? `元にした本物の設定: ${sources}`
-              : "この会話で作られた設定です。"}
-          {!located && " ・ 本文中の位置は特定できませんでした"}
-        </p>
       </div>
     </li>
-  );
-}
-
-function ToshioNote({ message, numberOf }: { message: RevealMessage; numberOf: Map<string, number> }) {
-  const premises = message.premiseStatementIds ?? [];
-  return (
-    <div className="mt-xs rounded-md border border-dashed border-hairline px-sm py-xs text-[12px] leading-[1.6] text-muted">
-      {premises.length > 0 ? (
-        <p>
-          としおはこのとき、直前のシオリの話のうち
-          {premises.map((id) => (
-            <span key={id} className="mx-[2px] rounded-pill bg-error px-[6px] py-[1px] text-[10px] font-medium text-on-primary">
-              {numberOf.get(id)}
-            </span>
-          ))}
-          が嘘だと知ったうえで、話を合わせていました。
-        </p>
-      ) : (
-        <p>直前のシオリの話には、嘘として記録された箇所はありません。</p>
-      )}
-      <p className="mt-[2px] text-muted-soft">としおの発言は、一文ごとの真偽を判定していません。</p>
-    </div>
   );
 }
 
@@ -179,12 +138,7 @@ function Transcript({ data }: { data: Revealed }) {
         const isToshio = m.speaker === "toshio";
 
         return (
-          <article
-            key={m.id}
-            id={isToshio ? toshioAnchorId(m.id) : undefined}
-            data-testid="reveal-message"
-            className="flex gap-sm py-xs scroll-mt-lg"
-          >
+          <article key={m.id} data-testid="reveal-message" className="flex gap-sm py-xs">
             <Mascot size={32} animated={false} character={m.speaker} name={speakerName(m.speaker)} />
             <div className="min-w-0 flex-1">
               <div className="flex items-baseline gap-xs">
@@ -195,7 +149,6 @@ function Transcript({ data }: { data: Revealed }) {
                 <span className="text-[12px] text-muted-soft">{formatTime(m.createdAt)}</span>
               </div>
               <MessageBody message={m} statementsById={statementsById} numberOf={numberOf} />
-              {isToshio && <ToshioNote message={m} numberOf={numberOf} />}
             </div>
           </article>
         );
@@ -211,27 +164,23 @@ export function ResultPhase({ sessionId, data }: { sessionId: string; data: Reve
       {data.statements.length > 0 && (
         <section className="mt-xl" aria-labelledby="answers-title">
           <h2 id="answers-title" className="text-title-md font-medium text-ink">話の答え</h2>
-          <p className="mt-xs text-[13px] text-muted">会話に出てきた順に、本当の設定と作り話を並べています。</p>
           <ol className="mt-xs">
             {data.statements.map((statement, i) => (
-              <StatementRow key={statement.id} statement={statement} number={i + 1}
+              <StatementRow
+                key={statement.id}
+                statement={statement}
+                number={i + 1}
                 guess={data.reveal.guesses[statement.id]}
-                located={data.messages.some((m) => m.segments.some((s) => s.statementId === statement.id))} />
+              />
             ))}
           </ol>
         </section>
       )}
       <section className="mt-xxl">
         <h2 className="text-title-md font-medium text-ink">会話をふりかえる</h2>
-        <div className="mt-sm"><Legend hasUntrackedMessages={data.hasUntrackedMessages} /></div>
+        <div className="mt-sm"><Legend /></div>
         <div className="mt-lg"><Transcript data={data} /></div>
       </section>
-      {data.graph.nodes.some((node) => node.kind === "statement") && (
-        <details className="mt-xl rounded-lg border border-hairline p-md">
-          <summary className="cursor-pointer text-[14px] font-medium text-ink">話のつながりを図で見る</summary>
-          <RevealGraph graph={data.graph} />
-        </details>
-      )}
 
       <div className="mt-xl flex flex-wrap justify-center gap-xs">
         <Link

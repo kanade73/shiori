@@ -6,10 +6,11 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/checking_mockup`**（worktree `../chat-checking`）。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
+- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）
+- 親ブランチ: **`feat/checking_mockup`**。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
 - `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
-- 検証: `npm test` 128件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**（`gemini-3.6-flash` の日次無料枠が少ないため。動作確認はすべて vitest のモック経由）
+- 検証: `npm test` 129件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**（`gemini-3.6-flash` の日次無料枠が少ないため。動作確認はすべて vitest のモック経由）
 
 ## リファクタ（2026-09-15）で変えたこと
 
@@ -37,10 +38,13 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 ### としお
 - `toshio.ts` は「題材（premises）」方式: そのターンの fabricated claims を本作の事実として渡し、乗って考察を重ねさせる。`markLies`（【嘘】印で位置を教える方式）は廃止済み
 - 割り込みはシオリのストリームを流し切って保存した後（`runToshioInterjection`）。直近2ターン以内に割り込んでいれば見送り、`admit_uncertainty` の返答には乗せない
-- としおの発言は `FabricatedFact` 化されておらず、答え合わせでも一文ごとの真偽は出さない（直前のシオリの嘘に「乗った」ことだけ示す）
+- としおの発言は `FabricatedFact` 化されておらず、答え合わせでも一文ごとの真偽は出さない。どの嘘に乗ったか（`premiseStatementIds`）はデータには残っているが、結果画面には出さない
 
 ### 答え合わせ
-- 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要 → 発言順の答えと根拠 → 真偽をマークした会話 → 折りたたみの構造図」、幅 800px 1カラム
+- 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要（件数だけ）→ 発言順の答え → 真偽をマークした会話」、幅 800px 1カラム
+- **結果画面は差分のハイライトだけ。解説文・根拠・注釈は出さない**（ユーザー判断。理由は「アニメを見ればわかる」ので不親切でよい）。`ResultPhase.tsx` から削ったもの: 各行の「根拠: …」「元にした本物の設定: …」「この会話で作られた設定です。」「本文中の位置は特定できませんでした」、凡例の「印のない部分は、真偽を判定していません」「記録を始める前のシオリの発話は…」、としおの注記（ToshioNote 全体。としおの発言は本文だけ出す）、「答え合わせできる話は記録されていません。」、「会話に出てきた順に…」、構造図の details。**「〜は判定していません」の類の一言を足し直さないこと**
+- 予想フェーズ（`GuessPhase`）は変えていない。本文の印・番号・「話の答え」リストの行（ラベル + 引用文 + 予想の結果ピル）・凡例の「嘘 / 本当」2つは残っている
+- 構造図（`components/reveal/RevealGraph.tsx` + `lib/client/graph-layout.ts` + `lib/server/reveal/graph.ts`）は結果画面から外しただけで、コードもテストも API の `graph` フィールドも残してある。いまどの画面からも描画していない（debug 画面も使っていない）。復活させるなら `RevealGraph` を import し、飛び先の `id`（`statementAnchorId` / `toshioAnchorId`）を `ResultPhase` 側に戻す必要がある
 - 構造図は左から右へ一方向の層状レイアウト（本物の設定 → キャラ・物 → シオリの主張 → としお）。目的語の辺（`object`）は逆向きになるので図には描かない（データには残る）
 
 ## 既知の問題・未解決
