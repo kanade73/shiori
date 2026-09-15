@@ -1,49 +1,53 @@
 import type { Config } from "tailwindcss";
 
+const v = (name: string) => `rgb(var(--c-${name}) / <alpha-value>)`;
+
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
+      // 色は CSS 変数（app/globals.css）で持つ。既定はダーク。
+      // `<alpha-value>` を使うので値は "r g b" の三つ組で定義する
       colors: {
         primary: {
-          DEFAULT: "#6a4fc4",
-          active: "#533aa8",
-          disabled: "#d9dbe6",
+          DEFAULT: v("primary"),
+          active: v("primary-active"),
+          disabled: v("primary-disabled"),
         },
-        ink: "#121421",
+        ink: v("ink"),
         body: {
-          DEFAULT: "#3b3e54",
-          strong: "#25283c",
+          DEFAULT: v("body"),
+          strong: v("body-strong"),
         },
         muted: {
-          DEFAULT: "#676b83",
-          soft: "#8a8d9e",
+          DEFAULT: v("muted"),
+          soft: v("muted-soft"),
         },
         hairline: {
-          DEFAULT: "#d9dbe6",
-          soft: "#e6e8f0",
+          DEFAULT: v("hairline"),
+          soft: v("hairline-soft"),
         },
-        canvas: "#f4f4f8",
+        canvas: v("canvas"),
         surface: {
-          soft: "#eceef4",
-          card: "#e3e5ee",
-          "cream-strong": "#d6d9e6",
-          dark: "#121421",
-          "dark-elevated": "#1e2133",
-          "dark-soft": "#181a2a",
+          soft: v("surface-soft"),
+          card: v("surface-card"),
+          "cream-strong": v("surface-cream-strong"),
+          dark: v("surface-dark"),
+          "dark-elevated": v("surface-dark-elevated"),
+          "dark-soft": v("surface-dark-soft"),
         },
-        "on-primary": "#ffffff",
+        "on-primary": v("on-primary"),
         "on-dark": {
-          DEFAULT: "#f7f5f5",
-          soft: "#9497a8",
+          DEFAULT: v("on-dark"),
+          soft: v("on-dark-soft"),
         },
         accent: {
-          steel: "#505b95",
-          mauve: "#9f90bb",
+          steel: v("accent-steel"),
+          mauve: v("accent-mauve"),
         },
-        success: "#4caa77",
-        warning: "#cf9a3a",
-        error: "#c6435a",
+        success: v("success"),
+        warning: v("warning"),
+        error: v("error"),
       },
       fontSize: {
         "display-xl": ["64px", { lineHeight: "1.05", letterSpacing: "-1.5px" }],
@@ -78,14 +82,16 @@ const config: Config = {
           "sans-serif",
         ],
         mono: ["var(--font-mono)", "JetBrains Mono", "ui-monospace", "monospace"],
+        // 小さなラベル専用のドットフォント。本文には使わない
+        pixel: ["var(--font-pixel)", "DotGothic16", "var(--font-sans)", "sans-serif"],
       },
       borderRadius: {
-        xs: "4px",
-        sm: "6px",
-        md: "8px",
-        lg: "12px",
-        xl: "16px",
-        pill: "9999px",
+        xs: "var(--radius-xs)",
+        sm: "var(--radius-sm)",
+        md: "var(--radius-md)",
+        lg: "var(--radius-lg)",
+        xl: "var(--radius-xl)",
+        pill: "var(--radius-pill)",
       },
       spacing: {
         xxs: "4px",
@@ -110,11 +116,16 @@ const config: Config = {
           "0%, 80%, 100%": { opacity: "0.25", transform: "translateY(0)" },
           "40%": { opacity: "1", transform: "translateY(-2px)" },
         },
+        blink: {
+          "0%, 100%": { opacity: "1" },
+          "50%": { opacity: "0" },
+        },
       },
       animation: {
         tilt: "tilt 9s ease-in-out infinite",
-        "fade-up": "fade-up 0.25s ease-out",
-        "typing-dot": "typing-dot 1.2s ease-in-out infinite",
+        "fade-up": "fade-up 0.3s steps(4, end)",
+        "typing-dot": "typing-dot 1.2s steps(2, end) infinite",
+        blink: "blink 1s steps(2, end) infinite",
       },
     },
   },

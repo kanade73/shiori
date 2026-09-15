@@ -8,9 +8,11 @@ const base = {
   viewBox: "0 0 24 24",
   fill: "none",
   stroke: "currentColor",
-  strokeWidth: 1.75,
-  strokeLinecap: "round" as const,
-  strokeLinejoin: "round" as const,
+  // ドット絵に寄せて、線の端と角を丸めずアンチエイリアスも切る
+  strokeWidth: 2,
+  strokeLinecap: "square" as const,
+  strokeLinejoin: "miter" as const,
+  shapeRendering: "crispEdges" as const,
 };
 
 export function PlusIcon(props: IconProps) {

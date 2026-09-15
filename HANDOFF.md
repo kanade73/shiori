@@ -16,6 +16,20 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - 検証: `npm test` 226件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**
 - 直前の `feat/checking_mockup`（#13）と `feat/issue-6-toshio`（#8）は dev にマージ済み
 
+## 直近のセッション: ダーク前提の「ドット絵風」テーマ（`feat/issue-15`、**未コミット**）
+- ユーザー要望:「ダークモードを、色調は変えずに Inverted Angel 風のドット絵の少しおしゃれな感じに。文字まで全部ピクセル風は厳しいのでバランスを考えて」→「一旦ダーク前提で」
+- 決めたバランス: **絵・枠・小さなラベルはドット、本文は普通**。本文・入力欄は Noto Sans JP のまま。話者名・時刻・「作品/セッション」の見出し・バッジ・ボタンのラベルだけ DotGothic16（`font-pixel`、next/font の `--font-pixel`）。CRT・走査線の湾曲は入れない（背景は 3px 間隔の縦のディザを 2% 弱で敷くだけ）
+- 仕組み:
+  - 色は `app/globals.css` の CSS 変数（`--c-*`、"r g b" 三つ組）に移し、`tailwind.config.ts` は `rgb(var(--c-x) / <alpha-value>)` で参照する。**既定（`:root`）がダーク**。元のライトの値は `[data-theme="light"]` に残してあり、`app/layout.tsx` の `<html data-theme="dark">` を切り替えれば戻る（切り替え UI は無い）。色相は元のラベンダー系のまま明度だけ反転、primary はダーク地で沈むので少し明るく（#7b63d6 / active #8f7ae0）
+  - 角丸トークン（`rounded-md` 等）は `--radius-*` 変数にして、ダークでは全部 0。ライトでは元の値
+  - `.pixel-frame`（2px 線 + 四隅を 2px 欠く clip-path。外側の影やフォーカスリングは出せない）、`.pixel-btn`（ぼかしなしの 2px 落ち影、押すと沈む）、`.pixel-dither`（2×2 ディザの地）を `@layer components` に置いた
+  - `Mascot` は丸抜きをやめて `pixel-frame` の正方形 + `img[data-pixel]` で `image-rendering: pixelated`
+  - fade-up / typing-dot は `steps()` に変え、ストリーミング中のカーソルは `█` 状のブロック（`animate-blink`）。アイコンは `strokeLinecap: square` + `crispEdges`
+  - 触ったコンポーネント: chat/{ChatApp,ChatHeader,ChatInput,ChatMessageItem,Sidebar,TypingIndicator}, setup/SetupScreen, ui/{Mascot,icons}。reveal / debug はトークン経由で暗くなるだけで className は触っていない
+- 検証: `tsc`・`eslint`・`npm test` 229件 通過。ヘッドレス Chromium（Playwright のキャッシュの chrome-headless-shell）で 3001 番の dev サーバーをスクリーンショットして、セットアップ・チャット（ユーザー吹き出し・としお）・答え合わせ（予想）を目視確認。`next build` は dev サーバーと衝突するので未実行
+- 注意: このツリーの dev サーバーは **3001 番**（別セッションが起動、PID は `.next/dev/logs`）。3000 番は別ディレクトリ `../chat-app` の古いコードなので見ないこと。Chrome 拡張（claude-in-chrome）は接続できなかった
+- 残課題: 答え合わせ・debug 画面のカードにも `pixel-frame` を当てるか（今は角が直角になっただけ）。ライトへの切り替え UI は未着手。`tsconfig.json` の差分（`.next-3003` の include）はこのセッション以前からのもので触っていない
+
 ## 調査メモ: 「ステーキはゴーヤでできている」のような見れば分かる嘘は RAG 化のせいか（コードは変えていない）
 - ユーザー質問: localhost:3000 の会話（セッション `24d7e2dc`、話題「シーサー」）で出た「ステーキはシーサーが山で野生のゴーヤを素手で捕まえて作った」は RAG 化で出やすくなったのか、元々出うるのか
 - 結論: **元々出うる嘘**。RAG 化で増えた証拠はない。`88765bb`（RAG 前）と `6e8c28f`（RAG 後）を worktree で並べ、同じ発話で generate を直接呼んで比べた（gemini-3.5-flash-lite、各条件10回、スクラッチの `liebench.test.ts` / `results-*.jsonl`。リポジトリには入れていない）。RAG 前は話数を知っている状態（255話・63話）+ work.json の canonFacts、RAG 後は保存済みの topic をそのまま使った

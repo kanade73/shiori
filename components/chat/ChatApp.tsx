@@ -42,18 +42,18 @@ function CenteredNote({ children }: { children: React.ReactNode }) {
 function RevealedFooter({ sessionId }: { sessionId: string }) {
   return (
     <div className="border-t border-hairline bg-canvas px-md py-sm">
-      <div className="mx-auto flex max-w-[760px] flex-col gap-sm rounded-xl bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="pixel-frame pixel-dither mx-auto flex max-w-[760px] flex-col gap-sm bg-surface-card px-md py-sm sm:flex-row sm:items-center sm:justify-between">
         <p className="text-[13px] text-body">この会話は答え合わせ済み。ここから先は、新しいセッションで。</p>
         <div className="flex shrink-0 gap-xs">
           <Link
             href={`/reveal/${sessionId}`}
-            className="rounded-md border border-hairline bg-canvas px-sm py-xxs text-[13px] font-medium text-ink transition-colors hover:bg-surface-soft"
+            className="pixel-btn border-2 border-hairline bg-canvas px-sm py-xxs font-pixel text-[14px] text-ink hover:bg-surface-soft"
           >
             結果を見る
           </Link>
           <Link
             href="/"
-            className="rounded-md bg-primary px-sm py-xxs text-[13px] font-medium text-on-primary transition-colors hover:bg-primary-active"
+            className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[14px] text-on-primary hover:bg-primary-active"
           >
             新しいセッション
           </Link>

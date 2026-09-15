@@ -33,20 +33,20 @@ export function ChatHeader({
         </button>
         <div className="min-w-0 px-xs py-xxs">
           <span className="truncate text-title-md font-medium text-ink">{workTitle}</span>
-          <span className="ml-xs text-[13px] text-muted-soft">{sessionLabel}</span>
+          <span className="ml-xs font-pixel text-[13px] text-muted-soft">{sessionLabel}</span>
         </div>
       </div>
 
       <div className="flex shrink-0 items-center gap-xs">
         <Link
           href={`/debug/${sessionId}`}
-          className="hidden rounded-md px-sm py-xxs text-[13px] text-muted transition-colors hover:bg-surface-card hover:text-ink sm:block"
+          className="hidden px-sm py-xxs font-pixel text-[14px] text-muted hover:bg-surface-card hover:text-ink sm:block"
         >
           偽設定を確認
         </Link>
         <Link
           href={`/reveal/${sessionId}`}
-          className="rounded-md bg-primary px-sm py-xxs text-[13px] font-medium text-on-primary transition-colors hover:bg-primary-active"
+          className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[14px] text-on-primary hover:bg-primary-active"
         >
           {revealed ? "答え合わせの結果" : "答え合わせ"}
         </Link>
