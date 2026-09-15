@@ -8,7 +8,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。
 
-## 2026-09-15: 本当のことが嘘と判定される（言い換えの取りこぼし）を直した（`fix/grounding-paraphrase`、dev `87f3ffb` から切った。push 済み・**PR は出していない**。dev に入れるかは Issue で検討）
+## 2026-09-15: 本当のことが嘘と判定される（言い換えの取りこぼし）を直した（`fix/grounding-paraphrase`、dev `87f3ffb` から切った。push 済み・**PR は出していない**。dev に入れるかは **Issue #42** で検討）
 
 「古本屋！」への返答「あのピンク色の体で、カニのハサミみたいなカチューシャをつけてる子」が、答え合わせで嘘と判定されていた。取り出し（extract のモデル）は正しく、原因は grounding の照合。`objectMatches` が丸ごとの包含しか見ておらず、話題の事実 `ピンク色のキャラクター`（説明文は「ピンク色の体をした」）や `耳のようなカニのハサミのカチューシャ` と、主張の「ピンク色の体」「カニのハサミみたいなカチューシャ」が一致しなかった。
 
