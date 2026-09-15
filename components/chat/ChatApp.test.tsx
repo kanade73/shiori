@@ -179,6 +179,37 @@ describe("ChatApp: 途中で切れたストリーム", () => {
   });
 });
 
+describe("ChatApp: 話題の場面（issue #14）", () => {
+  it("話題が決まるまではヘッダーに「話題はこれから」、topic が届いたらその場面の名前を出す", async () => {
+    const topic = {
+      title: "草むしり検定編",
+      summary: "検定の話。",
+      facts: [],
+      sources: [],
+      query: "検定のところ",
+      resolvedAt: "2026-09-15T00:00:00.000Z",
+    };
+    mocks.getSessionData.mockResolvedValue({
+      work,
+      session: { ...session, currentEpisode: 0 },
+      messages: [],
+      fabricatedFactCount: 0,
+    });
+    mocks.sendMessage.mockImplementation(async (_s: string, _c: string, h: SendMessageHandlers) => {
+      h.onTopic?.(topic);
+      await streamed([["shiori", "あの回ね。"]])(_s, _c, h);
+    });
+
+    render(<ChatApp sessionId="s1" />);
+    const header = await screen.findByRole("banner");
+    expect(within(header).getByText("話題はこれから")).toBeTruthy();
+
+    fireEvent.change(await screen.findByPlaceholderText("感想やシーンの話を送ってみて..."), { target: { value: "検定のところ" } });
+    fireEvent.click(screen.getByRole("button", { name: "送信" }));
+    await waitFor(() => expect(within(header).getByText("草むしり検定編")).toBeTruthy());
+  });
+});
+
 describe("ChatApp: 答え合わせ", () => {
   it("答え合わせ前はヘッダーに答え合わせへの導線があり、入力欄が出る", async () => {
     render(<ChatApp sessionId="s1" />);

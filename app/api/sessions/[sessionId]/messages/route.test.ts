@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   appendMessage: vi.fn(),
   addFabricatedFact: vi.fn(),
   saveMessageClaims: vi.fn(),
+  setSessionTopic: vi.fn(),
   getMessages: vi.fn(),
   getSession: vi.fn(),
   getWork: vi.fn(),
@@ -24,6 +25,7 @@ vi.mock("@/lib/server/store", () => ({
   appendMessage: mocks.appendMessage,
   addFabricatedFact: mocks.addFabricatedFact,
   saveMessageClaims: mocks.saveMessageClaims,
+  setSessionTopic: mocks.setSessionTopic,
   getMessages: mocks.getMessages,
   getSession: mocks.getSession,
 }));
@@ -49,6 +51,8 @@ function pipelineResult(overrides: Record<string, unknown> = {}) {
     regenerated: false,
     newFabricatedClaims: [],
     reusedFabricatedFactIds: [],
+    newTopic: null,
+    currentEpisode: 3,
     ...overrides,
   };
 }
@@ -149,6 +153,7 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
       workTitle: "テスト作品",
       sessionId: "s1",
       currentEpisode: 3,
+      topic: undefined,
       history: [],
       userMessage: "これって伏線じゃない？",
       analysis: pipeline.analysis,
@@ -210,6 +215,64 @@ describe("POST /api/sessions/[id]/messages: 答え合わせ用の記録", () => 
     expect(res.status).toBe(409);
     expect(mocks.appendMessage).not.toHaveBeenCalled();
     expect(mocks.runConversationPipeline).not.toHaveBeenCalled();
+  });
+});
+
+describe("POST /api/sessions/[id]/messages: 話題の場面（issue #14）", () => {
+  const topic = {
+    title: "草むしり検定編",
+    summary: "ちいかわとハチワレが検定を受ける。",
+    arcId: "arc-kentei",
+    facts: [],
+    sources: [{ title: "記事", url: "https://example.org/wiki/記事" }],
+    query: "検定のところ",
+    resolvedAt: "2026-09-15T00:00:00.000Z",
+  };
+
+  it("セッションの話題をパイプラインに渡し、この発話で決まった話題と境界を保存して topic イベントで知らせる", async () => {
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ newTopic: topic, currentEpisode: 63 }));
+    const events = await collect(await post("検定のところ"));
+    expect(mocks.runConversationPipeline.mock.calls[0][0].topic).toBeUndefined();
+    expect(mocks.setSessionTopic).toHaveBeenCalledWith("s1", topic, 63);
+    expect(events.find((e) => e.event === "topic")?.data).toEqual(topic);
+    // topic はシオリの吹き出しより前に届く（ヘッダーを先に更新できる）
+    expect(events[0].event).toBe("topic");
+    // としおにも決まった話題と境界を渡す
+    expect(mocks.runToshioInterjection.mock.calls[0][0]).toMatchObject({ topic, currentEpisode: 63 });
+  });
+
+  it("話題が切り替わったら、切り替え先を保存・通知し、としおにも切り替え先を渡す", async () => {
+    const next = { ...topic, title: "パジャマパーティーズ編", since: "2026-09-15T00:00:03.000Z" };
+    mocks.getSession.mockReturnValue({ id: "s1", workId: "w", currentEpisode: 63, topic, pastTopics: [], createdAt: "", updatedAt: "" });
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ newTopic: next, previousTopic: topic, currentEpisode: 155 }));
+    const events = await collect(await post("そういえばパジャマパーティーズも"));
+    expect(mocks.setSessionTopic).toHaveBeenCalledWith("s1", next, 155);
+    expect(events.find((e) => e.event === "topic")?.data).toEqual(next);
+    expect(mocks.runToshioInterjection.mock.calls[0][0].topic).toEqual(next);
+  });
+
+  it("パイプラインには前の話題と、今回のユーザー発話の保存時刻（履歴を切る基準）を渡す", async () => {
+    const past = [{ ...topic, title: "前の話題" }];
+    mocks.getSession.mockReturnValue({ id: "s1", workId: "w", currentEpisode: 63, topic, pastTopics: past, createdAt: "", updatedAt: "" });
+    mocks.appendMessage.mockImplementationOnce((sessionId: string, role: string, content: string) => ({
+      id: "msg-user",
+      sessionId,
+      role,
+      content,
+      createdAt: "2026-09-15T00:00:09.000Z",
+    }));
+    await collect(await post());
+    expect(mocks.runConversationPipeline.mock.calls[0][0]).toMatchObject({ pastTopics: past, userMessageAt: "2026-09-15T00:00:09.000Z" });
+  });
+
+  it("既に話題が決まっていれば、それを渡し、保存し直さず、topic イベントも出さない", async () => {
+    mocks.getSession.mockReturnValue({ id: "s1", workId: "w", currentEpisode: 63, topic, createdAt: "", updatedAt: "" });
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ currentEpisode: 63 }));
+    const events = await collect(await post());
+    expect(mocks.runConversationPipeline.mock.calls[0][0].topic).toEqual(topic);
+    expect(mocks.setSessionTopic).not.toHaveBeenCalled();
+    expect(events.some((e) => e.event === "topic")).toBe(false);
+    expect(mocks.runToshioInterjection.mock.calls[0][0].topic).toEqual(topic);
   });
 });
 

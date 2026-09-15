@@ -10,6 +10,7 @@ import {
   type EnrichedFabricatedFact,
   type FabricatedGraph,
 } from "@/lib/client/api";
+import { episodeFromLabel, sessionLabel } from "@/lib/client/types";
 import type { CanonFact, ChatSession, Work } from "@/lib/server/types";
 
 const STATUS_LABEL: Record<string, string> = {
@@ -32,7 +33,7 @@ function relatedLabelsFor(factId: string, facts: EnrichedFabricatedFact[], graph
 function CanonFactCard({ fact }: { fact: CanonFact }) {
   return (
     <div className="rounded-lg border border-hairline bg-canvas px-sm py-xs">
-      <p className="text-[11px] text-muted-soft">第{fact.episodeFrom}話〜</p>
+      <p className="text-[11px] text-muted-soft">{episodeFromLabel(fact.episodeFrom)}</p>
       <p className="mt-xxs text-[14px] text-ink">
         {fact.subject} が {fact.object} に対して{fact.relation}
       </p>
@@ -153,9 +154,50 @@ export function DebugView({ sessionId }: { sessionId: string }) {
 
         <h1 className="mt-sm font-display text-display-sm font-medium text-ink">偽設定の確認画面</h1>
         <p className="mt-xxs text-[13px] text-muted">
-          {work.title} ・ {session.progressDescription ?? `第${session.currentEpisode}話まで`}視聴済み（第{session.currentEpisode}
-          話相当） ・ 開発者・デモ用の管理画面です
+          {work.title} ・ {sessionLabel(session)}（
+          {session.currentEpisode > 0 ? `第${session.currentEpisode}話まで視聴済みとして扱う` : "視聴話数は不明"}） ・
+          開発者・デモ用の管理画面です
         </p>
+
+        <section className="mt-lg">
+          <h2 className="text-title-sm font-medium text-ink">今日の話題</h2>
+          {session.topic ? (
+            <div className="mt-sm rounded-lg border border-hairline bg-canvas px-sm py-xs">
+              <p className="text-[14px] font-medium text-ink">{session.topic.title}</p>
+              <p className="mt-xxs text-[13px] text-muted">{session.topic.summary}</p>
+              <p className="mt-xs text-[12px] text-muted-soft">
+                「{session.topic.query}」から特定 ・ 資料:{" "}
+                {session.topic.sources.map((s, i) => (
+                  <span key={s.url}>
+                    {i > 0 && "、"}
+                    <a href={s.url} target="_blank" rel="noreferrer" className="text-primary hover:underline">
+                      {s.title}
+                    </a>
+                  </span>
+                ))}
+              </p>
+            </div>
+          ) : (
+            <p className="mt-sm text-[13px] text-muted">まだ特定していません（ユーザーの最初の返答から外部の資料で調べます）。</p>
+          )}
+          {session.pastTopics && session.pastTopics.length > 0 && (
+            <div className="mt-sm">
+              <p className="text-[12px] text-muted-soft">切り替わる前の話題（古い順）</p>
+              <ul className="mt-xxs space-y-xxs">
+                {session.pastTopics.map((t) => (
+                  <li key={t.resolvedAt} className="text-[13px] text-muted">
+                    {t.title}（「{t.query}」から特定）
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {session.topic?.since && (
+            <p className="mt-xxs text-[12px] text-muted-soft">
+              いまの話題は会話の途中で切り替わったもの。切り替わる前の履歴はシオリに渡していない。
+            </p>
+          )}
+        </section>
 
         <section className="mt-lg">
           <h2 className="text-title-sm font-medium text-ink">本当の設定（視聴済み範囲）</h2>

@@ -37,6 +37,7 @@
 ```json
 {
   "work":       { "id": "chiikawa", "title": "...", "episodeCount": 377 },
+  "sources":    [ { "kind": "mediawiki", "endpoint": "https://ja.wikipedia.org/w/api.php", "page": "記事名", "sections": ["連作エピソード", "登場キャラクター", ...] } ],
   "arcs":       [ { "id": "arc-pajama", "title": "パジャマパーティーズ編", "episodeFrom": 144, "episodeTo": 155, "aliases": ["パジャマパーティーズ", ...] } ],
   "episodes":   [ { "id": "ep-001", "episodeNumber": 1, "title": "出発", "summary": "..." } ],
   "canonFacts": [ { "id": "...", "episodeFrom": 7, "subject": "...", "relation": "...", "object": "...", "description": "..." } ]
@@ -45,15 +46,41 @@
 
 - `canonFacts` が「本物の設定」。`subject / relation / object` の三つ組 + 一文の説明
 - `episodeFrom` がネタバレ境界。ユーザーの視聴話数以下のものしかモデルに渡さない
-- `arcs.aliases` は「パジャマパーティーズ編まで見た」のような自由記述を話数に解決するためのもの（`lib/server/progress-resolver.ts`）
-- `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
+- `sources` は会話の話題を調べにいく外部の知識源（下の「話題の場面」）。`sections` を書くとその章（と記事冒頭の導入）だけを使う。コラボ・グッズ・スタッフ一覧のような物語と関係ない章は外しておく
+- `arcs.aliases` は、話題の場面（外部資料の「『〇〇』編」などの見出し）を arc に対応づけて視聴済み話数を決めるのと、発話解析で arc の言及を拾うのに使う
+- `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）、外部資料の検索（別名で書かれても正式名で探す）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
 
 同じディレクトリに `cards.jsonl`（命題カード）も置いてあるが、これは `docs/specs/spec.md` の構想用で**現状コードは読んでいない**。
+
+### 話題の場面（セッションごとの RAG、issue #14）
+
+話数は聞かない。セッションはシオリの定型「……今日は何について話したい?」から始まり、ユーザーの答えから話題の場面を外部の知識源で調べる（以前のシーン検索 = 自由記述→話数の `progress-resolver` は廃止）。
+
+- `lib/server/sources.ts` — `sources` の MediaWiki 記事を TextExtracts で取り、段落に区切る（プロセス内キャッシュ）。発話との**文字 bigram の IDF 重み付き重なり**で段落を順位付けする（下のベクトル検索と併用）
+- `lib/server/topic.ts` の `lookupSessionTopic` — 上位の段落を資料係（`llm/topic.ts`、Gemini 1回・構造化出力）に渡し、場面の名前・要約・事実（`relation` は claims と同じ閉じた語彙）を**資料に書かれたことだけから**抜かせる。場面が `arcs` に対応すればその arc の最後の話を視聴済み話数にする
+- 結果は `ChatSession.topic` に保存し、事実は `topic-<何番目の話題>-<連番>` の id の canonFact として以後の retrieve / generate / evaluate / としお / 答え合わせに流れる（`retrieval.getVisibleCanonFacts`）。**話題が決まるまでは発話のたびに調べ、決まった後は下の「話題の切り替わり」を判定したときだけ引き直す**。挨拶のように資料と重ならない発話では資料係を呼ばない。失敗しても話題なしのままシオリは返事をする
+- 段落の検索は bigram とベクトル（`lib/server/embeddings.ts`、`gemini-embedding-001`）の順位を Reciprocal Rank Fusion で混ぜる。ベクトルは言い換え（「大きい敵を倒しにいく話」→『おっきい討伐』編）に強く、bigram は固有名詞に強い。ベクトルDBは入れず、段落の埋め込みはメモリと `DATA_DIR/embeddings/` の JSON に持つ。埋め込みの無料枠は「1分100件（まとめて送っても1件ずつ数える）」なので、段落は裏で80件ずつ1分おきに埋め込み、揃うまでは bigram だけで検索する（会話は待たせない）
+
+#### 話題の切り替わり（`lib/server/topic-shift.ts`）
+
+発話ごとに2段で判定し、切り替わったときだけ RAG を引き直す。
+
+1. **ゲート**（API を呼ばない）: 切り替えの言い回し（「そういえば」「〜の話ってあったよね」など）、いまと別の arc の名前、いまの話題の外の段落への強い重なり、のどれか。続きの発話はここで落ちる（実会話で同じ話題の発話の約2割が通る。本当の切り替えは6/6通った）
+2. **判定役**（`llm/router.ts`、`GEMINI_ROUTER_MODEL`）: いまの話題名・直前のシオリの返答（200字まで）・発話・近い段落の見出しだけ（約440トークン）で、切り替えか、切り替えならどんな検索語で引き直すか（指示語を解いた**検索クエリの再構築**）を返す
+
+切り替わったら、組み直した検索語で `lookupSessionTopic` を引き直し（同じ場面なら切り替えとみなさない）、前の話題は `ChatSession.pastTopics` に移す。**会話履歴のクレンジング**: 新しい話題には `since`（きっかけの発話の時刻）を持たせ、`pipeline.historyForTopic` がそれより前の履歴をシオリに渡さない。代わりに前の話題は名前だけプロンプトに入れる。前の話題でついた嘘は `FabricatedFact` として別に渡るので、履歴を落としても矛盾検査は効く。前の話題の事実はシオリには渡さず、evaluate と答え合わせでは引ける
+
+- **Tool Calling（シオリの generate に調べさせる）を採らなかった理由**: ツールを呼ぶ回はシオリの全文脈（約2Kトークン）を2往復送り直し、検索結果の生の段落（上位8件で約1.4Kトークン）がシオリの文脈に積まれる。判定役は別モデル・小さな文脈で、シオリの文脈に入るのは要約した事実（1話題あたり60トークン程度）と話題名だけ
+- 判定役を `GEMINI_MODEL` と同じモデルにしないこと。無料枠はモデルごとに1分15回（flash-lite）で、同じにすると切り替えの判定がシオリの枠を削る（実際に 429 になった）
+- `ChatSession.currentEpisode` は「話題にした場面から分かる、少なくともここまでは見ている話数」。話題が決まるまで・arc に対応しない話題（人物など）では 0 のままで、work.json の canonFacts は話数では出さない
+- Gemini の Google 検索グラウンディングは無料枠のキーでは 429 になるため使っていない
+- 資料係が場面より後の展開を事実に混ぜないかはプロンプト頼み（決定的な検査は無い）。人物の段落には後の話が多く書かれているので、ネタバレの経路として意識しておくこと
 
 ### 会話パイプライン
 
 `lib/server/llm/pipeline.ts`。1発話ごとに以下を回す。
 
+0. **topic** — セッションに話題の場面がまだ無ければ上の `lookupSessionTopic` で調べ、あれば話題の切り替わりを判定する（切り替わったら引き直し、履歴をクレンジングする）
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)` と、返答文の中でその主張を述べた部分の抜き出し `quote`
@@ -72,7 +99,7 @@
 
 `/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
 
-- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getCanonFactsUpTo` の範囲だけ出す
+- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
 - 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
 - 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
 - としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
@@ -101,14 +128,14 @@
 
 `lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY` だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）。
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話で検索語の埋め込み+1件（別モデル）。
 
 ### 意図的に選んでいない技術
 
 提案しないこと。理由があって外している。
 
 - **Python バックエンドの分離** — 3日で結合を2回やる余裕がない
-- **Supabase / Postgres / ベクトルDB** — 単一ユーザー・設定数十件・書き込みほぼ無しの要件に対して過剰。retrieval はキーワード一致で足りている
+- **Supabase / Postgres / ベクトルDB** — 単一ユーザー・設定数十件・書き込みほぼ無しの要件に対して過剰。retrieval はキーワード一致で足りている（外部資料の段落のベクトル検索は、埋め込みをメモリと JSON に持つだけで DB は入れていない）
 - **LangChain 等のフレームワーク** — 処理が単純で、抽象層のデバッグコストの方が高い
 - **LoRA / ローカルLLM** — 口調はプロンプトのみで維持する方針。崩れることが確認できるまで入れない。勝手に学習パイプラインを組み始めないこと
 
@@ -118,13 +145,13 @@
 
 ```
 app/
-  page.tsx                          作品選択 + 視聴進捗入力（SetupScreen）
+  page.tsx                          作品選択（SetupScreen。スタート画面は作り直し予定）
   chat/[sessionId]/page.tsx         チャット画面
   debug/[sessionId]/page.tsx        管理画面。本物の設定と生成された嘘を並べて見る
   reveal/[sessionId]/page.tsx       答え合わせ画面（ユーザー向け）。予想 → 真偽つきの会話
   api/
-    works/                          作品一覧・詳細・進捗の解決
-    sessions/                       セッション作成・取得・話数更新
+    works/                          作品一覧・詳細
+    sessions/                       セッション作成・取得
     sessions/[sessionId]/messages/  チャット本体（SSE）。パイプラインはここから呼ぶ
     sessions/[sessionId]/{canon-facts,fabricated-facts,fabricated-graph}/  debug 画面用
     sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 予想を送って答え合わせ済みにする）
@@ -139,11 +166,14 @@ lib/
     works.ts                        data/ の読み込み
     store.ts                        .data/db.json の読み書き
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
-    progress-resolver.ts            自由記述 → 話数
+    sources.ts                      外部の知識源（MediaWiki）の取得・段落分け・検索（bigram・順位の融合）
+    embeddings.ts                   外部資料の段落のベクトル検索（埋め込みはメモリと DATA_DIR の JSON）
+    topic.ts                        話題の場面の特定（セッションごとの RAG）
+    topic-shift.ts                  話題の切り替わりの判定（ゲート → 判定役）
     rate-limit.ts
     sse.ts                          Route Handler が text/event-stream を書くための口
     types.ts                        データモデル（答え合わせ専用の型は reveal/types.ts）
-    llm/                            analyze → directive → generate → evaluate → pipeline（+ toshio: としおの割り込み）
+    llm/                            router（切り替わりの判定役）/ topic（資料係）→ analyze → directive → generate → evaluate → pipeline（+ toshio: としおの割り込み）
     reveal/                         答え合わせ。build.ts が発話を本当/嘘の部分に区切り、graph.ts が嘘の構造図を組む
   client/                           fetch ラッパー（api.ts）・SSE パーサ・表示用型・時刻整形（format.ts）・構造図のレイアウト
 data/
@@ -164,7 +194,7 @@ pictures/                           デザイン素材・スケッチ
 - **作品名・キャラ名での条件分岐を書かない**。データとコードの分離が壊れる
 - **`NEXT_PUBLIC_` に API キーを置かない**。LLM 呼び出しは必ず Route Handler 側（`lib/server/` 配下は client から import しない。型だけは `import type` で可）
 - **抽象化を先回りしない**。プラグイン機構のようなものは、2作品目で実際に必要になるまで作らない
-- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts` / `getAllEpisodes` は debug 画面と進捗解決専用。生成に渡すのは `getCanonFactsUpTo` の結果だけ
+- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts` は debug 画面と evaluate（ネタバレ検出）専用。生成に渡すのは `getCanonFactsUpTo` の結果と、話題の場面について外部資料で確かめた事実だけ
 
 ### work.json を書くとき
 
@@ -177,7 +207,9 @@ pictures/                           デザイン素材・スケッチ
 ```
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_MODEL=            # 省略可。既定 gemini-3.6-flash
-DATA_DIR=                # 省略可。db.json の置き場所。本番はボリュームのマウント先（/app/.data）
+GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
+GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
+DATA_DIR=                # 省略可。db.json と埋め込みのキャッシュの置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。

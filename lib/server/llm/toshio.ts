@@ -1,7 +1,8 @@
 import { Type } from "@google/genai";
 import { ai, GENERATION_MODEL } from "./client";
 import { ToshioCommentarySchema } from "./schemas";
-import type { CanonFact, Claim, FabricatedFact } from "../types";
+import { formatEpisodeFrom, formatTopic, formatViewing } from "./context";
+import type { CanonFact, Claim, FabricatedFact, SessionTopic } from "../types";
 
 /**
  * issue #6: シオリとの会話の途中に、たまに割り込んで「深い考察」を語る2人目の
@@ -66,7 +67,9 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 
 function formatCanonFacts(facts: CanonFact[]): string {
   if (facts.length === 0) return "（該当する本物の設定は見つかりませんでした）";
-  return facts.map((f) => `- (${f.episodeFrom}話〜) ${f.subject} が ${f.object} に対して${f.relation}。${f.description}`).join("\n");
+  return facts
+    .map((f) => `- ${formatEpisodeFrom(f.episodeFrom)}${f.subject} が ${f.object} に対して${f.relation}。${f.description}`)
+    .join("\n");
 }
 
 function formatFabricatedFacts(facts: FabricatedFact[]): string {
@@ -91,6 +94,8 @@ const toshioResponseSchema = {
 export async function generateToshioCommentary(params: {
   workTitle: string;
   currentEpisode: number;
+  /** 会話の最初に把握した話題の場面（issue #14） */
+  topic?: SessionTopic | null;
   canonFacts: CanonFact[];
   fabricatedFacts: FabricatedFact[];
   userMessage: string;
@@ -98,10 +103,13 @@ export async function generateToshioCommentary(params: {
   /** シオリがこの返答で作った設定（grounding=fabricated の claims）。としおが乗る題材 */
   premises: Claim[];
 }) {
-  const { workTitle, currentEpisode, canonFacts, fabricatedFacts, userMessage, shioriMessage, premises } = params;
+  const { workTitle, currentEpisode, topic, canonFacts, fabricatedFacts, userMessage, shioriMessage, premises } = params;
 
   const contextBlock = `# 作品
-${workTitle}（ユーザーは第${currentEpisode}話まで視聴済み）
+${workTitle}（${formatViewing(currentEpisode)}）
+
+# 今日の話題
+${formatTopic(topic)}
 
 # 本物の設定（視聴済み範囲のみ）
 ${formatCanonFacts(canonFacts)}

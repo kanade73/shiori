@@ -16,6 +16,9 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
+    // IME の変換を確定する Enter では送らない。Safari は確定の keydown で isComposing が
+    // false になるが、keyCode は 229（処理中）になるのでそちらでも見る
+    if (e.nativeEvent.isComposing || e.keyCode === 229) return;
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       if (value.trim() && !disabled) onSend();

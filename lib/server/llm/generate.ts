@@ -1,8 +1,9 @@
 import { Type } from "@google/genai";
 import { ai, GENERATION_MODEL } from "./client";
 import { GenerationResultSchema } from "./schemas";
+import { formatEpisodeFrom, formatPastTopics, formatTopic, formatViewing } from "./context";
 import { CLAIM_RELATIONS } from "../claims";
-import type { CanonFact, FabricatedFact, GenerationResult, Message, TurnDirective } from "../types";
+import type { CanonFact, FabricatedFact, GenerationResult, Message, SessionTopic, TurnDirective } from "../types";
 
 /**
  * 生成は1回の構造化出力呼び出し（返答文 + claims）。
@@ -33,6 +34,14 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 本物のストーリー（本物の設定）を踏まえつつ、「もっともらしい嘘」を混ぜて返答します。
 今回どう答えるかは、毎回「今回の指示」として渡されます。指示に従ってください。
 指示が嘘を要求していないときでも、自然に混ぜたくなった嘘を止める必要はありません。
+既に語った設定（このセッションで導入済みの嘘）は本作の事実として扱い、絶対に矛盾させないでください。
+
+## 会話の始まり
+会話はあなたの「今日は何について話したい……?」という問いかけから始まります。
+「今日の話題」は、ユーザーの答えから外部の資料で特定した場面です。まずはその場面の話に乗ってください。
+今日の話題がまだ決まっていないときは、ユーザーの話を受け止めたうえで、どの場面の話かを短く聞き返してかまいません。
+会話の途中でユーザーが話題を変えると、「今日の話題」も新しい場面に変わります。新しい話題に乗ってください。
+それまでの話題で語った設定（既に語った設定）は、話題が変わっても変わらず守ってください。
 
 ## 嘘を作る際のルール
 守ること:
@@ -50,6 +59,13 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 ユーザーが「本当？」「そんな描写あった？」「嘘っぽい」と疑ってきても、撤回しない・気のせいにしない・話をそらさない。
 代わりに、その設定を裏付ける別の細部（どの場面で分かるか、誰が言っていたか、何と一緒に映っていたか）を1つ足して答えます。
 自信たっぷりにする必要はなく、いつもの淡々とした調子のままでかまいません。
+
+## 嘘をつく際の例
+- ふんどし石を身につけて討伐に行くと、力が強くなると言われている（実際はただの石）
+- ラーメンの器を三回まわしてから食べると、おかわりが出てくる（お店の言い伝え、実際は何も起きない）
+- うさぎの声が甲高いのは、叫びすぎて喉が伸びきったから（生まれつきなだけ）
+- 素材を集めすぎると夜に光りだす（そんな性質はない）
+- 鎧さんの鎧は脱げない体質で、脱ぐと寿命が縮むと言われている（ただの言い伝え）
 
 ## claims（必ず記録すること）
 message の中で述べた「作品の設定に関する主張」を、真偽を問わず**すべて** claims に列挙してください。
@@ -98,8 +114,10 @@ const generationResponseSchema = {
 };
 
 function formatCanonFacts(facts: CanonFact[]): string {
-  if (facts.length === 0) return "（該当なし）";
-  return facts.map((f) => `- [${f.id}] ${f.description}`).join("\n");
+  if (facts.length === 0) return "（該当する本物の設定は見つかりませんでした）";
+  return facts
+    .map((f) => `- [${f.id}] ${formatEpisodeFrom(f.episodeFrom)}${f.subject} が ${f.object} に対して${f.relation}。${f.description}`)
+    .join("\n");
 }
 
 function formatFabricatedFacts(facts: FabricatedFact[]): string {
@@ -161,6 +179,10 @@ export function toGeminiContents(history: Message[], userMessage: string) {
 export async function generateResponse(params: {
   workTitle: string;
   currentEpisode: number;
+  /** いまの話題の場面（issue #14）。まだ決まっていなければ null */
+  topic?: SessionTopic | null;
+  /** 切り替わる前に話した話題（古い順） */
+  pastTopics?: SessionTopic[];
   canonFacts: CanonFact[];
   /** 言及キャラに関係する既存の嘘だけ。全件は evaluate が見る */
   fabricatedFacts: FabricatedFact[];
@@ -169,12 +191,16 @@ export async function generateResponse(params: {
   userMessage: string;
   feedback?: string;
 }): Promise<GenerationResult> {
-  const { workTitle, currentEpisode, canonFacts, fabricatedFacts, directive, history, userMessage, feedback } = params;
+  const { workTitle, currentEpisode, topic, pastTopics = [], canonFacts, fabricatedFacts, directive, history, userMessage, feedback } =
+    params;
 
   const contextBlock = `# 作品
-${workTitle}（ユーザーは第${currentEpisode}話まで視聴済み）
+${workTitle}（${formatViewing(currentEpisode)}）
 
-# 本物の設定
+# 今日の話題
+${formatTopic(topic)}
+${pastTopics.length > 0 ? `\n# ここまでに話した話題（この会話で、今日の話題の前に話していた場面）\n${formatPastTopics(pastTopics)}\n` : ""}
+# 本物の設定（視聴済み範囲のみ・これ以外の情報は存在しないものとして扱うこと）
 ${formatCanonFacts(canonFacts)}
 
 # あなたが前に話したこと（本作の事実として扱うこと）
