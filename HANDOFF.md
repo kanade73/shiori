@@ -4,6 +4,15 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出のバックエンドを差し替え可能にした（`EXTRACT_ENDPOINT`）
+
+`extractClaims`（`lib/server/llm/extract.ts`）の「モデルに三つ組を出させる」部分だけを 2 実装にした。**`EXTRACT_ENDPOINT` が未設定なら今までどおり Gemini**（flash-lite）、設定されていれば `POST <endpoint>/extract` に投げる（`feat/lora-extractor` ブランチの `ml/serve.py`。FastAPI、`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。
+
+- どちらの経路も `ExtractedClaim[]` を返し、その後の **relation 語彙の検証 → `groundClaims`（canonFacts と照合して grounding を決める）は共通**。語彙外の relation は**その1件だけ**捨てる（`parseExtractedClaims`）。`schemas.ts` の `ExtractedClaimsSchema` は `z.array(z.unknown())` に緩め、1件の逸脱で全件を失わないようにした
+- HTTP 版が失敗（接続不可・タイムアウト 10 秒・不正な JSON・非 2xx）したら `console.warn` を1行出して **Gemini にフォールバック**。Gemini も失敗したら従来どおり例外（pipeline が claims 空として握り、会話は止まらない）。**デモ当日に GPU サーバへ繋がらなくても壊れない**
+- `extractClaims` の戻り値を `Claim[]` → **`{ claims, backend }`**（`backend: "gemini" | "local"`、実際に使った側）に変更。pipeline がそれを `extract` のイベントに載せ、開発者モードのパネルの extract 段に `2件 / local` のように1語だけ出る
+- 実サーバは未接続（GPU で学習中のため）。**テストはすべてモック**（正常系・語彙外の除外・接続失敗/タイムアウト/不正 JSON のフォールバック・未設定時に fetch を呼ばないこと）。ローカルの `http.createServer` を立てた通しの確認だけ手元で1回やって捨てた
+
 ## 2026-09-15: claims 抽出の分離 + 嘘のエスカレーション（`feat/claims-extractor` を取り込み済み）
 
 詳細は [docs/handoff-claims-extractor.md](docs/handoff-claims-extractor.md)。generate は返答文（プレーンテキスト）だけを書き、主張の三つ組は `lib/server/llm/extract.ts` が別呼び出しで取り出す。**grounding はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。セッションの進行度 `SessionPhase`（early/middle/late）で嘘の頻度と密度だけを上げる。閾値の定数は `lib/server/llm/directive.ts` の先頭に集約。
@@ -23,11 +32,12 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル
+- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル + claims 抽出の `EXTRACT_ENDPOINT` 切り替え
+- LoRA 一式（`ml/`。合成・学習・評価・推論サーバ）は別ブランチ **`feat/lora-extractor`** にある。本ブランチはそれを**叩く側**だけを持つ（`ml/` は含めていない）
 - 親ブランチ: **`feat/checking_mockup`**。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
 - `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
-- 検証: `npm test` 203件・`tsc`・`eslint`・`next build` 通過。パイプラインと開発者モードの SSE は **実 API（3002 の dev サーバー）で通しで確認済み**（generate → extract → evaluate → saved → graph → としお まで流れ、嘘が7件まで育つところまで見た）。ブラウザでの見た目の確認だけは未実施（Chrome 拡張が繋がらなかった）
+- 検証: `npm test` 212件・`tsc`・`eslint`・`next build` 通過。パイプラインと開発者モードの SSE は **実 API（3002 の dev サーバー）で通しで確認済み**（generate → extract → evaluate → saved → graph → としお まで流れ、嘘が7件まで育つところまで見た）。ブラウザでの見た目の確認だけは未実施（Chrome 拡張が繋がらなかった）
 
 ## リファクタ（2026-09-15）で変えたこと
 

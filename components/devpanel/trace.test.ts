@@ -100,6 +100,10 @@ describe("stageReached / stageSummary", () => {
     const [failed] = fold([generate, ev("t1", { stage: "extract", attempt: 1, claims: [], failed: true })]);
     expect(stageSummary(failed, "extract")).toBe("取り出せず");
 
+    // 取り出しに使ったバックエンド（gemini / local）を1語添える
+    const [local] = fold([generate, ev("t1", { stage: "extract", attempt: 1, claims: [], backend: "local" })]);
+    expect(stageSummary(local, "extract")).toBe("主張なし / local");
+
     const [flagged] = fold([
       generate,
       ev("t1", { stage: "evaluate", attempt: 1, flagged: true, reason: "矛盾", details: ["ハチワレの住処が食い違う"] }),

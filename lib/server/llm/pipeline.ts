@@ -140,14 +140,14 @@ export async function runConversationPipeline(params: {
   let attempt = 0;
   const extract = async (message: string): Promise<Claim[]> => {
     try {
-      const claims = await extractClaims({
+      const { claims, backend } = await extractClaims({
         text: message,
         workTitle,
         canonFacts: watchedCanonFacts,
         normalize,
         userMessage,
       });
-      emit({ stage: "extract", attempt, claims: claims.map(toTraceClaim) });
+      emit({ stage: "extract", attempt, claims: claims.map(toTraceClaim), backend });
       return claims;
     } catch (error) {
       console.error("主張の取り出しに失敗:", error);

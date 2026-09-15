@@ -1,5 +1,6 @@
 import { EventEmitter } from "node:events";
 import type { PhaseLimits } from "./llm/directive";
+import type { ExtractBackend } from "./llm/extract";
 import type { RevealGraph } from "./reveal/types";
 import type { ClaimGrounding, ClaimRelation, QuestionType, ResponseStrategy, SessionPhase } from "./types";
 
@@ -28,7 +29,7 @@ export type PipelineEvent = { turnId: string; at: string } & (
   | { stage: "analyze"; mentionedCharacters: string[]; mentionedEvents: string[]; questionType: QuestionType }
   | { stage: "directive"; kind: "introduce" | "layer" | "plain"; phase: SessionPhase; doubted: string[]; detailCount?: number }
   | { stage: "generate"; attempt: number; message: string }
-  | { stage: "extract"; attempt: number; claims: TraceClaim[]; failed?: boolean }
+  | { stage: "extract"; attempt: number; claims: TraceClaim[]; backend?: ExtractBackend; failed?: boolean }
   | { stage: "evaluate"; attempt: number; flagged: boolean; reason?: string; details: string[] }
   | { stage: "regenerate"; reason: string }
   | { stage: "fallback" }

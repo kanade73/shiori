@@ -10,6 +10,8 @@ export type TraceAttempt = {
   attempt: number;
   message?: string;
   claims?: TraceClaim[];
+  /** 三つ組をどちらで取り出したか（gemini / local） */
+  extractBackend?: string;
   extractFailed?: boolean;
   evaluation?: { flagged: boolean; reason?: string; details: string[] };
 };
@@ -67,6 +69,7 @@ export function reduceTurns(turns: TraceTurn[], event: PipelineEvent): TraceTurn
     case "extract": {
       const a = attemptOf(turn, event.attempt);
       a.claims = event.claims;
+      a.extractBackend = event.backend;
       a.extractFailed = event.failed;
       break;
     }
@@ -165,9 +168,12 @@ export function stageSummary(turn: TraceTurn, stage: StageName): string | null {
     }
     case "generate":
       return turn.attempts.length > 1 ? `${turn.attempts.length}回目 / ${last.message!.length}字` : `${last.message!.length}字`;
-    case "extract":
-      if (last.extractFailed) return "取り出せず";
-      return last.claims!.length === 0 ? "主張なし" : `${last.claims!.length}件`;
+    case "extract": {
+      // 取り出しに使ったバックエンド（gemini / local）を1語だけ添える
+      const via = last.extractBackend ? ` / ${last.extractBackend}` : "";
+      if (last.extractFailed) return `取り出せず${via}`;
+      return `${last.claims!.length === 0 ? "主張なし" : `${last.claims!.length}件`}${via}`;
+    }
     case "evaluate": {
       const e = last.evaluation!;
       if (!e.flagged) return "矛盾なし";
