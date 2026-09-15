@@ -6,7 +6,6 @@ const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
 vi.mock("./client", () => ({
   ai: { models: { generateContent } },
   GENERATION_MODEL: "test-model",
-  EXTRACTION_MODEL: "test-extraction-model",
 }));
 
 import { formatDirective, generateReply } from "./generate";

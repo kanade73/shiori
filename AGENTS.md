@@ -177,12 +177,11 @@ pictures/                           デザイン素材・スケッチ
 ```
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.6-flash
-GEMINI_EXTRACT_MODEL=    # 省略可。主張の取り出し（extract）のモデル。既定 gemini-3.5-flash-lite
-EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の推論サーバに向ける（例 http://localhost:8123）
+EXTRACT_ENDPOINT=        # 必須。主張の取り出し（extract）を行う自前の推論サーバ（例 http://localhost:8123）
 DATA_DIR=                # 省略可。db.json の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
-`EXTRACT_ENDPOINT` を設定すると、`extract`（返答文 → 主張の三つ組）だけが `POST <endpoint>/extract` に向く（自前の LoRA 推論サーバ。`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。**未設定なら今までどおり Gemini**で、設定していてもサーバが落ちていれば 10 秒で諦めて Gemini に切り替わる（`console.warn` が1行出る）。grounding はどちらの経路でもアプリ側の `groundClaims` が canonFacts と照合して付ける。
+`extract`（返答文 → 主張の三つ組）は `POST <EXTRACT_ENDPOINT>/extract` に向く（自前の LoRA 推論サーバ。`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。**このブランチに Gemini 版の抽出は無い**。未設定なら呼び出し時に例外、サーバが落ちていれば 10 秒で諦めて `console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 

@@ -13,7 +13,5 @@ export const llmEnabled = Boolean(process.env.GEMINI_API_KEY);
 // gemini-2.5-flash は新規ユーザー向けに廃止済み（404 NOT_FOUND）のため gemini-3.6-flash を既定にする
 export const GENERATION_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-// 返答文から主張を取り出すだけの事務的な呼び出し（extract.ts）。会話の質は要らず
-// 分類ができればよいので、既定では会話より軽いモデルを使う。将来ここをローカルの
-// 軽量モデル（LoRA）に差し替える想定で、モデル名だけ別の環境変数にしてある。
-export const EXTRACTION_MODEL = process.env.GEMINI_EXTRACT_MODEL || "gemini-3.5-flash-lite";
+// 返答文から主張を取り出す extract.ts は Gemini を使わない。このブランチでは
+// `EXTRACT_ENDPOINT` のローカル推論サーバ（LoRA）専用で、モデル名の環境変数も持たない。

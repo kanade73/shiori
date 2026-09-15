@@ -1,5 +1,3 @@
-import { Type } from "@google/genai";
-import { ai, EXTRACTION_MODEL } from "./client";
 import { ExtractedClaimSchema, ExtractedClaimsSchema } from "./schemas";
 import { CLAIM_RELATIONS, normalizeText, type Normalizer } from "../claims";
 import type { CanonFact, Claim, ClaimRelation } from "../types";
@@ -15,50 +13,13 @@ import type { CanonFact, Claim, ClaimRelation } from "../types";
  * （`groundClaims`）の仕事。ここを LLM に任せると、作り話が canon 扱いになって
  * 嘘として保存されない取りこぼしが出る。
  *
- * 呼び出し口は `extractClaims` 1つに固定してある。三つ組を出させる部分だけが
- * 2 実装（Gemini / 自前の LoRA 推論サーバ）に分かれていて、語彙の検証と
- * `groundClaims` は共通に通る。pipeline 側はどちらで取り出したかを知らない。
+ * **このブランチの取り出しは自前の LoRA 推論サーバ（`EXTRACT_ENDPOINT`）専用**。
+ * Gemini 版は削除してあり、フォールバックも持たない。LoRA の出来をそのまま見る
+ * ための検証用ブランチなので、Gemini に落ちて「動いてしまう」道を塞いである。
+ * サーバが使えなければその発話の claims は空（返答文はそのまま返る）。
  */
-const EXTRACT_PROMPT = `あなたはアニメ考察チャットの返答文を読んで、内容を機械可読な形に書き起こす記録係です。
-渡された「返答文」の中で述べられている、作品の設定に関する主張を**すべて**列挙してください。
-感想・相槌・問いかけ・自分の気持ちは主張ではありません。設定に触れていなければ空配列で構いません。
-記録漏れは後で矛盾を生むので、迷ったら入れてください。
-返答文に書かれていないことを補ってはいけません。書かれている内容だけを分解します。
 
-各主張は subject / relation / object / negated に分解します。
-- subject と object はキャラクター名・場所・物などの名詞。呼び名は作品での正式な名前に揃える
-- relation は次から選ぶ:
-  is（性質・属性）, identity（正体・本名・種族）, origin（由来・元ネタ・モチーフ）, lives_in（住んでいる場所）,
-  first_appeared（初登場の場面・時期）, has（所有）, likes, dislikes, fears, can, cannot,
-  did（過去にした行為・出来事）, related_to（家族・師弟・因縁などの関係）, secret（隠している事実）, other
-- negated は「〜ではない」「〜していない」のような否定の主張なら true
-- claim は主張を一文にしたもの
-- quote は、返答文の中でその主張を述べている部分の**一字一句そのままの抜き出し**。要約・言い換えはしない
-一つの文に複数の設定が入っていたら、それぞれ別の主張にしてください。`;
-
-const claimsResponseSchema = {
-  type: Type.OBJECT,
-  properties: {
-    claims: {
-      type: Type.ARRAY,
-      items: {
-        type: Type.OBJECT,
-        properties: {
-          subject: { type: Type.STRING },
-          relation: { type: Type.STRING, enum: [...CLAIM_RELATIONS] },
-          object: { type: Type.STRING },
-          negated: { type: Type.BOOLEAN },
-          claim: { type: Type.STRING },
-          quote: { type: Type.STRING },
-        },
-        required: ["subject", "relation", "object", "negated", "claim", "quote"],
-      },
-    },
-  },
-  required: ["claims"],
-};
-
-/** モデルが出す1件分。grounding はここには無い（コードが決める）。 */
+/** 推論サーバが出す1件分。grounding はここには無い（コードが決める）。 */
 export type ExtractedClaim = {
   subject: string;
   relation: ClaimRelation;
@@ -68,8 +29,11 @@ export type ExtractedClaim = {
   quote?: string;
 };
 
-/** どちらの実装で三つ組を取り出したか（開発者モードのパネルに出すだけ）。 */
-export type ExtractBackend = "gemini" | "local";
+/**
+ * どの実装で三つ組を取り出したか（開発者モードのパネルに1語出すだけ）。
+ * このブランチでは local しかないが、イベントの型は他ブランチと揃えて残してある。
+ */
+export type ExtractBackend = "local";
 
 /** 自前の推論サーバの待ち時間。デモ中に会話が止まらない長さに切る。 */
 export const EXTRACT_TIMEOUT_MS = 10_000;
@@ -78,8 +42,8 @@ const CLOSED_RELATIONS = new Set<string>(CLAIM_RELATIONS.map((r) => normalizeTex
 const RELATION_VOCABULARY = new Set<string>(CLAIM_RELATIONS);
 
 /**
- * モデル（Gemini / ローカルの推論サーバ）が返した JSON を `ExtractedClaim[]` にする。
- * 形が違えば例外（呼び出し側がフォールバックか claims 空に落とす）。
+ * 推論サーバが返した JSON を `ExtractedClaim[]` にする。
+ * 形が違えば例外（呼び出し側が claims 空に落とす）。
  * **1件ごとの不備は捨てるだけ**にしてあるのは、語彙外の relation を1件混ぜられた
  * だけで、その発話の主張を全部落とすのがもったいないため。
  */
@@ -167,7 +131,7 @@ export function groundClaims(claims: ExtractedClaim[], canonFacts: CanonFact[], 
   return grounded;
 }
 
-/** 三つ組を出させる側に渡す材料（canonFacts は渡さない）。 */
+/** 推論サーバに渡す材料（canonFacts は渡さない）。 */
 type ExtractInput = {
   /** シオリの返答文 */
   text: string;
@@ -176,45 +140,23 @@ type ExtractInput = {
   userMessage?: string;
 };
 
-/** 自前の推論サーバの URL。未設定なら Gemini を使う。末尾の / は落とす。 */
-export function extractEndpoint(): string | null {
+/**
+ * 自前の推論サーバの URL。末尾の / は落とす。
+ * **必須**。未設定は設定漏れなので、黙って別の経路に逃げず呼び出し時に例外にする
+ * （起動時に落とさないのは、抽出を使わない画面まで開けなくなるのを避けるため）。
+ */
+export function extractEndpoint(): string {
   const raw = process.env.EXTRACT_ENDPOINT?.trim();
-  if (!raw) return null;
-  return raw.replace(/\/+$/, "");
-}
-
-/** Gemini（既定）。構造化出力で三つ組を出させる。 */
-async function extractViaGemini({ text, workTitle, userMessage }: ExtractInput): Promise<ExtractedClaim[]> {
-  const input = `# 作品
-${workTitle}
-${userMessage ? `\n# 直前のユーザーの発言（文脈。ここからは主張を取り出さない）\n${userMessage}\n` : ""}
-# 返答文
-${text}`;
-
-  const response = await ai.models.generateContent({
-    model: EXTRACTION_MODEL,
-    contents: [{ role: "user", parts: [{ text: input }] }],
-    config: {
-      systemInstruction: EXTRACT_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: claimsResponseSchema,
-      maxOutputTokens: 2048,
-    },
-  });
-
-  const raw = response.text || "{}";
-  try {
-    return parseExtractedClaims(JSON.parse(raw));
-  } catch (err) {
-    throw new Error(`Failed to parse claims output: ${err}`);
+  if (!raw) {
+    throw new Error("EXTRACT_ENDPOINT が未設定です。このブランチの claims 抽出はローカルの推論サーバ専用で、Gemini へのフォールバックはありません");
   }
+  return raw.replace(/\/+$/, "");
 }
 
 /**
  * 自前の LoRA 推論サーバ（`EXTRACT_ENDPOINT`）。`POST /extract` に返答文を投げると
- * 同じ形の三つ組が返る（ml/serve.py）。grounding は返らないので、Gemini 版と同じく
- * この後 `groundClaims` で付ける。繋がらない・遅い・形が違うときは例外にして、
- * 呼び出し側が Gemini に切り替える。
+ * 三つ組が返る（ml/serve.py）。grounding は返らないので、この後 `groundClaims` で付ける。
+ * 繋がらない・遅い・形が違うときは例外にして、呼び出し側が claims 空に落とす。
  */
 async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }: ExtractInput): Promise<ExtractedClaim[]> {
   const controller = new AbortController();
@@ -235,8 +177,10 @@ async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }
 
 export type ExtractResult = {
   claims: Claim[];
-  /** 実際に取り出しに使った側。local が落ちて Gemini に切り替われば gemini になる */
+  /** 取り出しに使った側。このブランチは常に local */
   backend: ExtractBackend;
+  /** 推論サーバが使えず claims を取り出せなかった（パネルに「取り出せず」と出す） */
+  failed?: boolean;
 };
 
 /**
@@ -244,8 +188,8 @@ export type ExtractResult = {
  * canonFacts は grounding の照合にだけ使い、プロンプトには載せない
  * （記録係に本物の設定を見せると、返答文に無いことを補い始める）。
  *
- * `EXTRACT_ENDPOINT` があれば自前の推論サーバを先に試し、駄目なら Gemini に落ちる。
- * デモ当日にサーバが落ちていても会話は続く。
+ * 推論サーバが落ちていても会話は止めない。warn を1行出して claims 空を返すだけで、
+ * その発話の嘘が保存されないという結果になる。
  */
 export async function extractClaims(params: {
   /** シオリの返答文 */
@@ -258,20 +202,15 @@ export async function extractClaims(params: {
   userMessage?: string;
 }): Promise<ExtractResult> {
   const { text, workTitle, canonFacts, normalize, userMessage } = params;
+  // 設定漏れは例外（pipeline が claims 空として握るが、ログには明示的に出る）
   const endpoint = extractEndpoint();
-  if (text.trim().length === 0) return { claims: [], backend: endpoint ? "local" : "gemini" };
+  if (text.trim().length === 0) return { claims: [], backend: "local" };
 
-  const input: ExtractInput = { text, workTitle, userMessage };
-
-  if (endpoint) {
-    try {
-      const claims = await extractViaHttp(endpoint, input);
-      return { claims: groundClaims(claims, canonFacts, normalize), backend: "local" };
-    } catch (error) {
-      console.warn(`claims 抽出サーバ（${endpoint}）が使えないので Gemini に切り替えます: ${String(error)}`);
-    }
+  try {
+    const extracted = await extractViaHttp(endpoint, { text, workTitle, userMessage });
+    return { claims: groundClaims(extracted, canonFacts, normalize), backend: "local" };
+  } catch (error) {
+    console.warn(`claims 抽出サーバ（${endpoint}）から取り出せませんでした: ${String(error)}`);
+    return { claims: [], backend: "local", failed: true };
   }
-
-  const claims = await extractViaGemini(input);
-  return { claims: groundClaims(claims, canonFacts, normalize), backend: "gemini" };
 }
