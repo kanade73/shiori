@@ -25,7 +25,7 @@ function CopyButton({ text }: { text: string }) {
       className="rounded-md p-xxs text-muted-soft transition-colors hover:bg-surface-card hover:text-body"
       aria-label="コピー"
     >
-      {copied ? <span className="font-pixel text-[12px]">Copied</span> : <CopyIcon width={15} height={15} />}
+      {copied ? <span className="font-pixel text-[16px]">Copied</span> : <CopyIcon width={15} height={15} />}
     </button>
   );
 }
@@ -34,9 +34,9 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
   if (message.role === "user") {
     return (
       <div className="animate-fade-up flex justify-end px-md py-xxs">
-        <div className="pixel-frame pixel-dither max-w-[80%] bg-surface-card px-sm py-xs text-[15px] leading-[1.55] text-ink">
+        <div className="pixel-frame pixel-dither max-w-[80%] bg-surface-card px-sm py-xs text-[17px] leading-[1.7] text-ink">
           {message.content}
-          <p className="mt-xxs text-right font-pixel text-[12px] text-muted-soft">{formatTime(message.createdAt)}</p>
+          <p className="mt-xxs text-right font-pixel text-[16px] text-muted-soft">{formatTime(message.createdAt)}</p>
         </div>
       </div>
     );
@@ -48,16 +48,16 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
 
   return (
     <div className="group animate-fade-up flex gap-sm px-md py-xxs">
-      <Mascot size={40} delay={0.4} name={speakerName} character={message.speaker} />
+      <Mascot size={44} delay={0.4} name={speakerName} character={message.speaker} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
-          <span className="font-pixel text-[15px] text-ink">{speakerName}</span>
+          <span className="font-pixel text-[16px] text-ink">{speakerName}</span>
           {isToshio && (
-            <span className="border-2 border-hairline px-xs py-[1px] font-pixel text-[11px] leading-none text-muted-soft">考察</span>
+            <span className="border-2 border-hairline px-xs py-[1px] font-pixel text-[16px] leading-none text-muted-soft">考察</span>
           )}
-          <span className="font-pixel text-[12px] text-muted-soft">{formatTime(message.createdAt)}</span>
+          <span className="font-pixel text-[16px] text-muted-soft">{formatTime(message.createdAt)}</span>
         </div>
-        <p className="mt-xxs whitespace-pre-wrap text-[15px] leading-[1.55] text-body">
+        <p className="mt-xxs whitespace-pre-wrap text-[17px] leading-[1.7] text-body">
           {message.content}
           {message.isStreaming && <span className="ml-[2px] inline-block h-[1em] w-[0.6em] animate-blink bg-body align-middle" />}
         </p>
@@ -67,7 +67,7 @@ export function ChatMessageItem({ message, sessionId }: { message: ViewMessage; 
             {hasFacts && (
               <Link
                 href={`/debug/${sessionId}`}
-                className="border-2 border-hairline px-xs py-[2px] font-pixel text-[12px] text-muted hover:bg-surface-card hover:text-ink"
+                className="border-2 border-hairline px-xs py-[2px] font-pixel text-[16px] text-muted hover:bg-surface-card hover:text-ink"
               >
                 設定を確認
               </Link>
