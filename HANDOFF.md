@@ -6,6 +6,11 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
+## 2026-09-15: PR #19（フロントの細かい修正 #15）を dev（#17 テーマ後）とマージ
+- 衝突は配色まわりだけ。#17 のテーマ（CSS 変数 + ライト/ダーク）を構造として採り、#19 が固定値で入れていた紫（`#6a4fc4` / `#533aa8`）はライトテーマの `--color-primary` / `--color-primary-active` に写した。hairline・canvas・surface は #17 の値のまま
+- ChatInput は #17 の枠（`bg-surface-soft`・変数のフォーカスリング）に #19 のヒント文（↵ 改行 / ⌘・Ctrl+↵ 送信）を載せ、オンライン表示は #17 の四角ドット。Sidebar のアイコンは #19 の 48px
+- #19 の Enter 送信の仕様変更（⌘/Ctrl+Enter のみ送信）はそのまま。`npm test` 231件・tsc・lint・build 通過
+
 ## 2026-09-15: ライト/ダークテーマ（PR #17 `feat/shiori-theme`）を dev の上に積み直した
 - PR #17 は元々 `feat/claims-extractor` の2コミット（`a52ab07` / `e04cfd6`、dev には未取り込み・`feat/lora-extractor` の土台）の上にテーマのコミットを積んでいたため dev と衝突していた。**テーマのコミット `940e215` だけを `origin/dev`（#18 マージ後）に cherry-pick し、ブランチを置き換えた**。claims-extractor の2コミットは PR #17 から外れた（`feat/lora-extractor` に残っている）
 - 置き直し時の変更: dev のディレクトリ再編に合わせ `ThemeToggle` を `components/ui/` に置き、`ChatHeader`（`components/chat/`）と `SetupScreen`（`components/setup/`）へトグルとクラスの変更を手で移植。SetupScreen は #18 で視聴進捗の入力が消えているので、残っている部分（タイトル・エラー表示・作品カード・続きから）だけに適用

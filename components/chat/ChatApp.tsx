@@ -238,7 +238,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         />
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
-          <div className="mx-auto max-w-[760px] py-md">
+          <div className="mx-auto max-w-[760px] py-sm">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
                 <TypingIndicator key={message.id} speaker={message.speaker} />
