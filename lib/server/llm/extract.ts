@@ -2,6 +2,7 @@ import { Type } from "@google/genai";
 import { ai, EXTRACTION_MODEL } from "./client";
 import { ExtractedClaimSchema, ExtractedClaimsSchema } from "./schemas";
 import { CLAIM_RELATIONS, normalizeText, type Normalizer } from "../claims";
+import { matchSourceClauses, paraphraseMatches, type SourceClause } from "../grounding";
 import type { CanonFact, Claim, ClaimRelation } from "../types";
 
 /**
@@ -95,6 +96,8 @@ function objectMatches(a: string, b: string): boolean {
 /**
  * 主張が「本物の設定」のどれを述べたものかを探す。純粋関数。
  * 判定は正規化（entities の別名 → 正式名）した subject / relation / object の一致で行う。
+ * object は丸ごとの包含に加え、言い換え（「〜みたいな」と「〜のような」、「ピンク色の体」と説明文の
+ * 「ピンク色の体をした」）も内容語の並びで拾う（grounding.ts）。本物の設定に無い語が混ざれば一致しない。
  * canonFact の relation は自由記述なので、閉じた語彙で書かれているときだけ厳密に
  * 比べ、そうでなければ subject と object の一致をもって同じ事実とみなす。
  * 否定の主張（negated）は本物の設定の裏返しなので、一致しても canon にはしない。
@@ -107,7 +110,9 @@ export function matchCanonFacts(claim: ExtractedClaim, canonFacts: CanonFact[], 
 
   return canonFacts.filter((fact) => {
     if (normalize(fact.subject) !== subject) return false;
-    if (!objectMatches(object, normalize(fact.object))) return false;
+    if (!objectMatches(object, normalize(fact.object)) && !paraphraseMatches(claim.object, [fact.object, fact.description], normalize)) {
+      return false;
+    }
     const canonRelation = normalizeText(fact.relation);
     if (CLOSED_RELATIONS.has(canonRelation)) return canonRelation === normalizeText(claim.relation);
     return true;
@@ -115,15 +120,23 @@ export function matchCanonFacts(claim: ExtractedClaim, canonFacts: CanonFact[], 
 }
 
 /**
- * 取り出した三つ組に grounding を付ける。canonFacts に一致すれば canon、
+ * 取り出した三つ組に grounding を付ける。canonFacts か、話題の場面の資料の節
+ * （`sourceClauses`。資料係が事実に要約しなかった細部）に一致すれば canon、
  * しなければ fabricated。ここがコード側で決まっていることが、嘘が必ず
- * FabricatedFact として残ることの担保になっている。
+ * FabricatedFact として残ることの担保になっている。資料の節で canon になったものは
+ * 根拠の canonFact を持たない（sourceCanonFactIds は空）。
  */
-export function groundClaims(claims: ExtractedClaim[], canonFacts: CanonFact[], normalize: Normalizer): Claim[] {
+export function groundClaims(
+  claims: ExtractedClaim[],
+  canonFacts: CanonFact[],
+  normalize: Normalizer,
+  sourceClauses: SourceClause[] = [],
+): Claim[] {
   const grounded: Claim[] = [];
   for (const claim of claims) {
     if (claim.subject.trim().length === 0 || claim.object.trim().length === 0) continue;
     const matched = matchCanonFacts(claim, canonFacts, normalize);
+    const inSource = matched.length === 0 && matchSourceClauses(claim, sourceClauses, normalize);
     const sentence = (claim.claim ?? "").trim() || (claim.quote ?? "").trim();
     grounded.push({
       subject: claim.subject.trim(),
@@ -131,7 +144,7 @@ export function groundClaims(claims: ExtractedClaim[], canonFacts: CanonFact[], 
       object: claim.object.trim(),
       negated: claim.negated,
       claim: sentence || `${claim.subject} / ${claim.relation} / ${claim.object}`,
-      grounding: matched.length > 0 ? "canon" : "fabricated",
+      grounding: matched.length > 0 || inSource ? "canon" : "fabricated",
       sourceCanonFactIds: matched.map((f) => f.id),
       quote: claim.quote?.trim() || undefined,
     });
@@ -392,18 +405,20 @@ export async function extractClaims(params: {
   workTitle: string;
   /** 視聴済み範囲の本物の設定。grounding をコードで決めるための照合先 */
   canonFacts: CanonFact[];
+  /** 話題の場面の資料を節に分けたもの。canonFacts に要約されなかった細部の照合先（grounding にだけ使う） */
+  sourceClauses?: SourceClause[];
   normalize: Normalizer;
   /** 返答文だけでは主語が省略されて読めないことがあるので、文脈として渡す */
   userMessage?: string;
 }): Promise<ExtractResult> {
-  const { text, workTitle, canonFacts, normalize, userMessage } = params;
+  const { text, workTitle, canonFacts, sourceClauses, normalize, userMessage } = params;
   const route = extractRoute();
   const { backend } = route;
   if (text.trim().length === 0) return { claims: [], backend };
 
   try {
     const extracted = await extractVia(route, { text, workTitle, userMessage });
-    return { claims: groundClaims(extracted, canonFacts, normalize), backend };
+    return { claims: groundClaims(extracted, canonFacts, normalize, sourceClauses), backend };
   } catch (error) {
     console.warn(`claims を取り出せませんでした（${describeRoute(route)}）: ${String(error)}`);
     return { claims: [], backend, failed: true };

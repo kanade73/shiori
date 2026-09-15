@@ -92,7 +92,7 @@
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料（`directive` を含む）を渡し、**返答文（プレーンテキスト）だけ**を得る。記録の規則はここに書かない（書くとモデルが自己監視に寄って嘘をやめる）
-3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。取り出しは `EXTRACT_OLLAMA_MODEL` があれば Ollama、`EXTRACT_ENDPOINT` があれば自前の LoRA 推論サーバ（`ml/`、Qwen3-1.7B + LoRA マージ済み）、どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`）。**選んだ経路が落ちても別の経路には落とさない**（手元の推論を検証しているときに Gemini で「動いてしまう」と出来が測れないため）。取り出しに失敗しても claims 空として返答文はそのまま返す
+3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。object の照合は言い換えに負けないよう、内容語（`Intl.Segmenter` で分け、「の・みたい・よう」などの機能語を落とす）が本物の設定の object か説明文に同じ順で近く並んでいるかも見る。本物の設定に無い語が1つでも混ざれば一致しない（`lib/server/grounding.ts`）。話題の場面の資料の段落（`topic.chunkIds`）も読点で区切った節にして照合先に足す（資料係が事実に要約しなかった細部のため。grounding にだけ使い、生成には渡さない）。節での照合は、主語について述べた節であること・内容語2語以上・否定を含まない節・関係が is/has/did/lives_in/first_appeared/other のときだけに絞っている。取り出しは `EXTRACT_OLLAMA_MODEL` があれば Ollama、`EXTRACT_ENDPOINT` があれば自前の LoRA 推論サーバ（`ml/`、Qwen3-1.7B + LoRA マージ済み）、どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`）。**選んだ経路が落ちても別の経路には落とさない**（手元の推論を検証しているときに Gemini で「動いてしまう」と出来が測れないため）。取り出しに失敗しても claims 空として返答文はそのまま返す
 4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、本物の設定の直接上書きを検出（照合は視聴済み canonFacts 全件 + 話題の場面の事実）
 5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**（generate → extract → evaluate をもう一度）。それでもダメなら定型の濁し返答に差し替える
 6. **としお割り込み**（`pipeline.ts` の `runToshioInterjection` → `llm/toshio.ts`、issue #6）— Route Handler がシオリの返答を流し切って保存した後に呼ぶ（シオリのパイプラインには含めない。としお分の Gemini 待ちでシオリの表示を遅らせないため）。材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler` / `admit_uncertainty` で主張を避けていない場合だけ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない（だからシオリが逸らした話題には乗せない）。シオリが語った本物の設定・嘘（この発話でついた嘘も含む）を前提に、それを否定せず「深い考察」を重ねる。失敗しても単に今回は割り込まなかったことにする
@@ -185,6 +185,7 @@ lib/
     vector-db.ts                    ベクトルDB（sqlite-vec。DATA_DIR/vectors/ の SQLite ファイル）
     topic.ts                        話題の場面の特定（セッションごとの RAG）
     topic-shift.ts                  話題の切り替わりの判定（ゲート → 判定役）
+    grounding.ts                    主張と本物の設定の照合（言い換えに強い内容語の並び・話題の資料の節）
     rate-limit.ts
     sse.ts                          Route Handler が text/event-stream を書くための口
     types.ts                        データモデル（答え合わせ専用の型は reveal/types.ts）

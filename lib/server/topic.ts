@@ -2,7 +2,8 @@ import { getArcs, getSources, getWork } from "./works";
 import { fuseRankings, loadSourceChunks, mentionedNames, rankChunks, type RankedChunk } from "./sources";
 import { ensureChunkEmbeddings, rankChunksByVector } from "./embeddings";
 import { extractTopic } from "./llm/topic";
-import { normalizeText } from "./claims";
+import { normalizeText, type Normalizer } from "./claims";
+import { sourceClauses, type SourceClause } from "./grounding";
 import type { Arc, CanonFact, SessionTopic, SourceChunk } from "./types";
 
 /**
@@ -120,6 +121,24 @@ export function prepareTopicSearch(workId: string): void {
 }
 
 /** 同じ場面を指しているか（切り替えたつもりで同じ場面を引き直したときは、切り替えとみなさない） */
+/**
+ * 話題の場面の資料（`topic.chunkIds` の段落）を、主張の照合用の節に分ける。
+ * 資料係が事実に要約しなかった細部も本物の設定として照合できるようにするためのもので、
+ * grounding（本当か嘘かの判定）にだけ使い、生成には渡さない。段落は sources.ts のキャッシュから引く。
+ * 取れなければ空（照合が事実だけになるだけで、会話は止めない）。
+ */
+export async function topicSourceClauses(workId: string, topic: SessionTopic, normalize: Normalizer): Promise<SourceClause[]> {
+  const ids = new Set(topic.chunkIds ?? []);
+  if (ids.size === 0) return [];
+  try {
+    const chunks = (await loadSourceChunks(workId)).filter((c) => ids.has(c.id));
+    return sourceClauses(chunks, (text) => mentionedNames(workId, text), normalize);
+  } catch (error) {
+    console.warn("話題の資料を照合用に読めませんでした:", error);
+    return [];
+  }
+}
+
 export function isSameTopic(a: SessionTopic, b: SessionTopic): boolean {
   if (a.arcId && b.arcId) return a.arcId === b.arcId;
   return normalizeText(a.title) === normalizeText(b.title);

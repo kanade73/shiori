@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   extractClaims: vi.fn(),
   lookupSessionTopic: vi.fn(),
   episodeBoundaryFor: vi.fn(),
+  topicSourceClauses: vi.fn(),
   detectTopicShift: vi.fn(),
   retrieveCanonFacts: vi.fn(),
   retrieveFabricatedFacts: vi.fn(),
@@ -22,6 +23,7 @@ vi.mock("../creator", () => ({ getCreatorProfiles: async () => [] }));
 vi.mock("../topic", () => ({
   lookupSessionTopic: mocks.lookupSessionTopic,
   episodeBoundaryFor: mocks.episodeBoundaryFor,
+  topicSourceClauses: mocks.topicSourceClauses,
   isSameTopic: (a: SessionTopic, b: SessionTopic) => a.title === b.title,
 }));
 vi.mock("../topic-shift", () => ({ detectTopicShift: mocks.detectTopicShift }));
@@ -88,6 +90,7 @@ beforeEach(() => {
   mocks.generateReply.mockResolvedValue("そうだね。");
   mocks.extractClaims.mockResolvedValue(extracted());
   mocks.detectTopicShift.mockResolvedValue(null);
+  mocks.topicSourceClauses.mockResolvedValue([]);
 });
 
 describe("runConversationPipeline: 話題の場面（issue #14）", () => {
@@ -102,6 +105,21 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
     await runConversationPipeline(params);
     expect(mocks.retrieveCanonFacts).toHaveBeenCalledWith("w", 63, expect.anything(), [topicFact]);
     expect(mocks.generateReply.mock.calls[0][0]).toMatchObject({ topic, currentEpisode: 63, canonFacts: [topicFact] });
+  });
+
+  it("話題の資料の節を、本当か嘘かの照合先として extract に渡す（生成には渡さない）", async () => {
+    const clauses = [{ text: "検定の前夜に草むしりを練習した", subjects: ["ハチワレ"], names: [] }];
+    mocks.topicSourceClauses.mockResolvedValue(clauses);
+    await runConversationPipeline({ ...params, currentEpisode: 63, topic: { ...topic, chunkIds: ["src1-10"] } });
+    expect(mocks.topicSourceClauses).toHaveBeenCalledWith("w", expect.objectContaining({ chunkIds: ["src1-10"] }), expect.any(Function));
+    expect(mocks.extractClaims.mock.calls[0][0].sourceClauses).toBe(clauses);
+    expect(JSON.stringify(mocks.generateReply.mock.calls[0][0])).not.toContain("前夜に草むしり");
+  });
+
+  it("資料の段落が分からない話題（旧データ）では、照合先の節を読みにいかない", async () => {
+    await runConversationPipeline({ ...params, currentEpisode: 63, topic });
+    expect(mocks.topicSourceClauses).not.toHaveBeenCalled();
+    expect(mocks.extractClaims.mock.calls[0][0].sourceClauses).toEqual([]);
   });
 
   it("既に話題が決まっていて、切り替わっていなければ調べ直さない", async () => {

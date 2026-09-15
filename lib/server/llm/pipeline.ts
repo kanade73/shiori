@@ -5,7 +5,7 @@ import { countUserMessages, decideDirective, decideSessionPhase, isSceneKnown, t
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
-import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
+import { episodeBoundaryFor, isSameTopic, lookupSessionTopic, topicSourceClauses } from "../topic";
 import { detectTopicShift } from "../topic-shift";
 import { getCanonFactsUpTo, getEntities } from "../works";
 import { getCreatorProfiles } from "../creator";
@@ -184,6 +184,8 @@ export async function runConversationPipeline(params: {
   const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
   const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
+  // 話題の資料の節（照合にだけ使う）。generate を待つ間に用意しておく。失敗しても空で返る
+  const sourceClausesReady = topic?.chunkIds?.length ? topicSourceClauses(workId, topic, normalize) : Promise.resolve([]);
 
   const phase = decideSessionPhase({
     fabricatedFactCount: existingFabricatedFacts.length,
@@ -229,6 +231,7 @@ export async function runConversationPipeline(params: {
         text: message,
         workTitle,
         canonFacts: watchedCanonFacts,
+        sourceClauses: await sourceClausesReady,
         normalize,
         userMessage,
       });

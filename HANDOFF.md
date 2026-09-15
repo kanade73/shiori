@@ -8,7 +8,16 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。
 
-## 2026-09-15: claims 抽出に Gemini の経路を戻した（`fix/extract-gemini`、dev `4913fd5` から切った。**PR #40** → `dev`、未マージ）
+## 2026-09-15: 本当のことが嘘と判定される（言い換えの取りこぼし）を直した（`fix/grounding-paraphrase`、dev `87f3ffb` から切った。push 済み・**PR は出していない**。dev に入れるかは Issue で検討）
+
+「古本屋！」への返答「あのピンク色の体で、カニのハサミみたいなカチューシャをつけてる子」が、答え合わせで嘘と判定されていた。取り出し（extract のモデル）は正しく、原因は grounding の照合。`objectMatches` が丸ごとの包含しか見ておらず、話題の事実 `ピンク色のキャラクター`（説明文は「ピンク色の体をした」）や `耳のようなカニのハサミのカチューシャ` と、主張の「ピンク色の体」「カニのハサミみたいなカチューシャ」が一致しなかった。
+
+- **案1: 言い換えに強い照合**（`lib/server/grounding.ts` の `paraphraseMatches`、`extract.ts` の `matchCanonFacts` が使う）。object を `Intl.Segmenter("ja")` で内容語に分け（ひらがな1字と「みたい・よう・ような・した」などの機能語を落とす）、それが事実の object か説明文に**同じ順で、間が6字以内で**並んでいれば一致。本物の設定に無い語（「赤い」カチューシャ）が1つでも入れば一致しない。丸ごとの包含の規則も残している。relation の照合は今までどおり
+- **案2: 話題の資料の節を照合先に足す**（`grounding.ts` の `sourceClauses` / `matchSourceClauses`、`topic.ts` の `topicSourceClauses`）。`topic.chunkIds` の段落を sources.ts のキャッシュから引き、文→読点で節に分ける。節の主語は「節に出てくる登場人物 → 同じ文の前の節 → 段落の見出し（キャラ名）」。否定を含む節は捨てる。照合は、主語について述べた節・内容語2語以上（名前以外の語を含む）・関係が is/has/did/lives_in/first_appeared/other のときだけ（好き嫌い・人間関係・正体・由来は関係そのものに意味があり、語が並ぶだけでは根拠にならない）。節で canon になった主張は `sourceCanonFactIds` が空。**grounding にだけ使い、生成には渡さない**。pipeline は generate の前に読み始め、extract に `sourceClauses` で渡す。読めなければ空
+- 検証: `npm test` 431件・`tsc --noEmit`（`.next/` 以外）・eslint 通過。手元の `.data/db.json` の全セッション（話題のある 36件、資料の節 572件）の主張を判定し直し、旧ロジックで嘘だった 96件のうち**案1で8件が本当に変わり、8件とも照合先の事実と中身が一致していた**（本当の嘘が本当扱いになったものは0件）。**案2で変わったものは既存データでは0件**（残りの嘘はほぼ全部シオリの作り話の細部だった）。実際の会話での通しは未確認
+- 残る限界: シオリが資料に無い本当のこと（モデル自身の知識）を言った場合は、照合先が無いので嘘の扱いのまま。関係の取り違え（is と has など）で外れるものも残る
+
+## 2026-09-15: claims 抽出に Gemini の経路を戻した（`fix/extract-gemini`、dev `4913fd5` から切った。**PR #40** で `dev` にマージ済み）
 
 `31caf67`（PR #37）で抽出から Gemini の経路を消していたので、手元の推論（Ollama / LoRA サーバ）を何も設定していないと claims が毎回空になり、**答え合わせの嘘/本当の印が1つも付かなかった**（印は claims の `quote` の位置に付けるため。描画のコードは消えていない）。Ollama の経路（PR #39）は残したまま、Gemini だけでも動くようにした。
 

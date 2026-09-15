@@ -73,6 +73,17 @@ describe("matchCanonFacts: 三つ組が本物の設定を述べたものかを�
     expect(matchCanonFacts(triple({ negated: true }), [canon()], normalize)).toEqual([]);
   });
 
+  it("言い換え（「〜みたいな」と「〜のような」）でも同じことを述べていれば一致する", () => {
+    const fact = canon({ id: "cf-3", relation: "has", object: "耳のようなカニのハサミのカチューシャ", description: "" });
+    expect(matchCanonFacts(triple({ relation: "has", object: "カニのハサミみたいなカチューシャ" }), [fact], normalize).map((f) => f.id)).toEqual(["cf-3"]);
+    expect(matchCanonFacts(triple({ relation: "has", object: "赤いカチューシャ" }), [fact], normalize)).toEqual([]);
+  });
+
+  it("object に無くても説明文に書かれていれば一致する", () => {
+    const fact = canon({ id: "cf-4", relation: "is", object: "ピンク色のキャラクター", description: "ピンク色の体をしたキャラクターである。" });
+    expect(matchCanonFacts(triple({ relation: "is", object: "ピンク色の体" }), [fact], normalize).map((f) => f.id)).toEqual(["cf-4"]);
+  });
+
   it("canonFact の relation が閉じた語彙で書かれているときだけ relation も厳密に比べる", () => {
     const fact = canon({ relation: "lives_in" });
     expect(matchCanonFacts(triple({ relation: "lives_in" }), [fact], normalize).map((f) => f.id)).toEqual(["cf-1"]);
@@ -102,6 +113,19 @@ describe("groundClaims: grounding はモデルではなくコードが付ける"
     const [claim] = groundClaims([triple({ quote: "ハチワレは洞窟に住んでるよ" })], [], normalize);
     expect(claim.claim).toBe("ハチワレは洞窟に住んでるよ");
     expect(claim.quote).toBe("ハチワレは洞窟に住んでるよ");
+  });
+
+  it("事実に無くても、話題の資料の節に書かれていれば canon（根拠の canonFact は持たない）", () => {
+    const clauses = [{ text: "屋台の看板を自分で書いた", subjects: ["ハチワレ"], names: [] }];
+    const [claim] = groundClaims([triple({ relation: "did", object: "屋台の看板を書いた" })], [canon()], normalize, clauses);
+    expect(claim.grounding).toBe("canon");
+    expect(claim.sourceCanonFactIds).toEqual([]);
+  });
+
+  it("資料の節の主語が違えば fabricated のまま", () => {
+    const clauses = [{ text: "屋台の看板を自分で書いた", subjects: ["うさぎ"], names: [] }];
+    const [claim] = groundClaims([triple({ relation: "did", object: "屋台の看板を書いた" })], [], normalize, clauses);
+    expect(claim.grounding).toBe("fabricated");
   });
 
   it("subject か object が空の主張は捨てる", () => {
