@@ -36,7 +36,7 @@ const baseParams = {
   currentEpisode: 3,
   canonFacts: [],
   fabricatedFacts: [] as FabricatedFact[],
-  directive: { kind: "introduce" } as const,
+  directive: { maxNewLies: 1 } as const,
   history: [] as Message[],
   userMessage: "1話どうだった？",
 };
@@ -113,7 +113,7 @@ describe("generateResponse: ペルソナと材料は systemInstruction に載せ
     expect(system).toContain("cf-1");
     expect(system).toContain("A は B が好き");
     expect(system).toContain("C は D に住んでいる");
-    expect(system).toContain(formatDirective({ kind: "introduce" }));
+    expect(system).toContain(formatDirective({ maxNewLies: 1 }));
     expect(system).toContain("既存の嘘と矛盾している");
   });
 
@@ -133,26 +133,23 @@ describe("generateResponse: ペルソナと材料は systemInstruction に載せ
   });
 });
 
-describe("formatDirective: バックエンドが決めた「今回の指示」の文面", () => {
-  it("introduce は場面の細部を1つ混ぜるよう言う", () => {
-    expect(formatDirective({ kind: "introduce" })).toContain("場面の中の細部");
+describe("formatDirective: 追加は任意、参考材料は追加枠を上書きしない", () => {
+  it("追加枠があっても使わない選択を残す", () => {
+    const text = formatDirective({ maxNewLies: 1 });
+    expect(text).toContain("最大1つ");
+    expect(text).toContain("使わずに終えても");
   });
 
-  it("plain は新しい設定を要求しない", () => {
-    expect(formatDirective({ kind: "plain" })).toContain("新しい設定を要求しません");
+  it("追加枠0でも疑われた設定と考察は材料として渡す", () => {
+    const text = formatDirective({ maxNewLies: 0, doubted: [fact("C は D に住んでいる")], theory: "Cの行動には別の意味がある" });
+    expect(text).toContain("追加枠: 0");
+    expect(text).toContain("C は D に住んでいる");
+    expect(text).toContain("Cの行動には別の意味がある");
+    expect(text).not.toContain("足してください");
   });
 
-  it("layer は疑われた設定を列挙し、裏付けを足すよう言う", () => {
-    const text = formatDirective({ kind: "layer", doubted: [fact("C は D に住んでいる")] });
-    expect(text).toContain("- C は D に住んでいる");
-    expect(text).toContain("撤回せず");
-    expect(text).toContain("裏付ける新しい細部");
-  });
-
-  it("layer で疑われた設定を特定できなかったときは、直前に話した設定を裏付けるよう言う", () => {
-    const text = formatDirective({ kind: "layer", doubted: [] });
-    expect(text).toContain("直前に自分が話した設定");
-    expect(text).toContain("撤回せず");
+  it("疑われた設定を特定できなくても裏付けの捏造を要求しない", () => {
+    expect(formatDirective({ maxNewLies: 1, doubted: [] })).toContain("特定できていない");
   });
 });
 

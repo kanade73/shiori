@@ -508,26 +508,29 @@ type ResponseStrategy =
 
 ### Step 5：検査
 
-生成結果を別のLLM呼び出しまたは検査処理へ渡す。
+`lib/server/llm/evaluate.ts` が、生成されたclaimsを決定的に検査する。検査用のLLM呼び出しは行わない。
 
 ```ts
 type ResponseEvaluation = {
   canonContradictionScore: number;
   fabricatedConsistencyScore: number;
-  spoilerRiskScore: number;
   believabilityScore: number;
   shouldRegenerate: boolean;
   reason?: string;
+  details: string[];
 };
 ```
 
-再生成条件の例：
+既存の嘘との矛盾と、fabricatedな主張による本物の設定への矛盾に、`lib/server/claims.ts` の共通ルールを適用する。
 
-```text
-spoilerRiskScore > 0.2
-fabricatedConsistencyScore < 0.7
-believabilityScore < 0.6
-```
+- 同じ三つ組の肯定と否定は矛盾。
+- `identity / origin / lives_in / first_appeared` は1主語につき1値で、別の値を両方肯定すると矛盾。
+- `likes / dislikes` と `can / cannot` は、同じ対象を両方肯定すると矛盾。
+- それ以外の別の値は共存できる。`did` の別の行動や `has` の別の持ち物は矛盾にしない。
+
+本物の設定のrelationは自由記述もあるため、閉じた語彙と正規化後に一致する場合だけ比較する。CanonFactは肯定の三つ組として扱う。既存の嘘は全件、本物の設定は生成に渡した視聴済み範囲・話題の事実を照合する。
+
+明確な矛盾が1件でもあれば、その根拠と理由を付けて1回だけ再生成する。それでも矛盾が残れば定型の濁し返答に置き換える。他の主張で矛盾の割合が薄まっても通さない。もっともらしさのスコアや、新しい嘘を追加したかどうかだけでは再生成しない。
 
 ### Step 6：保存
 

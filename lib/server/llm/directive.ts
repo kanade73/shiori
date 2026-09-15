@@ -3,8 +3,8 @@ import { normalizeText } from "../claims";
 import type { FabricatedFact, Message, TurnDirective, UserMessageAnalysis } from "../types";
 
 /**
- * 「今回どう答えるか」はプロンプトではなくここで決める（量と頻度はコード、
- * 中身は LLM）。LLM は呼ばない純粋関数。
+ * 新しい嘘を追加できる機会と上限を決める。応答の仕方や追加するかは LLM に任せる。
+ * 疑い・としおへの言及は材料として添え、追加枠を飛び越える指示にしない。
  */
 
 /** 連続で嘘をつき続けないための上限。直近これだけ連続で嘘を保存していたら素の返答にする。 */
@@ -68,7 +68,7 @@ export function quotesMessage(userMessage: string, message: string): boolean {
 /**
  * ユーザーがとしおの考察について聞いているか。としおの直後の発話（感想だけの相槌を除く）か、
  * としおの文を引用しているとき。としおの考察はシオリの嘘の仕組みに乗っていないので、
- * ここで拾ってシオリに「支える細部を足す」指示にする。
+ * ここで関連する可能性のある材料として拾う。実際の応じ方はシオリが選ぶ。
  */
 export function theoryInQuestion(params: { userMessage: string; analysis: UserMessageAnalysis; history: Message[] }): string | null {
   const { userMessage, analysis, history } = params;
@@ -91,7 +91,12 @@ export function decideDirective(params: {
 }): TurnDirective {
   const { analysis, history, fabricatedFacts, relevantFacts, userMessage = "" } = params;
   const theory = theoryInQuestion({ userMessage, analysis, history });
-  if (theory) return { kind: "support_theory", theory };
+  const resting = recentLieCount(history, fabricatedFacts, LIE_STREAK_LIMIT) >= LIE_STREAK_LIMIT;
+  const impression = analysis.questionType === "impression";
+  const smallTalk = analysis.questionType === "other" &&
+    analysis.mentionedCharacters.length === 0 && analysis.mentionedEvents.length === 0;
+  const directive: TurnDirective = { maxNewLies: resting || impression || smallTalk ? 0 : 1 };
+  if (theory) directive.theory = theory;
 
   if (analysis.questionType === "doubt") {
     const keywords = [...analysis.mentionedCharacters, ...analysis.mentionedEvents];
@@ -103,20 +108,8 @@ export function decideDirective(params: {
       const [last] = recentShioriMessages(history, 1);
       doubted = last ? fabricatedFacts.filter((f) => f.introducedMessageId === last.id) : [];
     }
-    return { kind: "layer", doubted };
+    directive.doubted = doubted;
   }
 
-  if (recentLieCount(history, fabricatedFacts, LIE_STREAK_LIMIT) >= LIE_STREAK_LIMIT) {
-    return { kind: "plain" };
-  }
-
-  if (
-    (analysis.questionType === "impression" || analysis.questionType === "other") &&
-    analysis.mentionedCharacters.length === 0 &&
-    analysis.mentionedEvents.length === 0
-  ) {
-    return { kind: "plain" };
-  }
-
-  return { kind: "introduce" };
+  return directive;
 }

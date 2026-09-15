@@ -211,13 +211,15 @@ export type Claim = {
 /** 発話ごとに保存する claim。答え合わせで「どの主張が本当/嘘だったか」を示すのに使う。 */
 export type StoredClaim = Claim & { id: string };
 
-/** バックエンドが1ターンごとに決める、シオリへの「今回の指示」。 */
-export type TurnDirective =
-  | { kind: "introduce" }
-  | { kind: "layer"; doubted: FabricatedFact[] }
-  /** ユーザーがとしおの考察について聞いている。シオリはそれが成り立つように見える細部（嘘）を足して支える */
-  | { kind: "support_theory"; theory: string }
-  | { kind: "plain" };
+/** 新しい嘘の追加枠と、応答の参考にする材料。返答の仕方は LLM が決める。 */
+export type TurnDirective = {
+  /** プロンプトで伝える上限。追加は任意で、既存の嘘の再利用は数えない。 */
+  maxNewLies: 0 | 1;
+  /** 疑われている可能性のある既存の嘘 */
+  doubted?: FabricatedFact[];
+  /** ユーザーが言及している可能性のあるとしおの考察 */
+  theory?: string;
+};
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
 

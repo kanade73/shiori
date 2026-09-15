@@ -242,7 +242,30 @@ describe("runConversationPipeline: 1回の構造化出力で生成し、守り�
   it("バックエンドが決めた「今回の指示」（directive）を生成に渡し、結果にも載せる", async () => {
     const result = await runConversationPipeline(sessionParams);
     expect(mocks.generateResponse.mock.calls[0][0].directive).toEqual(result.directive);
-    expect(result.directive.kind).toBe("introduce");
+    expect(result.directive.maxNewLies).toBe(1);
+  });
+
+  it("追加枠があっても新しい嘘のない自然な返答を再生成しない", async () => {
+    mocks.generateResponse.mockResolvedValue(generation({ message: "……うん、あの雰囲気は好き。", claims: [] }));
+    const result = await runConversationPipeline(sessionParams);
+    expect(result.directive.maxNewLies).toBe(1);
+    expect(result.regenerated).toBe(false);
+    expect(result.newFabricatedClaims).toEqual([]);
+    expect(result.generation.message).toBe("……うん、あの雰囲気は好き。");
+    expect(mocks.generateResponse).toHaveBeenCalledTimes(1);
+  });
+
+  it("追加枠0でも既存の嘘の再利用は保持し、矛盾の検査を通す", async () => {
+    const stored = { ...existingLie, subject: "人物", object: "部屋", claim: "人物は部屋に住んでいる" };
+    mocks.getActiveFabricatedFacts.mockReturnValue([stored]);
+    mocks.retrieveFabricatedFacts.mockReturnValue([stored]);
+    mocks.generateResponse.mockResolvedValue(generation({ claims: [{ ...stored, grounding: "fabricated" }] }));
+    const result = await runConversationPipeline({ ...sessionParams, userMessage: "微笑ましいね" });
+    expect(result.directive.maxNewLies).toBe(0);
+    expect(result.generation.strategy).toBe("reinforce_existing_lie");
+    expect(result.reusedFabricatedFactIds).toEqual([existingLie.id]);
+    expect(result.newFabricatedClaims).toEqual([]);
+    expect(result.regenerated).toBe(false);
   });
 
   it("生成には関係する数件の嘘（retrieveFabricatedFacts）を渡し、検査は全件（getActiveFabricatedFacts）に対して行う", async () => {

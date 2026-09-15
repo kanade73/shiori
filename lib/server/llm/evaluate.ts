@@ -1,5 +1,5 @@
-import { findContradictions, isFabricated, normalizeTriple, type Normalizer } from "../claims";
-import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
+import { CLAIM_RELATIONS, contradictionReason, findContradictions, isFabricated, normalizeText, normalizeTriple, type Normalizer, type Triple } from "../claims";
+import type { CanonFact, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
 
 /**
  * Deterministic checker. The generation step is deliberately unconstrained
@@ -10,14 +10,15 @@ import type { CanonFact, Claim, FabricatedFact, GenerationResult, ResponseEvalua
  *   2. a fabricated claim directly overwrites a visible canon fact
  */
 
-function contradictsCanon(claim: Claim, canon: CanonFact, normalize: Normalizer): boolean {
-  // Canon relations are free text, so only the coarse case is checkable:
-  // same subject, same relation phrase, different object.
-  return (
-    normalize(claim.subject) === normalize(canon.subject) &&
-    normalize(claim.relation) === normalize(canon.relation) &&
-    normalize(claim.object) !== normalize(canon.object)
-  );
+/** canonは肯定の三つ組。既存の嘘と同じ規則で、両立しない主張だけを検出する。 */
+function canonContradictionReason(claim: Triple, canon: CanonFact, normalize: Normalizer): string | null {
+  // work.jsonの自由記述relationは、閉じた語彙と一致するときだけ比較する。
+  // 「住んでいる」などの自然言語を意味推定して判定することはしない。
+  const relation = CLAIM_RELATIONS.find((r) => r === normalizeText(canon.relation));
+  if (!relation) return null;
+  return contradictionReason(claim, normalizeTriple({
+    subject: canon.subject, relation, object: canon.object, negated: false,
+  }, normalize));
 }
 
 export function evaluateGeneration(params: {
@@ -42,9 +43,16 @@ export function evaluateGeneration(params: {
       }
     }
 
-    if (isFabricated(claim) && visibleCanonFacts.some((fact) => contradictsCanon(claim, fact, normalize))) {
-      canonConflicts += 1;
-      details.push(`「${claim.claim}」は本物の設定と直接矛盾する`);
+    if (isFabricated(claim)) {
+      let contradictsCanon = false;
+      for (const fact of visibleCanonFacts) {
+        const reason = canonContradictionReason(normalized, fact, normalize);
+        if (!reason) continue;
+        contradictsCanon = true;
+        details.push(`「${claim.claim}」は本物の設定「${fact.description}」と矛盾する（${reason}）`);
+      }
+      // 根拠が複数あっても、矛盾したclaimは1件として数える。
+      if (contradictsCanon) canonConflicts += 1;
     }
   }
 
@@ -53,11 +61,11 @@ export function evaluateGeneration(params: {
   const canonContradictionScore = Math.min(1, canonConflicts / total);
   const fabricatedConsistencyScore = fabricatedConflicts > 0 ? 0 : 1;
 
-  const shouldRegenerate = fabricatedConflicts > 0 || canonContradictionScore > 0.3;
+  const shouldRegenerate = fabricatedConflicts > 0 || canonConflicts > 0;
 
   const reasons: string[] = [];
   if (fabricatedConflicts > 0) reasons.push("既に語った設定と矛盾している");
-  if (canonContradictionScore > 0.3) reasons.push("本物の設定と矛盾している");
+  if (canonConflicts > 0) reasons.push("本物の設定と矛盾している");
 
   return {
     canonContradictionScore,

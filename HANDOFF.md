@@ -6,8 +6,13 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/vectorDB`**（dev `47d6378` から切った）。issue #22「初回話題特定の RAG にベクトルDBを追加」を実装済み・**未コミット**（コミット・PR はユーザー判断）
+- **作業ブランチ: `feat/shiori-conversation-room`**（`origin/dev` の `e38df88` から作成）。シオリの追加義務を任意の追加枠へ変更し、実生成比較まで完了。**未コミット**。詳細は末尾の「直近の作業」と `docs/verification/shiori-conversation-room.md`。
 - dev には #18（話題の切り替わり・RAG の引き直し）、#20/#21（ドット絵ダークテーマ・字の大きさ）までマージ済み
+
+## 直近のセッション: Topa'z（ハッカソン提出サイト）への投稿の下書き
+- ユーザー説明: ハッカソンのゴールは https://topaz.dev への投稿。下書きはいつ出してもよく、発表時点の内容が評価対象
+- `docs/submission/topaz-post.md` にユーザー執筆の前半（タイトル〜アプリ紹介）と、AI が書いた「使用技術」以降を置いた。Topa'z のタグは選択式（TypeScript / Next.js / TailwindCSS / GCP / Docker / GitHub を推奨、Python はリポジトリに実体が無いので非推奨）。TODO はデモURL・メンバー名・構成図画像
+- ブラウザ拡張（Claude in Chrome）が未接続だったので、Topa'z のフォームへの直接入力はしていない。投稿はユーザーが手で行うか、拡張を接続してから
 
 ## 直近のセッション: 話題の特定にベクトルDB（sqlite-vec）を入れる（issue #22、`feat/vectorDB`、未コミット）
 - ユーザー指示:「issue#22 を実行して。必要に応じて AGENTS.md の方針も書き換えて。ベクトルDBを使うのが優先」。issue の目的は「曖昧なワードを初回の話題特定で拾えるように」、補足は「コンテキストの逼迫に注視」
@@ -152,8 +157,8 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## いま効いている設計判断（AGENTS.md に無いもの）
 
-### 生成: 「量と頻度はコード、中身は LLM」
-- `lib/server/llm/directive.ts`（純粋関数）が毎ターンの指示を決める。順に: `doubt` → **layer**（疑われた嘘を撤回せず裏付けの細部を1つ足す）／直近 `LIE_STREAK_LIMIT`=2 件連続で嘘を保存していれば **plain**／`impression`・`other` で言及キャラも出来事も無ければ **plain**／それ以外 **introduce**
+### 生成: 「追加の機会・上限はコード、応じ方と追加するかは LLM」
+- `lib/server/llm/directive.ts` が `maxNewLies: 0 | 1` と参考材料 `doubted? / theory?` を渡す。感想・人物等のない雑談・直近2返答連続で新しい嘘を保存した後は0。その他は最大1つだが追加は任意。疑い・としおの材料があっても0を上書きしない。旧 introduce / layer / support_theory / plain は廃止。
 - 生成は1回の構造化出力（返答文 + claims）。`strategy` はモデルに選ばせず、保存結果から事後に決める（UI バッジととしおのゲーティング用）
 - **ネタバレ防止は全廃**（ユーザー方針。疑われたら嘘を重ねる制御を優先）。evaluate に残る検査は「既存の嘘との矛盾」「fabricated claim による本物の設定の直接上書き」の2つだけ。ただし `retrieveCanonFacts` が視聴話数以下しか返さない仕組み（`getCanonFactsUpTo`）は残してあり、外すかはユーザー判断待ち
 - 経緯: 長いセッションでシオリが嘘をやめる問題（プロンプトの「絶対に矛盾させるな・全件記録・quote は一字一句」が自己監視を招いた）への対処。extract 方式（返答と主張の分解を別呼び出しにする、1発話2回）も試したが「疑われると引っ込める」ので不採用
@@ -173,7 +178,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 ## 既知の問題・未解決
 
 - **作り話が claims に記録されない（または canon 扱いになる）ことがある**。嘘として保存されず、矛盾チェックにも答え合わせの印にも乗らない。generate の記録漏れで、根本対処は未着手
-- 嘘の頻度: directive 導入後の長いセッション（20ターン以上）での頻度は未計測。`strategy` / `regenerated` は db に保存されない（SSE で流すだけ）ので、測るなら `metadata` を残すか `fabricatedFacts.createdAt` で数える
+- 長期の実生成比較は実施済み（下記）。`strategy` / `regenerated` は通常DBには保存されないが、比較スクリプトはパイプラインの結果・SDK使用トークン・送信内容を保存する。台帳上の新規件数と言い換え以外の新しい細部は一致しないので、本文も確認する。
 - 構造図でラベルどうしの重なりはまだ起きうる
 
 ## 環境メモ
@@ -188,3 +193,30 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - PR #8 のレビュー・`dev` へのマージ → 続けて本ブランチの PR をマージ
 - 実 API で directive 方式と答え合わせ（quote の付き方）を通しで確認する
 - としおの発言の `FabricatedFact` 化（シオリとの嘘共有）は別 issue
+
+## 直近の作業: シオリの「細部を足す義務」を追加枠へ変更（2026-09-15、実装・比較完了）
+- ユーザー依頼: プロンプト肥大化を避けたまま応答の自由を戻し、実生成と長めのセッションで変更前後を比較する。
+- 作業ブランチ `feat/shiori-conversation-room`（`origin/dev` の `e38df88` から作成）。未コミット。既存の README / docs/submission / scripts/issue-watcher.sh は別作業のため変更していない。
+- `TurnDirective` を `maxNewLies: 0 | 1` と参考材料 `doubted? / theory?` に変更。感想・キャラ等への言及のない雑談・2返答連続で新しい嘘を保存した後は0。他は最大1だが任意。疑い・としおの材料でも枠は上書きしない。共通プロンプトは応答優先・一言でもよい・追加は任意へ。矛盾検査と保存は維持。枠の超過を理由に棄却はしない。AGENTS.mdもこの役割分担へ更新。
+- 再現用: `scripts/check-shiori-room.mjs`（Node 22.18+、通常実行はAPIなし、`--live`で実API）、`scripts/fixtures/shiori-room.json`（固定履歴）、`shiori-room-kentei.json`（資料のある場面で24ターン）。実行コマンド・制約は `docs/verification/shiori-conversation-room.md`。結果・DBは `.data/shiori-room-*` に隔離し、通常DBは変更していない。
+- API: ユーザーが `.env.local` を更新してクレジット枯渇の429を解消。その後 `gemini-3.6-flash` で3組取得したが毎分5回制限に当たった。本比較は作業開始時のローカル設定だった `gemini-3.5-flash-lite` を両条件にコマンド環境変数で指定。**.env.local自体はユーザー更新のまま（既定3.6）**。毎分制限だけ60秒待って最大2回再試行、課金/日次制限は止める。
+- 固定履歴4ケース×2回×変更前後で16返答取得。本文で確認した感想・戸惑い・疑いの6ケースでは、新しい細部の追加は旧5/6→新0/6。枠のある質問では新実装も嘘を作る。ただし戸惑いへの応答はまだ弱い例あり。送信履歴・モデル・スキーマ・設定は同一。システム字数は旧3080〜3534、新3070〜3441で大きな増量なし。
+- 長い会話はカチューシャで各8ターン実行したが、初期4ターンで場面の資料が取れず、5ターン目から人物「ハチワレ」へ移ったため手動停止。資料のある検定で**変更前後各24ターンを完了（API計121回）**。新実装は23ターン目でも嘘を追加し、24ターン目は自然に締めた。再生成は旧16→新9ターン、定型文は旧11→新8、新規保存のある返答は旧8→新9。ただしRAG/ルーター/履歴が分岐するので、この差すべてを追加枠の因果効果としない。
+- シオリの入力は旧2278〜3069、新2193〜2767トークン。打ち切り・入力上限エラー0。履歴は直近12メッセージに制限されるので、24ターン全部の文脈を処理した証明ではない。「今回の不自然さには実装上の原因がある」ことは支持するが、コンテキストの影響を一般に否定はしない。
+- **切り分けた別問題（1は後続で修正、2・3は未修正）**:
+  1. `evaluate.ts` の `contradictsCanon` は主語+relationが一致しobjectが異なるだけで矛盾扱いする。RAGのcanonに `did` が入ると、「検定に合格」と「メモを落とした」のような両立する別行動まで棄却する。初回から両条件で定型文になった。→ 後続のユーザー依頼で修正済み。下記「本物の設定との矛盾判定」を参照。
+  2. `topic-shift` が「怖い」という感想を『ほんとにこわい話』編への切り替えと誤認。検定の話に別場面の資料が混ざる。
+  3. 既存の言い直しを新規三つ組として再保存したり、本文の主張をclaimsに残さない。枠0の10ターン中4ターンで新規保存したが、8〜10ターン目は「答案を隠した」の再表現。逆に4ターン目の新しい頷きは未記録。枠の遵守を台帳だけで判定できない。
+- 生結果: `.data/shiori-room-jRvg7A/results.json`（固定履歴16+カチューシャ各8）、`.data/shiori-room-yKOo9S/results.json`（検定各24）、`.data/shiori-room-qmwNXy/results.json`（3.6補足3組）、`.data/shiori-room-X5wFO0/results.json`（オフライン）。全文は `docs/verification/shiori-room-transcripts.md`。
+- 検証: **npm test 264件・tsc・lint通過、Webpack本番ビルド通過**（`NEXT_DIST_DIR=.next-shiori-room-webpack npm run build -- --webpack`）。Turbopackは環境のポートbind制限で失敗。追加されたtsconfigの検証用includeは除去済み。起動したAPI検証プロセスは全て終了済み。
+
+## 直近の追加作業: 本物の設定との矛盾判定（2026-09-15、実装・比較完了）
+- ユーザーの「それもやってみて」を受け、前項の誤検出を修正。`claims.ts` に `contradictionReason(Triple, Triple)` を切り出し、既存の嘘とcanonに同じ規則を使う。別のdid/has/is等は共存、単一値4関係の上書き・同一三つ組の肯定否定・likes/dislikes・can/cannotを検出。
+- CanonFactは肯定の三つ組として扱い、自由記述relationは閉じた語彙と正規化後に一致するときだけ比較する。説明文の意味・否定は推測しない。明確なcanon矛盾は1件でも再生成（旧0.3の比率条件を廃止）。差し戻し理由には根拠のdescriptionと判定理由を含める。生成プロンプト・追加枠・話題ルーターは前の修正のまま。
+- `llm/evaluate.test.ts` に20ケース追加。旧コードでは12件失敗、新コードでは全件通過。全体284件・tsc・lint・Webpack本番ビルド通過。検証用tsconfig includeは除去済み。
+- `scripts/recheck-shiori-evaluation.mjs` で前回 `.data/shiori-room-yKOo9S` の生出力73件を同じ材料で再検査。canonブロックは原リクエストと完全一致、旧判定は当時の再生成/定型文の経路と全件一致をassert。旧の差し戻し44件→新0件（新しいAPI呼び出しなし）。出力 `.data/evaluate-recheck-g3IQY5/results.json`。
+- `scripts/check-shiori-room.mjs` に `SHIORI_COMPARE=evaluate` を追加し、旧evaluateだけを `e38df88` から取り出し、両条件の生成・directiveは現在の実装に揃えて比較。各24ターン予定のうち各23ターン・計46返答を完了。24ターン目でGeminiの日次500回制限に達し、最後の1ターンずつは未実行。`.data/shiori-room-HlnEyE/results.json`。6ターン後に判定役が503を返したため一旦停止、再開機能 `SHIORI_RESUME_DIR` と5xxの一時リトライを追加して7ターン目から再開。保存済みのユーザー発話を二重追加しない。途中のassistantまで保存済みなら自動再開しない。
+- 実行: `GEMINI_MODEL=gemini-3.5-flash-lite SHIORI_COMPARE=evaluate SHIORI_INTERVAL_MS=5500 SHIORI_FIXTURE=scripts/fixtures/shiori-room-kentei.json SHIORI_RESUME_DIR=.data/shiori-room-HlnEyE node --env-file=.env.local scripts/check-shiori-room.mjs --live --conversation-only`。新規実行はRESUME_DIRを省く。
+- 実会話結果: 再生成したターンは旧7→新0、検査による定型文も旧7→新0。新規保存のあるターンは旧7→新16（言い直しを含む）。入力は旧2160〜2773、新2200〜2945トークン、打ち切り0。新条件は22・23ターン目にも嘘を保存。API試行計109回、エラーは途中の503と最後の日次429の2件。全検証プロセス終了済み。
+- 制約: 7ターン目に冒頭へ戻る不自然な生成があり、「怖い」で別場面へ移るルーター誤判定やclaimsの記録問題は残る。履歴は直近12件であり、長い文脈全体を処理した証明ではない。後半は履歴・資料が分岐するため自然さの差すべてを判定だけに帰属させない。同一生出力73件の再検査が判定単独の効果を示す。
+- 詳細: `docs/verification/shiori-canon-evaluation.md`、全46返答: `docs/verification/shiori-canon-evaluation-transcripts.md`。変更は未コミット。

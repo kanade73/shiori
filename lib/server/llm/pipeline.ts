@@ -23,7 +23,7 @@ export type PipelineResult = {
   analysis: UserMessageAnalysis;
   generation: GenerationResult;
   evaluation: ResponseEvaluation;
-  /** バックエンドがこのターンに決めた「今回の指示」。 */
+  /** バックエンドがこのターンに決めた追加枠と参考材料。 */
   directive: TurnDirective;
   regenerated: boolean;
   /** Fabricated claims from the final reply, normalized, that are not already stored. */
@@ -88,7 +88,7 @@ const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せ
  * (topic lookup until the session has one, topic-shift check after) ->
  * analyze (local) -> retrieve -> decide directive (local) -> generate
  * (返答文 + claims を1回の構造化出力で) -> evaluate -> regenerate once if
- * flagged. 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する
+ * flagged. 追加の機会・上限はコードが決め、応じ方と枠を使うかは LLM が決める。生成が見るのは関係する
  * 数件の嘘だけで、整合はこの後の evaluate が全件と照合して担保する。
  */
 export async function runConversationPipeline(params: {

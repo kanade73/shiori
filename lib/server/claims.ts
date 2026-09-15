@@ -3,7 +3,7 @@ import type { Claim, ClaimRelation, Entity, FabricatedFact } from "./types";
 /**
  * Deterministic side of lie consistency. The model is free to say anything
  * (that is the fun part); this module only decides whether a new claim
- * contradicts something the character already said in this session.
+ * contradicts another triple (a stored lie or a visible canon fact).
  *
  * Two claims are compared on normalized (subject, relation, object) triples:
  *  - same triple with opposite `negated`                      -> contradiction
@@ -89,12 +89,12 @@ export type Contradiction = {
 };
 
 /** Both inputs must already be normalized with the same Normalizer. */
-export function findContradiction(claim: Triple, existing: FabricatedFact): Contradiction | null {
+export function contradictionReason(claim: Triple, existing: Triple): string | null {
   if (claim.subject !== existing.subject) return null;
 
   if (claim.relation === existing.relation) {
     if (claim.object === existing.object && claim.negated !== existing.negated) {
-      return { claim, existing, reason: "同じ主張を肯定と否定の両方で述べている" };
+      return "同じ主張を肯定と否定の両方で述べている";
     }
     if (
       FUNCTIONAL_RELATIONS.has(claim.relation) &&
@@ -102,16 +102,22 @@ export function findContradiction(claim: Triple, existing: FabricatedFact): Cont
       !existing.negated &&
       claim.object !== existing.object
     ) {
-      return { claim, existing, reason: `${claim.relation} は1つに決まる関係なのに別の値を述べている` };
+      return `${claim.relation} は1つに決まる関係なのに別の値を述べている`;
     }
     return null;
   }
 
   const opposite = polarOpposite(claim.relation);
   if (opposite && existing.relation === opposite && claim.object === existing.object && !claim.negated && !existing.negated) {
-    return { claim, existing, reason: "正反対の関係を同じ対象に述べている" };
+    return "正反対の関係を同じ対象に述べている";
   }
   return null;
+}
+
+/** 既存の嘘への照合。判定ルールはcanonへの照合と共有する。 */
+export function findContradiction(claim: Triple, existing: FabricatedFact): Contradiction | null {
+  const reason = contradictionReason(claim, existing);
+  return reason ? { claim, existing, reason } : null;
 }
 
 export function findContradictions(claim: Triple, existing: FabricatedFact[]): Contradiction[] {
