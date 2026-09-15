@@ -47,6 +47,23 @@ export function toshioCooldownTurns(phase: SessionPhase): number {
   return TOSHIO_COOLDOWN_TURNS[phase];
 }
 
+/** 進行度ごとの上限値をひとまとめに。開発者モードのパネルに流す用（値の正は上の定数）。 */
+export type PhaseLimits = {
+  /** 連続で嘘をつける上限。上限なしは null（JSON に Infinity を載せられない） */
+  lieStreakLimit: number | null;
+  layerDetailCount: number;
+  toshioCooldownTurns: number;
+};
+
+export function phaseLimits(phase: SessionPhase): PhaseLimits {
+  const streak = LIE_STREAK_LIMITS[phase];
+  return {
+    lieStreakLimit: Number.isFinite(streak) ? streak : null,
+    layerDetailCount: LAYER_DETAIL_COUNTS[phase],
+    toshioCooldownTurns: TOSHIO_COOLDOWN_TURNS[phase],
+  };
+}
+
 /** 今回の発話を含むユーザー発話数。history が打ち切られている場合は呼び出し側が実数を渡す。 */
 export function countUserMessages(history: Message[]): number {
   return history.filter((m) => m.role === "user").length;

@@ -4,6 +4,7 @@ import { getWork } from "@/lib/server/works";
 import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
 import { createSseWriter, SSE_HEADERS, type SseWriter } from "@/lib/server/sse";
+import { emitPipelineEvent } from "@/lib/server/events";
 import type { Message } from "@/lib/server/types";
 
 const MAX_CONTENT_LENGTH = 1000;
@@ -62,7 +63,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       const { send, streamText, close } = writer;
 
       try {
-        const { analysis, generation, evaluation, phase, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
+        const { analysis, generation, evaluation, phase, regenerated, newFabricatedClaims, reusedFabricatedFactIds, turnId } =
           await runConversationPipeline({
             workId: session.workId,
             workTitle: work.title,
@@ -103,6 +104,16 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         });
         send("message-end", {});
 
+        // 保存まで終わったことを開発者モードのパネルに知らせる（グラフはここから描き直される）
+        emitPipelineEvent(sessionId, {
+          turnId,
+          at: new Date().toISOString(),
+          stage: "saved",
+          newFactIds,
+          strategy: generation.strategy,
+          phase,
+        });
+
         // issue #6: シオリの返答を出し切ってから、材料が揃っているときだけ「としお」が割り込む。
         // シオリの嘘は保存済みなので、としおには今ついた嘘も「既に語った設定」として渡る。
         const toshioMessage = await runToshioInterjection({
@@ -115,6 +126,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           analysis,
           generation,
           phase,
+          turnId,
         });
         if (toshioMessage) {
           send("message-start", { speaker: "toshio" });

@@ -1,19 +1,33 @@
 # HANDOFF
 
-## 2026-09-15: claims 抽出の分離 + 嘘のエスカレーション（ブランチ `feat/claims-extractor`）
-- 詳細は [docs/handoff-claims-extractor.md](docs/handoff-claims-extractor.md)。generate は返答文だけを書き、主張の三つ組は `lib/server/llm/extract.ts` が別呼び出しで取り出す（grounding はモデルではなくコードが canonFacts との照合で決める）。セッションの進行度で嘘の頻度と密度だけを上げる（閾値は `lib/server/llm/directive.ts` の先頭）。
-
 AIがセッションを開始する際はまずこれを読むこと（AGENTS.md参照）。作業を終えるAIは、次のAIが初見で状況を把握できるようここを更新してから終わること。
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-15: claims 抽出の分離 + 嘘のエスカレーション（`feat/claims-extractor` を取り込み済み）
+
+詳細は [docs/handoff-claims-extractor.md](docs/handoff-claims-extractor.md)。generate は返答文（プレーンテキスト）だけを書き、主張の三つ組は `lib/server/llm/extract.ts` が別呼び出しで取り出す。**grounding はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。セッションの進行度 `SessionPhase`（early/middle/late）で嘘の頻度と密度だけを上げる。閾値の定数は `lib/server/llm/directive.ts` の先頭に集約。
+
+マージ時に消えた挙動: **fabricated な claim の `sourceCanonFactIds` は常に空になった**（canonFact に一致しないものが fabricated なので当然そうなる）。型と `reveal/build.ts`・`graph.ts` の参照はそのまま動くが、構造図の「本物の設定」列は嘘からは繋がらなくなっている。復活させるなら extract 側で「元にした設定」を別に推定する必要がある。
+
+## 2026-09-15: 開発者モードの右パネル（リアルタイム可視化）
+
+デモ・審査向けに「チャットの裏で何が起きているか」をその場で見せる。**チャット画面の右側のパネル**で、ヘッダーの「開発者モード」ボタンで開閉（localStorage に記憶。1024px 未満では出さない）。閉じれば今までのチャットの見た目に戻る。既存の `/debug/[sessionId]` 画面はそのまま残してある。
+
+- **イベントバス**: `lib/server/events.ts`。セッション ID ごとの in-process な EventEmitter（HMR で切れないよう globalThis に1本）。`lib/server/llm/pipeline.ts` の各段の直後で emit するだけで、**パイプラインのロジックは変えていない**。購読者が居なければ no-op
+- **SSE**: `GET /api/sessions/[sessionId]/events`（debug 専用。**チャットの SSE には載せない**）。接続時に `init`（進行度・その段階の上限値・嘘の件数・グラフ）、以降は各段を `stage` として中継、`saved` のときだけ `graph`（描き直した図 + 増えたノード）を足す
+- **パネル**: `components/devpanel/`。`DevPanel.tsx`（接続と3セクション）/ `TurnTrace.tsx`（1発話ぶんの段の点灯）/ `trace.ts`（イベント → ターンの純粋関数）/ `useDevMode.ts`（開閉の記憶）
+- **グラフ**: 答え合わせの `components/reveal/RevealGraph.tsx` を流用（`compact` と `highlightNodeIds` を足しただけ）。サーバー側は `lib/server/lie-graph.ts` が保存済みの嘘を `buildRevealGraph` に通す。**RevealGraph は答え合わせ画面ではまだ使っていない**が、これでパネルからは使われている
+- 進行度の上限値（連続嘘の上限・裏付けの数・としおの間隔）は `directive.ts` の `phaseLimits()` がサーバー側で読んで SSE に載せる（client から `lib/server` の値を import しないため）
+- `vitest.config.ts`: `components/**/*.test.ts`（描画を伴わない純粋関数）を node 側のプロジェクトに追加
+
 ## 現在の状態（最終更新: 2026-09-15）
 
-- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）
+- **作業ブランチ: `feat/reveal-no-explanation`**（worktree `../chat-checking`、`feat/checking_mockup` から分岐。コミット済み・未 push）。答え合わせの結果画面から解説文・根拠・注釈をすべて削った（下記「答え合わせ」節）+ `feat/claims-extractor` をマージ + 開発者モードのパネル
 - 親ブランチ: **`feat/checking_mockup`**。答え合わせ機能 + としおの実装（`feat/issue-6-toshio` をマージ済み）+ 全体のリファクタ。**PR は `dev` 向き**で、#8（としお）が先にマージされれば差分は答え合わせとリファクタ分だけになる
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加`（`feat/issue-6-toshio` → `dev`）。issue #6 / #10 を閉じる
 - `../chat`（`feat/issue-6-toshio` の worktree）には未コミットの差分（`globals.css` / `tailwind.config.ts` / `docs/HANDOFF.md` / `scripts/` / `pictures/toshio.png`）が残っている。こちらの worktree には含めていない
-- 検証: `npm test` 129件・`tsc`・`eslint`・`next build` 通過。**実 API では未確認**（`gemini-3.6-flash` の日次無料枠が少ないため。動作確認はすべて vitest のモック経由）
+- 検証: `npm test` 203件・`tsc`・`eslint`・`next build` 通過。パイプラインと開発者モードの SSE は **実 API（3002 の dev サーバー）で通しで確認済み**（generate → extract → evaluate → saved → graph → としお まで流れ、嘘が7件まで育つところまで見た）。ブラウザでの見た目の確認だけは未実施（Chrome 拡張が繋がらなかった）
 
 ## リファクタ（2026-09-15）で変えたこと
 
@@ -47,7 +61,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - 設計は AGENTS.md「答え合わせ」節。結果画面の配置は「概要（件数だけ）→ 発言順の答え → 真偽をマークした会話」、幅 800px 1カラム
 - **結果画面は差分のハイライトだけ。解説文・根拠・注釈は出さない**（ユーザー判断。理由は「アニメを見ればわかる」ので不親切でよい）。`ResultPhase.tsx` から削ったもの: 各行の「根拠: …」「元にした本物の設定: …」「この会話で作られた設定です。」「本文中の位置は特定できませんでした」、凡例の「印のない部分は、真偽を判定していません」「記録を始める前のシオリの発話は…」、としおの注記（ToshioNote 全体。としおの発言は本文だけ出す）、「答え合わせできる話は記録されていません。」、「会話に出てきた順に…」、構造図の details。**「〜は判定していません」の類の一言を足し直さないこと**
 - 予想フェーズ（`GuessPhase`）は変えていない。本文の印・番号・「話の答え」リストの行（ラベル + 引用文 + 予想の結果ピル）・凡例の「嘘 / 本当」2つは残っている
-- 構造図（`components/reveal/RevealGraph.tsx` + `lib/client/graph-layout.ts` + `lib/server/reveal/graph.ts`）は結果画面から外しただけで、コードもテストも API の `graph` フィールドも残してある。いまどの画面からも描画していない（debug 画面も使っていない）。復活させるなら `RevealGraph` を import し、飛び先の `id`（`statementAnchorId` / `toshioAnchorId`）を `ResultPhase` 側に戻す必要がある
+- 構造図（`components/reveal/RevealGraph.tsx` + `lib/client/graph-layout.ts` + `lib/server/reveal/graph.ts`）は結果画面から外しただけで、コードもテストも API の `graph` フィールドも残してある。**答え合わせの結果画面からは描画していない**（開発者モードのパネルが `compact` で使っている）。結果画面に復活させるなら `RevealGraph` を import し、飛び先の `id`（`statementAnchorId` / `toshioAnchorId`）を `ResultPhase` 側に戻す必要がある
 - 構造図は左から右へ一方向の層状レイアウト（本物の設定 → キャラ・物 → シオリの主張 → としお）。目的語の辺（`object`）は逆向きになるので図には描かない（データには残る）
 
 ## 既知の問題・未解決

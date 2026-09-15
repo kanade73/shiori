@@ -7,6 +7,7 @@ import { generateToshioCommentary } from "./toshio";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { getCanonFactsUpTo, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
+import { createTurnEmitter, type TraceClaim } from "../events";
 import type {
   Claim,
   GenerationResult,
@@ -30,7 +31,14 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
+  /** この発話分のイベントをまとめる id（開発者モードのパネル用）。 */
+  turnId: string;
 };
+
+/** パネルに出す分だけに削った claim。 */
+function toTraceClaim(c: Claim): TraceClaim {
+  return { subject: c.subject, relation: c.relation, object: c.object, negated: c.negated, claim: c.claim, grounding: c.grounding };
+}
 
 /** 直近のとしお発話から何ターン（シオリの返答）経ったか。一度も話していなければ Infinity。 */
 export function turnsSinceLastToshio(history: Message[]): number {
@@ -74,10 +82,23 @@ export async function runConversationPipeline(params: {
   userMessage: string;
   /** 今回の発話を含むユーザー発話数。history は打ち切られているので呼び出し側が実数を渡す */
   userMessageCount?: number;
+  /** 開発者モードのパネルで1発話分のイベントをまとめる id。省略すればここで発番する */
+  turnId?: string;
 }): Promise<PipelineResult> {
   const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
 
+  // 開発者モードのパネルへの中継。購読者が居なければ何もしない。
+  const turnId = params.turnId ?? crypto.randomUUID();
+  const emit = createTurnEmitter(sessionId, turnId);
+  emit({ stage: "user", text: userMessage });
+
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
+  emit({
+    stage: "analyze",
+    mentionedCharacters: analysis.mentionedCharacters,
+    mentionedEvents: analysis.mentionedEvents,
+    questionType: analysis.questionType,
+  });
   // 生成には関係する数件、照合と検査には視聴済み全件。守りは evaluate に寄せる。
   const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
   const watchedCanonFacts = getCanonFactsUpTo(workId, currentEpisode);
@@ -97,6 +118,13 @@ export async function runConversationPipeline(params: {
     relevantFacts: promptFabricatedFacts,
     phase,
   });
+  emit({
+    stage: "directive",
+    kind: directive.kind,
+    phase,
+    doubted: directive.kind === "layer" ? directive.doubted.map((f) => f.claim) : [],
+    detailCount: directive.kind === "layer" ? directive.detailCount : undefined,
+  });
 
   const genArgs = {
     workTitle,
@@ -109,33 +137,42 @@ export async function runConversationPipeline(params: {
   };
 
   // 取り出しに失敗しても返答文は返す（嘘が保存されないだけ）。会話が止まる方が損。
+  let attempt = 0;
   const extract = async (message: string): Promise<Claim[]> => {
     try {
-      return await extractClaims({
+      const claims = await extractClaims({
         text: message,
         workTitle,
         canonFacts: watchedCanonFacts,
         normalize,
         userMessage,
       });
+      emit({ stage: "extract", attempt, claims: claims.map(toTraceClaim) });
+      return claims;
     } catch (error) {
       console.error("主張の取り出しに失敗:", error);
+      emit({ stage: "extract", attempt, claims: [], failed: true });
       return [];
     }
   };
 
   const respond = async (feedback?: string): Promise<GenerationResult> => {
+    attempt += 1;
     const message = await generateReply({ ...genArgs, feedback });
+    emit({ stage: "generate", attempt, message });
     return { message, claims: await extract(message), strategy: "no_new_lie" };
   };
 
-  const evaluate = (claims: Claim[]) =>
-    evaluateGeneration({
+  const evaluate = (claims: Claim[]) => {
+    const result = evaluateGeneration({
       claims,
       visibleCanonFacts: watchedCanonFacts,
       existingFabricatedFacts,
       normalize,
     });
+    emit({ stage: "evaluate", attempt, flagged: result.shouldRegenerate, reason: result.reason, details: result.details });
+    return result;
+  };
 
   let generation = await respond();
   let evaluation = evaluate(generation.claims);
@@ -145,6 +182,7 @@ export async function runConversationPipeline(params: {
   if (evaluation.shouldRegenerate) {
     regenerated = true;
     const feedback = [evaluation.reason, ...evaluation.details.map((d) => `- ${d}`)].filter(Boolean).join("\n");
+    emit({ stage: "regenerate", reason: feedback });
     generation = await respond(feedback);
     evaluation = evaluate(generation.claims);
 
@@ -153,6 +191,7 @@ export async function runConversationPipeline(params: {
     // replace the whole reply with a safe non-answer rather than looping.
     if (evaluation.shouldRegenerate) {
       gaveUp = true;
+      emit({ stage: "fallback" });
       generation = { message: SAFE_UNCERTAIN_MESSAGE, claims: [], strategy: "admit_uncertainty" };
     }
   }
@@ -185,6 +224,7 @@ export async function runConversationPipeline(params: {
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
+    turnId,
   };
 }
 
@@ -207,11 +247,20 @@ export async function runToshioInterjection(params: {
   generation: GenerationResult;
   /** 終盤はクールダウンを外して毎ターン割り込めるようにする */
   phase: SessionPhase;
+  /** シオリと同じターンとしてパネルに並べるための id */
+  turnId?: string;
 }): Promise<string | null> {
   const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation, phase } = params;
+  const emit = createTurnEmitter(sessionId, params.turnId ?? crypto.randomUUID());
 
-  if (turnsSinceLastToshio(history) < toshioCooldownTurns(phase)) return null;
-  if (!worthAskingToshio(generation, analysis)) return null;
+  if (turnsSinceLastToshio(history) < toshioCooldownTurns(phase)) {
+    emit({ stage: "toshio", interjected: false, skipped: "cooldown" });
+    return null;
+  }
+  if (!worthAskingToshio(generation, analysis)) {
+    emit({ stage: "toshio", interjected: false, skipped: "material" });
+    return null;
+  }
 
   try {
     const commentary = await generateToshioCommentary({
@@ -223,12 +272,17 @@ export async function runToshioInterjection(params: {
       shioriMessage: generation.message,
       premises: generation.claims.filter(isFabricated),
     });
-    if (commentary.shouldComment && commentary.message.trim().length > 0) return commentary.message;
+    if (commentary.shouldComment && commentary.message.trim().length > 0) {
+      emit({ stage: "toshio", interjected: true });
+      return commentary.message;
+    }
+    emit({ stage: "toshio", interjected: false, skipped: "declined" });
     return null;
   } catch (error) {
     // としおの割り込みは演出であって本筋ではない。失敗してもシオリの返答は
     // 既に確定しているので、単に今回は割り込まなかったことにする。
     console.error("としおの割り込み生成に失敗:", error);
+    emit({ stage: "toshio", interjected: false, skipped: "failed" });
     return null;
   }
 }
