@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, type KeyboardEvent } from "react";
-import { ArrowUpIcon } from "./icons";
+import { ArrowUpIcon } from "@/components/ui/icons";
 
 interface ChatInputProps {
   value: string;

@@ -1,16 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import type {
-  ChatSession,
-  Claim,
-  FabricatedFact,
-  FabricatedRelation,
-  Message,
-  SessionTopic,
-  Speaker,
-  StoredClaim,
-  Verdict,
-} from "./types";
+import type { ChatSession, Claim, FabricatedFact, FabricatedRelation, Message, SessionTopic, Speaker, StoredClaim } from "./types";
+import type { Verdict } from "./reveal/types";
 
 type Db = {
   sessions: Record<string, ChatSession>;

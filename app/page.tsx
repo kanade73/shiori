@@ -1,4 +1,4 @@
-import { SetupScreen } from "@/components/SetupScreen";
+import { SetupScreen } from "@/components/setup/SetupScreen";
 
 export default function Home() {
   return <SetupScreen />;

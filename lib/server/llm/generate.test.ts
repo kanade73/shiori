@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { Message } from "../types";
+import type { FabricatedFact, Message } from "../types";
 
 // 実 API は叩かない。generateContent を差し替えて、渡された引数と返り値の扱いを検証する
 const { generateContent } = vi.hoisted(() => ({ generateContent: vi.fn() }));
@@ -8,95 +8,151 @@ vi.mock("./client", () => ({
   GENERATION_MODEL: "test-model",
 }));
 
-import { generateResponse } from "./generate";
-
-const okResult = {
-  message: "そうだね。",
-  strategy: "no_new_lie",
-  claims: [],
-  usedExistingFactIds: [],
-  spoilerRisk: 0.1,
-};
+import { formatDirective, generateResponse } from "./generate";
 
 function msg(role: Message["role"], content: string): Message {
   return { id: `m-${content}`, sessionId: "s1", role, content, createdAt: "2026-01-01T00:00:00Z" } as Message;
+}
+
+function fact(claim: string): FabricatedFact {
+  return {
+    id: `ff-${claim}`,
+    sessionId: "s1",
+    subject: "C",
+    relation: "lives_in",
+    object: "D",
+    negated: false,
+    claim,
+    sourceCanonFactIds: [],
+    introducedMessageId: "m1",
+    confidence: 0.6,
+    status: "active",
+    createdAt: "2026-01-01T00:00:00Z",
+  };
 }
 
 const baseParams = {
   workTitle: "テスト作品",
   currentEpisode: 3,
   canonFacts: [],
-  fabricatedFacts: [],
+  fabricatedFacts: [] as FabricatedFact[],
+  directive: { kind: "introduce" } as const,
   history: [] as Message[],
   userMessage: "1話どうだった？",
 };
 
+const OK_OUTPUT = JSON.stringify({ message: "そうだね。", claims: [] });
+
 beforeEach(() => {
   generateContent.mockReset();
-  generateContent.mockResolvedValue({ text: JSON.stringify(okResult) });
+  generateContent.mockResolvedValue({ text: OK_OUTPUT });
 });
 
-describe("generateResponse: Gemini の JSON 出力を GenerationResult として返す", () => {
-  it("responseMimeType を JSON にして構造化出力を要求する", async () => {
+describe("generateResponse: 1回の構造化出力で返答文と claims を得る", () => {
+  it("strategy / spoilerRisk / usedExistingFactIds はスキーマに含めない（モデルに選ばせない）", async () => {
     await generateResponse(baseParams);
     const config = generateContent.mock.calls[0][0].config;
     expect(config.responseMimeType).toBe("application/json");
-    expect(config.responseSchema).toBeDefined();
+    const props = config.responseSchema.properties;
+    expect(Object.keys(props).sort()).toEqual(["claims", "message"]);
+    expect(props.strategy).toBeUndefined();
+    expect(props.spoilerRisk).toBeUndefined();
+    expect(props.usedExistingFactIds).toBeUndefined();
   });
 
-  it("返ってきた JSON を zod で検証して返す", async () => {
+  it("quote（答え合わせの本文位置用）はスキーマにあるが必須にはしない", async () => {
+    await generateResponse(baseParams);
+    const items = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items;
+    expect(items.properties.quote).toBeDefined();
+    expect(items.required).not.toContain("quote");
+  });
+
+  it("返った JSON を検証し、strategy は no_new_lie で埋めて返す（pipeline が事後に上書きする）", async () => {
+    generateContent.mockResolvedValue({
+      text: JSON.stringify({
+        message: "ハチワレは洞窟に住んでる。",
+        claims: [
+          {
+            subject: "ハチワレ",
+            relation: "lives_in",
+            object: "洞窟",
+            negated: false,
+            claim: "ハチワレは洞窟に住んでいる",
+            grounding: "fabricated",
+            sourceCanonFactIds: [],
+          },
+        ],
+      }),
+    });
     const result = await generateResponse(baseParams);
-    expect(result).toEqual(okResult);
+    expect(result.strategy).toBe("no_new_lie");
+    expect(result.message).toBe("ハチワレは洞窟に住んでる。");
+    expect(result.claims).toHaveLength(1);
+    expect(result.claims[0].relation).toBe("lives_in");
   });
 
-  it("スキーマに合わない JSON（spoilerRisk が範囲外）は例外にする", async () => {
-    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, spoilerRisk: 3 }) });
-    await expect(generateResponse(baseParams)).rejects.toThrow(/Failed to parse generation output/);
-  });
-
-  it("各 claim に返答文からの抜き出し（quote）を必須で要求し、返ってきた quote は保持する", async () => {
-    const lie = {
-      subject: "A",
-      relation: "has",
-      object: "B",
-      negated: false,
-      claim: "A は B を持っている",
-      grounding: "fabricated",
-      sourceCanonFactIds: [],
-      quote: "B を持ってる",
-    };
-    generateContent.mockResolvedValue({ text: JSON.stringify({ ...okResult, message: "A は B を持ってるよ。", claims: [lie] }) });
-    const result = await generateResponse(baseParams);
-    expect(result.claims[0].quote).toBe("B を持ってる");
-
-    const claimSchema = generateContent.mock.calls[0][0].config.responseSchema.properties.claims.items;
-    expect(claimSchema.required).toContain("quote");
-  });
-
-  it("text が空でも例外になり、握りつぶさない（pipeline 側の catch に任せる）", async () => {
-    generateContent.mockResolvedValue({ text: "" });
-    await expect(generateResponse(baseParams)).rejects.toThrow();
+  it("パースできない出力は例外にする", async () => {
+    generateContent.mockResolvedValue({ text: "{}" });
+    await expect(generateResponse(baseParams)).rejects.toThrow("Failed to parse generation output");
   });
 });
 
 describe("generateResponse: ペルソナと材料は systemInstruction に載せる", () => {
-  it("作品名・視聴話数・canonFacts・既存の嘘・差し戻し理由が system に入る", async () => {
+  it("作品名・視聴話数・canonFacts の id と説明・前に話したこと・今回の指示・差し戻し理由が入る", async () => {
     await generateResponse({
       ...baseParams,
       canonFacts: [
         { id: "cf-1", workId: "w", episodeFrom: 1, subject: "A", relation: "likes", object: "B", description: "A は B が好き" },
       ],
-      fabricatedFacts: [
-        { id: "ff-1", sessionId: "s1", subject: "C", relation: "lives_in", object: "D", claim: "C は D に住んでいる" },
-      ] as never,
+      fabricatedFacts: [fact("C は D に住んでいる")],
       feedback: "既存の嘘と矛盾している",
     });
     const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
     expect(system).toContain("テスト作品");
     expect(system).toContain("第3話まで");
     expect(system).toContain("cf-1");
-    expect(system).toContain("ff-1");
+    expect(system).toContain("A は B が好き");
+    expect(system).toContain("C は D に住んでいる");
+    expect(system).toContain(formatDirective({ kind: "introduce" }));
     expect(system).toContain("既存の嘘と矛盾している");
+  });
+
+  it("[企画の芯] 疑われても撤回しないことがペルソナに書かれている", async () => {
+    await generateResponse(baseParams);
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("疑われたとき");
+    expect(system).toContain("撤回しない");
+  });
+
+  it("[ネタバレ防止は全廃] avoid_spoiler / spoilerRisk / ネタバレ をプロンプトに書かない", async () => {
+    await generateResponse(baseParams);
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).not.toContain("avoid_spoiler");
+    expect(system).not.toContain("spoilerRisk");
+    expect(system).not.toContain("ネタバレ");
+  });
+});
+
+describe("formatDirective: バックエンドが決めた「今回の指示」の文面", () => {
+  it("introduce は新しい設定を1つ混ぜるよう言う", () => {
+    expect(formatDirective({ kind: "introduce" })).toContain("新しい設定を1つ");
+  });
+
+  it("plain は新しい設定を要求しない", () => {
+    expect(formatDirective({ kind: "plain" })).toContain("新しい設定を要求しません");
+  });
+
+  it("layer は疑われた設定を列挙し、裏付けを足すよう言う", () => {
+    const text = formatDirective({ kind: "layer", doubted: [fact("C は D に住んでいる")] });
+    expect(text).toContain("- C は D に住んでいる");
+    expect(text).toContain("撤回せず");
+    expect(text).toContain("裏付ける新しい細部");
+  });
+
+  it("layer で疑われた設定を特定できなかったときは、直前に話した設定を裏付けるよう言う", () => {
+    const text = formatDirective({ kind: "layer", doubted: [] });
+    expect(text).toContain("直前に自分が話した設定");
+    expect(text).toContain("撤回せず");
   });
 });
 
@@ -185,7 +241,7 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
     expect(contents[contents.length - 1].role).toBe("user");
   });
 
-  it("としおの発話（speaker=toshio）は model に畳まれるが、【としお】の印でシオリ自身の発言と区別する", async () => {
+  it("としおの発話（speaker=toshio）はシオリの会話ではないので履歴から落とす", async () => {
     await generateResponse({
       ...baseParams,
       history: [
@@ -195,10 +251,11 @@ describe("generateResponse: 会話履歴を Gemini の contents 形式に変換�
       ],
     });
     const contents = generateContent.mock.calls[0][0].contents;
-    expect(contents[1]).toEqual({ role: "model", parts: [{ text: "そうだね。\n【としお】結論から言うとね……" }] });
-    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
-    expect(system).toContain("【としお】");
-    expect(system).toContain("あなたの発言ではありません");
+    expect(contents).toEqual([
+      { role: "user", parts: [{ text: "これって伏線じゃない？" }] },
+      { role: "model", parts: [{ text: "そうだね。" }] },
+      { role: "user", parts: [{ text: "1話どうだった？" }] },
+    ]);
   });
 
   it("履歴が空なら今回の発言だけを user として送る", async () => {

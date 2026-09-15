@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mascot } from "./Mascot";
+import { Mascot } from "@/components/ui/Mascot";
 import { createSession, listSessions, listWorks, type SessionSummary } from "@/lib/client/api";
 import { sessionLabel } from "@/lib/client/types";
 import type { Work } from "@/lib/server/types";

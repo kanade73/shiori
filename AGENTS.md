@@ -97,9 +97,9 @@
 
 ### 答え合わせ（会話の終わりに真偽を明かす）
 
-`/reveal/[sessionId]`（`components/RevealView.tsx`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
+`/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
 
-- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
+- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
 - 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
 - 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
 - としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
@@ -155,21 +155,27 @@ app/
     sessions/[sessionId]/messages/  チャット本体（SSE）。パイプラインはここから呼ぶ
     sessions/[sessionId]/{canon-facts,fabricated-facts,fabricated-graph}/  debug 画面用
     sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 予想を送って答え合わせ済みにする）
-components/                         UI。ChatApp / SetupScreen / Sidebar / DebugView / Mascot ほか
+components/
+  chat/                             チャット画面（ChatApp / Sidebar / ChatInput ほか）
+  reveal/                           答え合わせ画面（RevealView → GuessPhase / ResultPhase / RevealGraph、verdict.ts は表示ルール）
+  setup/SetupScreen.tsx             作品選択 + 視聴進捗入力
+  debug/DebugView.tsx               管理画面
+  ui/                               画面をまたいで使うもの（Mascot, icons）
 lib/
   server/
     works.ts                        data/ の読み込み
     store.ts                        .data/db.json の読み書き
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
-    reveal.ts                       答え合わせ用に、発話を本当/嘘の部分に区切る
     sources.ts                      外部の知識源（MediaWiki）の取得・段落分け・検索（bigram・順位の融合）
     embeddings.ts                   外部資料の段落のベクトル検索（埋め込みはメモリと DATA_DIR の JSON）
     topic.ts                        話題の場面の特定（セッションごとの RAG）
     topic-shift.ts                  話題の切り替わりの判定（ゲート → 判定役）
     rate-limit.ts
-    types.ts                        データモデル
-    llm/                            router（切り替わりの判定役）/ topic（資料係）→ analyze → generate → evaluate → pipeline（+ toshio: としおの割り込み）
-  client/                           fetch ラッパー・SSE パーサ・表示用型
+    sse.ts                          Route Handler が text/event-stream を書くための口
+    types.ts                        データモデル（答え合わせ専用の型は reveal/types.ts）
+    llm/                            router（切り替わりの判定役）/ topic（資料係）→ analyze → directive → generate → evaluate → pipeline（+ toshio: としおの割り込み）
+    reveal/                         答え合わせ。build.ts が発話を本当/嘘の部分に区切り、graph.ts が嘘の構造図を組む
+  client/                           fetch ラッパー（api.ts）・SSE パーサ・表示用型・時刻整形（format.ts）・構造図のレイアウト
 data/
   chiikawa/work.json                ← コードはこの中身を知らない
   momotaro/cards.jsonl              次段構想用（未使用）

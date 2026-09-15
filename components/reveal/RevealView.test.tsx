@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
-import type { RevealData } from "@/lib/server/types";
+import type { RevealData } from "@/lib/server/reveal/types";
 
 // 答え合わせ画面: 予想 → 答えを見る → 真偽つきの会話、の流れを固定する。API は差し替える。
 const mocks = vi.hoisted(() => ({
@@ -131,11 +131,11 @@ describe("RevealView", () => {
 
     expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
     expect(mocks.submitReveal).toHaveBeenCalledWith("s1", { t1: "lie", l1: "lie" });
-    expect(screen.getByText("/ 2 件 正解", { exact: false })).toBeTruthy();
-    expect(screen.getByText("見抜いた")).toBeTruthy();
-    expect(screen.getByText("疑いすぎ")).toBeTruthy();
+    expect(screen.getByText("2件中 1件正解")).toBeTruthy();
+    expect(screen.getAllByText("見抜いた").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("嘘と予想").length).toBeGreaterThan(0);
     expect(screen.getByText("根拠: 第7話〜 検定に合格した")).toBeTruthy();
-    expect(screen.getByText("まるごと作り話")).toBeTruthy();
+    expect(screen.getByText("この会話で作られた設定です。")).toBeTruthy();
     expect(screen.getByText("が嘘だと知ったうえで、話を合わせていました。", { exact: false })).toBeTruthy();
   });
 
@@ -165,6 +165,7 @@ describe("RevealView", () => {
     mocks.getReveal.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
     expect(await screen.findByText("嘘の構造図")).toBeTruthy();
+    fireEvent.click(screen.getByText("話のつながりを図で見る"));
     const graph = screen.getByTestId("reveal-graph");
     expect(graph.querySelectorAll("[data-node-kind='statement']").length).toBe(2);
     expect(graph.querySelectorAll("[data-node-kind='entity']").length).toBe(1);

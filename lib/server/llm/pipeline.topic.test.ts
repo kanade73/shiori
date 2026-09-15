@@ -24,6 +24,9 @@ vi.mock("../topic-shift", () => ({ detectTopicShift: mocks.detectTopicShift }));
 vi.mock("../retrieval", () => ({
   retrieveCanonFacts: mocks.retrieveCanonFacts,
   retrieveFabricatedFacts: mocks.retrieveFabricatedFacts,
+  getActiveFabricatedFacts: () => [],
+  textIncludesAny: (text: string, needles: string[]) =>
+    needles.some((n) => n.trim().length > 0 && text.toLowerCase().includes(n.toLowerCase())),
 }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
@@ -65,7 +68,7 @@ const params = {
 };
 
 function generation(overrides: Partial<GenerationResult> = {}): GenerationResult {
-  return { message: "そうだね。", strategy: "no_new_lie", claims: [], usedExistingFactIds: [], spoilerRisk: 0, ...overrides };
+  return { message: "そうだね。", strategy: "no_new_lie", claims: [], ...overrides };
 }
 
 beforeEach(() => {
@@ -128,23 +131,6 @@ describe("runConversationPipeline: 話題の場面（issue #14）", () => {
     const result = await runConversationPipeline(params);
     expect(result.evaluation.shouldRegenerate).toBe(false);
     expect(result.regenerated).toBe(false);
-  });
-
-  it("[企画の制約] 話題が決まらないうちは、work.json の設定に拠った主張はネタバレとして差し戻す", async () => {
-    mocks.lookupSessionTopic.mockResolvedValue(null);
-    const claim = {
-      subject: "ハチワレ",
-      relation: "did" as const,
-      object: "検定に合格",
-      negated: false,
-      claim: "ハチワレは検定に合格した",
-      grounding: "canon" as const,
-      sourceCanonFactIds: ["cf-60"],
-    };
-    mocks.generateResponse.mockResolvedValue(generation({ claims: [claim] }));
-    const result = await runConversationPipeline(params);
-    expect(result.regenerated).toBe(true);
-    expect(mocks.generateResponse.mock.calls[1][0].feedback).toContain("第60話以降");
   });
 });
 

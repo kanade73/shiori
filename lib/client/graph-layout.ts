@@ -1,150 +1,122 @@
-import type { RevealGraph, RevealGraphNode } from "@/lib/server/types";
+import type { RevealGraph, RevealGraphEdge, RevealGraphNode } from "@/lib/server/reveal/types";
 
 /**
- * 嘘の構造図のレイアウト。小さな力学モデル（反発 + 辺のばね + 中心への引力）を
- * 決まった回数だけ回す。乱数は使わず、初期位置は種類ごとの同心円に並べるので、
- * 同じ入力なら同じ絵になる。ノード数は多くても数十なので O(n²) で足りる。
+ * 嘘の構造図のレイアウト。左から右へ一方向に流れる層状の図にする。
+ *
+ *   本物の設定 ──→ キャラ・物 ──→ シオリの主張 ──→ としお
+ *
+ * 主張は会話に出た順に上から下へ並べ、他の列はつながっている主張の高さに寄せる。
+ * 矢印はすべて右向きで、「主張 → 目的語のキャラ」のように逆向きになる辺は描かない
+ * （データには残っているが、図では読み手が向きを追えなくなるので落とす）。
+ * 乱数は使わないので、同じ入力なら同じ絵になる。
  */
 
-export type LaidOutNode = { node: RevealGraphNode; x: number; y: number; r: number };
+export type LaidOutNode = { node: RevealGraphNode; x: number; y: number; w: number; h: number };
+
+export type LaidOutEdge = { edge: RevealGraphEdge; from: LaidOutNode; to: LaidOutNode };
 
 export type GraphLayout = {
   nodes: LaidOutNode[];
+  edges: LaidOutEdge[];
   byId: Map<string, LaidOutNode>;
+  columns: { kind: RevealGraphNode["kind"]; title: string; x: number; w: number }[];
   width: number;
   height: number;
 };
 
-/** ノードの半径（見た目の大きさ。反発の距離にも使う） */
-export function radiusOf(node: RevealGraphNode): number {
-  switch (node.kind) {
-    case "entity":
-      return 26;
-    case "statement":
-      return 16;
-    case "canon":
-      return 11;
-    case "toshio":
-      return 20;
-  }
+const COLUMN_ORDER: RevealGraphNode["kind"][] = ["canon", "entity", "statement", "toshio"];
+const COLUMN_TITLE: Record<RevealGraphNode["kind"], string> = {
+  canon: "本物の設定",
+  entity: "キャラ・物",
+  statement: "シオリが語った設定",
+  toshio: "としおの考察",
+};
+const COLUMN_WIDTH: Record<RevealGraphNode["kind"], number> = { canon: 168, entity: 96, statement: 236, toshio: 96 };
+const NODE_HEIGHT: Record<RevealGraphNode["kind"], number> = { canon: 40, entity: 34, statement: 36, toshio: 44 };
+const COLUMN_GAP = 56;
+const ROW_GAP = 14;
+const PADDING_X = 16;
+const PADDING_TOP = 34; // 列見出しの分
+const PADDING_BOTTOM = 16;
+
+/** 図に描く辺だけを残す（右向きに流れるものだけ） */
+export function isForwardEdge(e: RevealGraphEdge): boolean {
+  return e.kind === "subject" || e.kind === "based_on" || e.kind === "rode_on";
 }
 
-/** 種類ごとの初期半径。主語を内側に、主張をその周り、本物の設定ととしおを外側に */
-function ringOf(node: RevealGraphNode): number {
-  switch (node.kind) {
-    case "entity":
-      return 80;
-    case "statement":
-      return 220;
-    case "canon":
-      return 360;
-    case "toshio":
-      return 330;
+/** 同じ列の中で重ならないよう、上から順にずらす（希望の高さになるべく近く） */
+function resolveColumn(items: { want: number; h: number }[]): number[] {
+  const order = items.map((it, i) => ({ ...it, i })).sort((a, b) => a.want - b.want || a.i - b.i);
+  const ys = new Array<number>(items.length);
+  let cursor = 0;
+  for (const it of order) {
+    const y = Math.max(it.want, cursor);
+    ys[it.i] = y;
+    cursor = y + it.h + ROW_GAP;
   }
+  return ys;
 }
 
-const EDGE_LENGTH = { subject: 150, object: 160, based_on: 120, rode_on: 130 } as const;
-
-export function layoutGraph(graph: RevealGraph, options: { iterations?: number; padding?: number } = {}): GraphLayout {
-  const iterations = options.iterations ?? 320;
-  const padding = options.padding ?? 48;
-
-  const nodes: LaidOutNode[] = [];
-  const byKind = new Map<RevealGraphNode["kind"], number>();
-  const countByKind = new Map<RevealGraphNode["kind"], number>();
-  for (const n of graph.nodes) countByKind.set(n.kind, (countByKind.get(n.kind) ?? 0) + 1);
-
-  // 種類ごとに角度を等分し、種類の間で位相をずらして重なりを避ける
-  const phase: Record<RevealGraphNode["kind"], number> = { entity: 0, statement: 0.5, canon: 0.25, toshio: 0.75 };
-  for (const n of graph.nodes) {
-    const i = byKind.get(n.kind) ?? 0;
-    byKind.set(n.kind, i + 1);
-    const count = countByKind.get(n.kind) ?? 1;
-    const angle = ((i + phase[n.kind]) / count) * Math.PI * 2 - Math.PI / 2;
-    const ring = count === 1 && n.kind === "entity" ? 0 : ringOf(n);
-    nodes.push({ node: n, x: Math.cos(angle) * ring, y: Math.sin(angle) * ring, r: radiusOf(n) });
+export function layoutGraph(graph: RevealGraph): GraphLayout {
+  const present = COLUMN_ORDER.filter((kind) => graph.nodes.some((n) => n.kind === kind));
+  const columns: GraphLayout["columns"] = [];
+  let x = PADDING_X;
+  for (const kind of present) {
+    columns.push({ kind, title: COLUMN_TITLE[kind], x, w: COLUMN_WIDTH[kind] });
+    x += COLUMN_WIDTH[kind] + COLUMN_GAP;
   }
+  const columnX = new Map(columns.map((c) => [c.kind, c.x]));
+
+  const nodes: LaidOutNode[] = graph.nodes.map((node) => ({
+    node,
+    x: columnX.get(node.kind) ?? PADDING_X,
+    y: 0,
+    w: COLUMN_WIDTH[node.kind],
+    h: NODE_HEIGHT[node.kind],
+  }));
   const byId = new Map(nodes.map((n) => [n.node.id, n]));
 
-  const springs = graph.edges.flatMap((e) => {
-    const a = byId.get(e.from);
-    const b = byId.get(e.to);
-    return a && b ? [{ a, b, length: EDGE_LENGTH[e.kind] + a.r + b.r }] : [];
+  // 1. 主張を会話順に上から下へ
+  const statements = nodes
+    .filter((n) => n.node.kind === "statement")
+    .sort((a, b) => (a.node.kind === "statement" && b.node.kind === "statement" ? a.node.number - b.node.number : 0));
+  let y = PADDING_TOP;
+  for (const s of statements) {
+    s.y = y;
+    y += s.h + ROW_GAP;
+  }
+
+  // 2. 他の列は、つながっている主張の中央の高さに寄せてから重なりをほどく
+  const forward = graph.edges.filter(isForwardEdge);
+  const linkedYs = (id: string) =>
+    forward
+      .filter((e) => e.from === id || e.to === id)
+      .map((e) => byId.get(e.from === id ? e.to : e.from))
+      .filter((n): n is LaidOutNode => !!n && n.node.kind === "statement")
+      .map((n) => n.y + n.h / 2);
+
+  for (const kind of ["canon", "entity", "toshio"] as const) {
+    const items = nodes.filter((n) => n.node.kind === kind);
+    if (items.length === 0) continue;
+    const wants = items.map((n) => {
+      const ys = linkedYs(n.node.id);
+      const center = ys.length > 0 ? ys.reduce((a, b) => a + b, 0) / ys.length : PADDING_TOP + n.h / 2;
+      return { want: Math.max(PADDING_TOP, center - n.h / 2), h: n.h };
+    });
+    const ys = resolveColumn(wants);
+    items.forEach((n, i) => (n.y = ys[i]));
+  }
+
+  // 描画上の向きは常に「左の列 → 右の列」。データの向き（主張 → 本物の設定、としお → 主張）とは
+  // 別で、読み手が矢印を一方向に追えるようにする
+  const edges: LaidOutEdge[] = forward.flatMap((edge) => {
+    const a = byId.get(edge.from);
+    const b = byId.get(edge.to);
+    if (!a || !b) return [];
+    return a.x <= b.x ? [{ edge, from: a, to: b }] : [{ edge, from: b, to: a }];
   });
 
-  const vx = new Map<LaidOutNode, number>();
-  const vy = new Map<LaidOutNode, number>();
-  for (const n of nodes) {
-    vx.set(n, 0);
-    vy.set(n, 0);
-  }
-
-  for (let step = 0; step < iterations; step++) {
-    const temperature = 1 - step / iterations;
-    // 反発
-    for (let i = 0; i < nodes.length; i++) {
-      for (let j = i + 1; j < nodes.length; j++) {
-        const a = nodes[i];
-        const b = nodes[j];
-        let dx = b.x - a.x;
-        let dy = b.y - a.y;
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 1e-4) {
-          // 完全に重なったら決まった向きにずらす
-          dx = 0.01 * (i + 1);
-          dy = 0.01 * (j + 1);
-          d2 = dx * dx + dy * dy;
-        }
-        const d = Math.sqrt(d2);
-        // ラベルが下に付くので、横方向は余分に離す（dx を縮めて測ると横に広がる）
-        const minGap = a.r + b.r + 70;
-        const ax = dx * 0.7;
-        const ad2 = ax * ax + dy * dy;
-        const force = (minGap * minGap * 1.8) / Math.max(ad2, 1e-4) + (d < minGap ? (minGap - d) * 0.8 : 0);
-        const fx = (dx / d) * force;
-        const fy = (dy / d) * force;
-        vx.set(a, vx.get(a)! - fx);
-        vy.set(a, vy.get(a)! - fy);
-        vx.set(b, vx.get(b)! + fx);
-        vy.set(b, vy.get(b)! + fy);
-      }
-    }
-    // 辺のばね
-    for (const { a, b, length } of springs) {
-      const dx = b.x - a.x;
-      const dy = b.y - a.y;
-      const d = Math.max(Math.sqrt(dx * dx + dy * dy), 1e-3);
-      const force = (d - length) * 0.08;
-      const fx = (dx / d) * force;
-      const fy = (dy / d) * force;
-      vx.set(a, vx.get(a)! + fx);
-      vy.set(a, vy.get(a)! + fy);
-      vx.set(b, vx.get(b)! - fx);
-      vy.set(b, vy.get(b)! - fy);
-    }
-    // 中心への引力（孤立したものが飛んでいかないように）と適用
-    for (const n of nodes) {
-      const fx = vx.get(n)! - n.x * 0.01;
-      const fy = vy.get(n)! - n.y * 0.01;
-      const limit = 24 * temperature + 1;
-      const len = Math.sqrt(fx * fx + fy * fy);
-      const scale = len > limit ? limit / len : 1;
-      n.x += fx * scale;
-      n.y += fy * scale;
-      vx.set(n, 0);
-      vy.set(n, 0);
-    }
-  }
-
-  // 原点を左上に寄せて、ラベルの分の余白を足す
-  const minX = Math.min(...nodes.map((n) => n.x - n.r), 0) - padding;
-  const minY = Math.min(...nodes.map((n) => n.y - n.r), 0) - padding;
-  const maxX = Math.max(...nodes.map((n) => n.x + n.r), 0) + padding;
-  const maxY = Math.max(...nodes.map((n) => n.y + n.r), 0) + padding + 16;
-  for (const n of nodes) {
-    n.x = Math.round((n.x - minX) * 10) / 10;
-    n.y = Math.round((n.y - minY) * 10) / 10;
-  }
-
-  return { nodes, byId, width: Math.ceil(maxX - minX), height: Math.ceil(maxY - minY) };
+  const width = Math.max(x - COLUMN_GAP + PADDING_X, 320);
+  const height = Math.max(...nodes.map((n) => n.y + n.h), PADDING_TOP) + PADDING_BOTTOM;
+  return { nodes, edges, byId, columns, width, height };
 }

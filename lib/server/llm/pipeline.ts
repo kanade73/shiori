@@ -1,11 +1,12 @@
 import { analyzeUserMessage } from "./analyze";
 import { generateResponse } from "./generate";
+import { decideDirective } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
-import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
+import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
 import { detectTopicShift } from "../topic-shift";
-import { getAllCanonFacts, getEntities } from "../works";
+import { getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import type {
   Claim,
@@ -13,6 +14,7 @@ import type {
   Message,
   ResponseEvaluation,
   SessionTopic,
+  TurnDirective,
   UserMessageAnalysis,
 } from "../types";
 
@@ -20,6 +22,8 @@ export type PipelineResult = {
   analysis: UserMessageAnalysis;
   generation: GenerationResult;
   evaluation: ResponseEvaluation;
+  /** バックエンドがこのターンに決めた「今回の指示」。 */
+  directive: TurnDirective;
   regenerated: boolean;
   /** Fabricated claims from the final reply, normalized, that are not already stored. */
   newFabricatedClaims: Claim[];
@@ -51,10 +55,9 @@ export function turnsSinceLastToshio(history: Message[]): number {
 
 /** 割り込みを検討する価値がある発話か（材料が薄いなら Gemini を呼ぶまでもない）。 */
 export function worthAskingToshio(generation: GenerationResult, analysis: UserMessageAnalysis): boolean {
-  // としおは evaluate を通らない。シオリがネタバレ域と判断して逸らした話題や、
-  // 分からないふりで主張を避けた話題（差し戻し2回後の定型文もここに落ちる）に
-  // 検査の無い経路で乗せない。
-  if (generation.strategy === "avoid_spoiler" || generation.strategy === "admit_uncertainty") return false;
+  // としおは evaluate を通らない。シオリが分からないふりで主張を避けた話題
+  // （差し戻し2回後の定型文もここに落ちる）に、検査の無い経路で乗せない。
+  if (generation.strategy === "admit_uncertainty") return false;
   if (generation.claims.length > 0) return true;
   return analysis.questionType === "theory" || analysis.questionType === "doubt" || analysis.questionType === "fact_question";
 }
@@ -73,10 +76,11 @@ const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * (topic lookup until the session has one) -> analyze (local) -> retrieve ->
- * generate -> evaluate -> regenerate once if flagged. Generation is
- * unconstrained; consistency is enforced only after the fact, against what the
- * character already said in this session.
+ * (topic lookup until the session has one, topic-shift check after) ->
+ * analyze (local) -> retrieve -> decide directive (local) -> generate
+ * (返答文 + claims を1回の構造化出力で) -> evaluate -> regenerate once if
+ * flagged. 量と頻度はコードが決め、中身は LLM が決める。生成が見るのは関係する
+ * 数件の嘘だけで、整合はこの後の evaluate が全件と照合して担保する。
  */
 export async function runConversationPipeline(params: {
   workId: string;
@@ -127,10 +131,17 @@ export async function runConversationPipeline(params: {
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
   const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis, topicFacts);
-  const existingFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
-  // 前の話題の事実も、そこでついた嘘の根拠の検査（ネタバレ・上書き）には要る。シオリに渡すのはいまの話題の分だけ
-  const allCanonFacts = [...topicFacts, ...topicsBefore.flatMap((t) => t.facts), ...getAllCanonFacts(workId)];
+  // 生成には関係する数件、検査には全件。守りは evaluate に寄せる。
+  const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
+  const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
+
+  const directive = decideDirective({
+    analysis,
+    history,
+    fabricatedFacts: existingFabricatedFacts,
+    relevantFacts: promptFabricatedFacts,
+  });
 
   const genArgs = {
     workTitle,
@@ -138,47 +149,42 @@ export async function runConversationPipeline(params: {
     topic,
     pastTopics: topicsBefore,
     canonFacts: visibleCanonFacts,
-    fabricatedFacts: existingFabricatedFacts,
+    fabricatedFacts: promptFabricatedFacts,
+    directive,
     history: historyForTopic(history, topic),
     userMessage,
   };
+  const generate = (feedback?: string): Promise<GenerationResult> => generateResponse({ ...genArgs, feedback });
   const evaluate = (result: GenerationResult) =>
     evaluateGeneration({
       result,
       visibleCanonFacts,
-      allCanonFacts,
-      currentEpisode,
       existingFabricatedFacts,
       normalize,
     });
 
-  let generation = await generateResponse(genArgs);
+  let generation = await generate();
   let evaluation = evaluate(generation);
 
   let regenerated = false;
+  let gaveUp = false;
   if (evaluation.shouldRegenerate) {
     regenerated = true;
     const feedback = [evaluation.reason, ...evaluation.details.map((d) => `- ${d}`)].filter(Boolean).join("\n");
-    generation = await generateResponse({ ...genArgs, feedback });
+    generation = await generate(feedback);
     evaluation = evaluate(generation);
 
     // Still flagged after one retry: don't trust the generated *text* either
     // (it may have been written around the very lie we're discarding), so
     // replace the whole reply with a safe non-answer rather than looping.
     if (evaluation.shouldRegenerate) {
-      generation = {
-        ...generation,
-        message: SAFE_UNCERTAIN_MESSAGE,
-        claims: [],
-        usedExistingFactIds: [],
-        strategy: "admit_uncertainty",
-        spoilerRisk: 0,
-      };
+      gaveUp = true;
+      generation = { message: SAFE_UNCERTAIN_MESSAGE, claims: [], strategy: "admit_uncertainty" };
     }
   }
 
   const newFabricatedClaims: Claim[] = [];
-  const reused = new Set<string>(generation.usedExistingFactIds);
+  const reused = new Set<string>();
   for (const claim of generation.claims) {
     if (!isFabricated(claim)) continue;
     const normalized = normalizeTriple(claim, normalize);
@@ -190,10 +196,17 @@ export async function runConversationPipeline(params: {
     }
   }
 
+  // strategy はモデルに選ばせない。何を保存したかから事後に決める（表示・ゲーティング用）。
+  if (!gaveUp) {
+    generation.strategy =
+      newFabricatedClaims.length > 0 ? "introduce_small_lie" : reused.size > 0 ? "reinforce_existing_lie" : "no_new_lie";
+  }
+
   return {
     analysis,
     generation,
     evaluation,
+    directive,
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
@@ -238,7 +251,7 @@ export async function runToshioInterjection(params: {
       fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,
-      shioriLies: generation.claims.filter(isFabricated),
+      premises: generation.claims.filter(isFabricated),
     });
     if (commentary.shouldComment && commentary.message.trim().length > 0) return commentary.message;
     return null;

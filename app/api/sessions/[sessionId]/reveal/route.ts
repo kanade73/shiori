@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { getFabricatedFacts, getMessageClaims, getMessages, getSession, revealSession } from "@/lib/server/store";
 import { getEntities } from "@/lib/server/works";
 import { getVisibleCanonFacts } from "@/lib/server/retrieval";
-import { buildReveal, toRevealData } from "@/lib/server/reveal";
-import type { ChatSession, Verdict } from "@/lib/server/types";
+import { buildReveal, toRevealData } from "@/lib/server/reveal/build";
+import type { ChatSession } from "@/lib/server/types";
+import type { Verdict } from "@/lib/server/reveal/types";
 
 function build(session: ChatSession) {
   return buildReveal({

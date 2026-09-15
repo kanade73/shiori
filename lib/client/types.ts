@@ -12,12 +12,6 @@ export type ViewMessage = {
   speaker?: Speaker;
 };
 
-export function formatTime(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.getHours()}:${d.getMinutes().toString().padStart(2, "0")}`;
-}
-
 /**
  * セッションの見出し。会話の最初に把握した話題の場面（issue #14）を出す。
  * 旧データ（シーン検索で視聴進捗を入れていたセッション）はその入力か話数。

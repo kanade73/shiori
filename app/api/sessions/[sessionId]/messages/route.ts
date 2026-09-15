@@ -10,10 +10,12 @@ import {
 import { getWork } from "@/lib/server/works";
 import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
+import { createSseWriter, SSE_HEADERS, type SseWriter } from "@/lib/server/sse";
 import type { Message } from "@/lib/server/types";
 
 const MAX_CONTENT_LENGTH = 1000;
-const HISTORY_LIMIT = 16;
+// シオリに渡す直近の履歴。としおの発話は generate 側で落とすので、実質ユーザー↔シオリの往復5回分。
+const HISTORY_LIMIT = 12;
 
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
@@ -21,24 +23,6 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
   return NextResponse.json({ messages: getMessages(sessionId) });
-}
-
-function sseEvent(event: string, data: unknown): string {
-  return `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-}
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** Splits text into small chunks to render as a visible stream on the client. */
-function chunkText(text: string): string[] {
-  const chunks: string[] = [];
-  const size = 4;
-  for (let i = 0; i < text.length; i += size) {
-    chunks.push(text.slice(i, i + size));
-  }
-  return chunks;
 }
 
 export async function POST(req: Request, context: { params: Promise<{ sessionId: string }> }) {
@@ -74,31 +58,11 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
   const historyBefore: Message[] = getMessages(sessionId).slice(-HISTORY_LIMIT);
   const userRecord = appendMessage(sessionId, "user", content);
 
-  // クライアントが切断（タブを閉じる/リロード等）すると controller は自動で
-  // close されるが、その後も generate 等の await が続いていれば send() が
-  // 呼ばれうる。enqueue-after-close は例外になり、握りつぶさないとサーバー
-  // ログにエラーが残るだけでなく catch 側のフォールバック送信も同じ理由で
-  // 失敗し、ユーザーには何も返らないまま消える（"問いかけに返事がない"）。
-  let closed = false;
+  let writer: SseWriter | null = null;
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder();
-      const send = (event: string, data: unknown) => {
-        if (closed) return;
-        try {
-          controller.enqueue(encoder.encode(sseEvent(event, data)));
-        } catch {
-          // クライアント切断等で controller が既に閉じていた。以降は送らない。
-          closed = true;
-        }
-      };
-
-      const streamText = async (text: string) => {
-        for (const chunk of chunkText(text)) {
-          send("token", { text: chunk });
-          await sleep(18);
-        }
-      };
+      writer = createSseWriter(controller);
+      const { send, streamText, close } = writer;
 
       try {
         const {
@@ -193,27 +157,14 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         send("message-end", {});
         send("done", {});
       } finally {
-        if (!closed) {
-          closed = true;
-          try {
-            controller.close();
-          } catch {
-            // 既に閉じられていた（クライアント切断）。何もすることはない。
-          }
-        }
+        close();
       }
     },
     cancel() {
       // クライアントが切断した。以降の send() を黙って無視させる。
-      closed = true;
+      writer?.markClosed();
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

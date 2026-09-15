@@ -1,6 +1,7 @@
-import { buildNormalizer } from "./claims";
-import type { BuiltReveal } from "./reveal";
-import type { ClaimRelation, Entity, RevealGraph, RevealGraphEdge, RevealGraphNode, RevealStatement } from "./types";
+import { buildNormalizer } from "../claims";
+import type { BuiltReveal } from "./build";
+import type { ClaimRelation, Entity } from "../types";
+import type { RevealGraph, RevealGraphEdge, RevealGraphNode, RevealStatement } from "./types";
 
 /**
  * 嘘の構造図: 答え合わせの結果に添える、主張どうしのつながりのグラフ。

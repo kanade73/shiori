@@ -7,7 +7,7 @@ import { ChatHeader } from "./ChatHeader";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { TypingIndicator } from "./TypingIndicator";
 import { ChatInput } from "./ChatInput";
-import { Mascot } from "./Mascot";
+import { Mascot } from "@/components/ui/Mascot";
 import {
   getFabricatedFacts,
   getSessionData,

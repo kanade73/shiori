@@ -40,11 +40,10 @@ const TOSHIO = "結論から言うとね、あれは伏線なんですよ。";
 function pipelineResult(overrides: Record<string, unknown> = {}) {
   return {
     analysis: { mentionedCharacters: [], mentionedEvents: [], sentiment: "neutral", questionType: "theory" },
-    generation: { message: SHIORI, strategy: "introduce_small_lie", claims: [], usedExistingFactIds: [], spoilerRisk: 0 },
+    generation: { message: SHIORI, strategy: "introduce_small_lie", claims: [] },
     evaluation: {
       canonContradictionScore: 0,
       fabricatedConsistencyScore: 1,
-      spoilerRiskScore: 0,
       believabilityScore: 0.85,
       shouldRegenerate: false,
       details: [],
@@ -189,7 +188,7 @@ describe("POST /api/sessions/[id]/messages: 答え合わせ用の記録", () => 
       { subject: "A", relation: "is", object: "友達", negated: false, claim: "A は友達", grounding: "canon", sourceCanonFactIds: ["c1"], quote: "そうだね" },
     ];
     mocks.runConversationPipeline.mockResolvedValue(
-      pipelineResult({ generation: { message: SHIORI, strategy: "introduce_small_lie", claims, usedExistingFactIds: [], spoilerRisk: 0 } }),
+      pipelineResult({ generation: { message: SHIORI, strategy: "introduce_small_lie", claims } }),
     );
     await collect(await post());
     expect(mocks.saveMessageClaims.mock.calls).toEqual([["s1", "msg-2", claims]]);

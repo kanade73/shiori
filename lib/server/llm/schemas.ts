@@ -9,6 +9,7 @@ export const ClaimSchema = z.object({
   claim: z.string(),
   grounding: z.enum(["canon", "fabricated"]),
   sourceCanonFactIds: z.array(z.string()),
+  /** 返答文からの抜き出し。答え合わせで本文中の位置を示すのに使う。省略可 */
   quote: z.string().optional(),
 });
 
@@ -39,21 +40,13 @@ export const TopicRouteSchema = z.object({
 
 export type TopicRoute = z.infer<typeof TopicRouteSchema>;
 
+/** generate.ts の構造化出力（strategy はモデルに出させない） */
+export const GenerationResultSchema = z.object({
+  message: z.string(),
+  claims: z.array(ClaimSchema),
+});
+
 export const ToshioCommentarySchema = z.object({
   shouldComment: z.boolean(),
   message: z.string(),
-});
-
-export const GenerationResultSchema = z.object({
-  message: z.string(),
-  strategy: z.enum([
-    "no_new_lie",
-    "introduce_small_lie",
-    "reinforce_existing_lie",
-    "avoid_spoiler",
-    "admit_uncertainty",
-  ]),
-  claims: z.array(ClaimSchema),
-  usedExistingFactIds: z.array(z.string()),
-  spoilerRisk: z.number().min(0).max(1),
 });

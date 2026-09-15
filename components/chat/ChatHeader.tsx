@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { MenuIcon } from "./icons";
+import { MenuIcon } from "@/components/ui/icons";
 
 interface ChatHeaderProps {
   workTitle: string;
