@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   listSessions: vi.fn(),
   saveMessageClaims: vi.fn(),
   getWork: vi.fn(),
+  prepareTopicSearch: vi.fn(),
 }));
 vi.mock("@/lib/server/store", () => ({
   appendMessage: mocks.appendMessage,
@@ -17,6 +18,7 @@ vi.mock("@/lib/server/store", () => ({
   saveMessageClaims: mocks.saveMessageClaims,
 }));
 vi.mock("@/lib/server/works", () => ({ getWork: mocks.getWork }));
+vi.mock("@/lib/server/topic", () => ({ prepareTopicSearch: mocks.prepareTopicSearch }));
 
 import { POST } from "./route";
 
@@ -51,10 +53,16 @@ describe("POST /api/sessions", () => {
     expect(mocks.saveMessageClaims).toHaveBeenCalledWith("s1", "msg-1", []);
   });
 
+  it("ユーザーが答える前に、話題を探す資料と段落の埋め込みを用意し始める（issue #22）", async () => {
+    await post({ workId: "w" });
+    expect(mocks.prepareTopicSearch).toHaveBeenCalledWith("w");
+  });
+
   it("workId が無ければ 400、作品が無ければ 404", async () => {
     expect((await post({})).status).toBe(400);
     mocks.getWork.mockReturnValue(null);
     expect((await post({ workId: "missing" })).status).toBe(404);
     expect(mocks.createSession).not.toHaveBeenCalled();
+    expect(mocks.prepareTopicSearch).not.toHaveBeenCalled();
   });
 });

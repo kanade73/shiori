@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getWork } from "@/lib/server/works";
 import { appendMessage, createSession, getFabricatedFacts, listSessions, saveMessageClaims } from "@/lib/server/store";
+import { prepareTopicSearch } from "@/lib/server/topic";
 
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
@@ -33,6 +34,8 @@ export async function POST(req: Request) {
   const opening = appendMessage(session.id, "assistant", OPENING_MESSAGE, "shiori");
   // 定型の問いかけで、設定には触れていない（答え合わせで「記録前の旧データ」扱いにしない）
   saveMessageClaims(session.id, opening.id, []);
+  // ユーザーが答えを打っている間に、話題を探す資料と段落の埋め込み（ベクトルDB）を用意し始める
+  prepareTopicSearch(workId);
 
   return NextResponse.json({ sessionId: session.id, openingMessage: OPENING_MESSAGE });
 }
