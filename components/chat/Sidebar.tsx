@@ -36,7 +36,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         <div className="flex items-center justify-between gap-sm px-md py-md">
           <div className="flex items-center gap-sm">
             <Mascot size={44} />
-            <span className="font-display text-[20px] font-medium leading-none text-ink">シオリ</span>
+            <span className="font-display text-[20px] leading-none text-ink">シオリ</span>
           </div>
           <button
             type="button"
@@ -59,7 +59,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         </div>
 
         <div className="mt-md px-sm">
-          <p className="px-sm pb-xxs text-[12px] font-medium uppercase tracking-[1.5px] text-muted-soft">作品</p>
+          <p className="px-sm pb-xxs font-display text-[13px] tracking-[1.5px] text-muted-soft">作品</p>
           <div className="rounded-lg bg-surface-card px-sm py-sm">
             <p className="text-[15px] font-medium text-ink">{work.title}</p>
             <dl className="mt-xs space-y-[2px] text-[12px] text-muted">
@@ -85,7 +85,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
         </div>
 
         <div className="mt-sm flex-1 overflow-y-auto px-sm pb-sm">
-          <p className="px-sm pb-xxs pt-sm text-[12px] font-medium uppercase tracking-[1.5px] text-muted-soft">
+          <p className="px-sm pb-xxs pt-sm font-display text-[13px] tracking-[1.5px] text-muted-soft">
             セッション
           </p>
           {sessions.map((s) => (

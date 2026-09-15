@@ -251,7 +251,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
 
         {sendError && (
           <div className="mx-auto w-full max-w-[760px] px-md pb-xs">
-            <p className="rounded-md bg-[#c6435a1a] px-sm py-xs text-[13px] text-error">{sendError}</p>
+            <p className="rounded-md bg-error/10 px-sm py-xs text-[13px] text-error">{sendError}</p>
           </div>
         )}
 

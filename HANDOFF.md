@@ -6,6 +6,13 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: 2026-09-15）
 
+## 2026-09-15: ライト/ダークテーマ（PR #17 `feat/shiori-theme`）を dev の上に積み直した
+- PR #17 は元々 `feat/claims-extractor` の2コミット（`a52ab07` / `e04cfd6`、dev には未取り込み・`feat/lora-extractor` の土台）の上にテーマのコミットを積んでいたため dev と衝突していた。**テーマのコミット `940e215` だけを `origin/dev`（#18 マージ後）に cherry-pick し、ブランチを置き換えた**。claims-extractor の2コミットは PR #17 から外れた（`feat/lora-extractor` に残っている）
+- 置き直し時の変更: dev のディレクトリ再編に合わせ `ThemeToggle` を `components/ui/` に置き、`ChatHeader`（`components/chat/`）と `SetupScreen`（`components/setup/`）へトグルとクラスの変更を手で移植。SetupScreen は #18 で視聴進捗の入力が消えているので、残っている部分（タイトル・エラー表示・作品カード・続きから）だけに適用
+- 内容: `tailwind.config.ts` の意味色を `rgb(var(--color-*)/<alpha-value>)` 化、`app/globals.css` の `:root` / `[data-theme="dark"]` で配色を切り替え、`app/layout.tsx` で `DotGothic16` と FOUC 防止スクリプト、`.image-pixelated` でドット絵のジャギー保持。切り替えは `localStorage("theme")`、無ければ `prefers-color-scheme`
+- 注意: PR **#19**（`feat/issue-15` フロントの細かい修正）も `globals.css` / `tailwind.config.ts` / `components/chat/*` を触る。どちらかをマージしたらもう一方は衝突しうる
+- ローカルの worktree `../chat-shiori-theme` は古い `feat/shiori-theme` を指したままなので、使うなら `git fetch && git reset --hard origin/feat/shiori-theme`
+
 - **作業ブランチ: `feat/session_rag`**（PR **#18** `feat: 話題の切り替わりを判定してRAGを引き直す（issue #14）` → `dev`）。`origin/dev`（#8 としお・#13 答え合わせ + ディレクトリ再編・directive 方式の生成 をマージ済み）を **このブランチにマージしてコンフリクトを解消した**。PR はマージ可能な状態
 - マージで決めたこと:
   - 生成は dev の **directive 方式**（`llm/directive.ts` が「今回の指示」を決め、strategy はモデルに出させない）を正とし、その上に issue #14 の「今日の話題」節・`topic`/`pastTopics` の文脈・話題単位の履歴切り出し（`historyForTopic`）を載せた

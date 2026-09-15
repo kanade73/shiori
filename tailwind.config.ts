@@ -1,49 +1,53 @@
 import type { Config } from "tailwindcss";
 
+// 色の実体は globals.css の CSS 変数（--color-*）。[data-theme="dark"] で値が差し替わる。
+// Tailwind には「<alpha-value> プレースホルダ付きの rgb()」として渡し、bg-ink/30 のような透明度指定を効かせる。
+const themed = (name: string) => `rgb(var(--color-${name}) / <alpha-value>)`;
+
 const config: Config = {
   content: ["./app/**/*.{ts,tsx}", "./components/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
         primary: {
-          DEFAULT: "#6b5496",
-          active: "#4a396a",
-          disabled: "#dfdde4",
+          DEFAULT: themed("primary"),
+          active: themed("primary-active"),
+          disabled: themed("primary-disabled"),
         },
-        ink: "#121421",
+        ink: themed("ink"),
         body: {
-          DEFAULT: "#3b3e54",
-          strong: "#25283c",
+          DEFAULT: themed("body"),
+          strong: themed("body-strong"),
         },
         muted: {
-          DEFAULT: "#676b83",
-          soft: "#8a8d9e",
+          DEFAULT: themed("muted"),
+          soft: themed("muted-soft"),
         },
         hairline: {
-          DEFAULT: "#ece3df",
-          soft: "#f1ecea",
+          DEFAULT: themed("hairline"),
+          soft: themed("hairline-soft"),
         },
-        canvas: "#fbf7f6",
+        canvas: themed("canvas"),
         surface: {
-          soft: "#f8f2ef",
-          card: "#f2e8e4",
-          "cream-strong": "#ebded8",
-          dark: "#121421",
-          "dark-elevated": "#1e2133",
-          "dark-soft": "#181a2a",
+          soft: themed("surface-soft"),
+          card: themed("surface-card"),
+          "cream-strong": themed("surface-cream-strong"),
+          dark: themed("surface-dark"),
+          "dark-elevated": themed("surface-dark-elevated"),
+          "dark-soft": themed("surface-dark-soft"),
         },
-        "on-primary": "#ffffff",
+        "on-primary": themed("on-primary"),
         "on-dark": {
-          DEFAULT: "#f7f5f5",
-          soft: "#9497a8",
+          DEFAULT: themed("on-dark"),
+          soft: themed("on-dark-soft"),
         },
         accent: {
-          steel: "#505b95",
-          mauve: "#9f90bb",
+          steel: themed("accent-steel"),
+          mauve: themed("accent-mauve"),
         },
-        success: "#4caa77",
-        warning: "#cf9a3a",
-        error: "#c6435a",
+        success: themed("success"),
+        warning: themed("warning"),
+        error: themed("error"),
       },
       fontSize: {
         "display-xl": ["64px", { lineHeight: "1.05", letterSpacing: "-1.5px" }],
@@ -60,6 +64,7 @@ const config: Config = {
       },
       fontFamily: {
         display: [
+          "var(--font-display)",
           "var(--font-sans)",
           "Noto Sans JP",
           "Hiragino Kaku Gothic ProN",
