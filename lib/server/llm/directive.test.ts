@@ -134,22 +134,42 @@ describe("としおの考察について聞かれたとき（support_theory）",
     expect(quotesMessage("ハチワレが合格証を落としたのって本当に描写あった？", theory)).toBe(false);
   });
 
-  it("としおの直後の質問・疑い・雑談は support_theory", () => {
+  it("としおの直後でも、としおに触れない質問・雑談は support_theory にしない（issue #30）", () => {
     const history = [msg("u1", "user"), msg("a1", "assistant", "shiori"), toshio("t1")];
-    for (const q of ["doubt", "theory", "fact_question", "other"] as QuestionType[]) {
-      expect(theoryInQuestion({ userMessage: "そうなの？", analysis: analysis(q), history })).toBe(theory);
+    for (const userMessage of ["怖かったシーンある？", "古本屋の店主ってだれ？", "草むしりの仕事は危なくないの？", "面白いね"]) {
+      expect(theoryInQuestion({ userMessage, history })).toBeNull();
     }
   });
 
-  it("としおの直後でも感想だけなら乗せない", () => {
+  it("としおの直後の、としおに触れない「それ本当？」は layer", () => {
     const history = [msg("u1", "user"), msg("a1", "assistant", "shiori"), toshio("t1")];
-    expect(theoryInQuestion({ userMessage: "面白いね", analysis: analysis("impression"), history })).toBeNull();
+    const facts = [fact("f1", "a1")];
+    const directive = decideDirective({ analysis: analysis("doubt"), history, userMessage: "それ本当？", fabricatedFacts: facts, relevantFacts: [] });
+    expect(directive).toEqual({ kind: "layer", doubted: facts });
+  });
+
+  it("としおを名指ししたら support_theory（シオリを挟んだ後でも）", () => {
+    const right = [msg("u1", "user"), msg("a1", "assistant", "shiori"), toshio("t1")];
+    const later = [msg("u1", "user"), toshio("t1"), msg("u2", "user"), msg("a2", "assistant", "shiori")];
+    for (const history of [right, later]) {
+      expect(theoryInQuestion({ userMessage: "としおの言ってたことって本当？", history })).toBe(theory);
+      expect(theoryInQuestion({ userMessage: "トシオはどうしてそう思うの", history })).toBe(theory);
+    }
+    const directive = decideDirective({ analysis: analysis("doubt"), history: right, userMessage: "としおの考察ってどう思う？", fabricatedFacts: [], relevantFacts: [] });
+    expect(directive).toEqual({ kind: "support_theory", theory });
+  });
+
+  it("「考察」はとしおの直後だけ support_theory", () => {
+    const right = [msg("u1", "user"), msg("a1", "assistant", "shiori"), toshio("t1")];
+    const later = [msg("u1", "user"), toshio("t1"), msg("u2", "user"), msg("a2", "assistant", "shiori")];
+    expect(theoryInQuestion({ userMessage: "その考察って本当？", history: right })).toBe(theory);
+    expect(theoryInQuestion({ userMessage: "その考察って本当？", history: later })).toBeNull();
   });
 
   it("シオリを1回挟んでも、としおの文を引用していれば support_theory", () => {
     const history = [msg("u1", "user"), toshio("t1"), msg("u2", "user"), msg("a2", "assistant", "shiori")];
     const userMessage = `${theory} これ本当？`;
-    expect(theoryInQuestion({ userMessage, analysis: analysis("doubt"), history })).toBe(theory);
+    expect(theoryInQuestion({ userMessage, history })).toBe(theory);
     const directive = decideDirective({ analysis: analysis("doubt"), history, userMessage, fabricatedFacts: [fact("f1", "a2")], relevantFacts: [] });
     expect(directive).toEqual({ kind: "support_theory", theory });
   });
@@ -162,6 +182,6 @@ describe("としおの考察について聞かれたとき（support_theory）",
 
   it("としおが一度も話していなければ null", () => {
     const history = [msg("u1", "user"), msg("a1", "assistant", "shiori")];
-    expect(theoryInQuestion({ userMessage: "そうなの？", analysis: analysis("doubt"), history })).toBeNull();
+    expect(theoryInQuestion({ userMessage: "としおってだれ？", history })).toBeNull();
   });
 });
