@@ -91,7 +91,7 @@
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)` と、返答文の中でその主張を述べた部分の抜き出し `quote`
-4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、未視聴範囲の canonFact への依拠、本物の設定の直接上書きを検出
+4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾と、本物の設定の直接上書きを検出（ネタバレの検査はしない）
 5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**。それでもダメなら定型の濁し返答に差し替える
 6. **としお割り込み**（`pipeline.ts` の `runToshioInterjection` → `llm/toshio.ts`、issue #6）— Route Handler がシオリの返答を流し切って保存した後に呼ぶ（シオリのパイプラインには含めない。としお分の Gemini 待ちでシオリの表示を遅らせないため）。材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler` / `admit_uncertainty` で主張を避けていない場合だけ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない（だからシオリが逸らした話題には乗せない）。シオリが語った本物の設定・嘘（この発話でついた嘘も含む）を前提に、それを否定せず「深い考察」を重ねる。失敗しても単に今回は割り込まなかったことにする
    - としおの考察は、コードがランダムに選んだ「切り口」（`toshio.ts` の `THEORY_ANGLES`。反転・隠れた因果・伏線・第三者・都市伝説など、作品を知らない一般的な角度）と、`creators` から用意した作風を土台に組む。頻度は `worthAskingToshio` が決める（ユーザーが考察・理由を求めた／疑った回は2ターン、シオリが嘘をついただけの回は5ターン空ける）
@@ -101,7 +101,7 @@
 
 **設計上の原則: 発想は縛らず、整合だけ縛る。** generate に候補選別やスコアリングを噛ませない。LLM が突飛なことを言うのが面白さの源で、構造化はあくまで事後の整合性チェックに限る。矛盾以外の理由で嘘を棄却しないこと。
 
-矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
+矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。本物の設定との照合にも同じルールを使う（`contradictionReason`）。「モモンガ did A」という本物の設定の横に「モモンガ did B」という嘘を足すのは上書きではない（issue #26。以前は主語と関係が同じだけで弾いていて、人物の話題で嘘が毎回差し戻されていた）。関係が自由記述の work.json の canonFacts とは照合しない。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
 
 ### 答え合わせ（会話の終わりに真偽を明かす）
 
@@ -135,9 +135,11 @@
 
 ### LLM 呼び出しの ON/OFF は API キーの有無で決まる
 
-`lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY` だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
+`lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY`（と2本目の `GEMINI_API_KEY_2`）だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
+**キーの切り替え（issue #11）**: `GEMINI_API_KEY_2`（先輩のキー）もあれば、無料枠の上限（429）に達したキーからもう1本に切り替え、同じリクエストをすぐ送り直す。以後はそちらを使い続け、そちらも尽きたら元のキーに戻る（`lib/server/llm/key-pool.ts`）。休ませるのは (キー, モデル) の組で、1日の上限なら太平洋時間の0時まで、1分の上限ならエラーに書かれた待ち時間だけ。両方休み中なら送らずに投げ、今の fallback に任せる。混雑（503）では切り替えない。無効なキーはプロセスの間ずっと外す。`client.ts` の `ai` がこれを包んでいるので、呼び出し側は SDK と同じ `ai.models.generateContent` / `embedContent` のまま使う（`ai` に他のメソッドを足すときは包みにも足すこと）。SDK の `retryOptions` は付けない（429 を待ってから投げるので切り替えが遅れる）。無料枠はプロジェクトごとなので、2本のキーは別アカウントで作ったものでないと意味がない。ログにはキーの文字列ではなく環境変数名を出す
+
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
 
 ### 意図的に選んでいない技術
 
@@ -216,13 +218,14 @@ pictures/                           デザイン素材・スケッチ
 
 ```
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
-GEMINI_MODEL=            # 省略可。既定 gemini-3.6-flash
+GEMINI_API_KEY_2=        # 省略可。2本目（先輩）のキー。上限に達したら1本目と切り替える
+GEMINI_MODEL=            # 省略可。既定 gemini-3.5-flash-lite
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
 DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
 
-本番の API キーは `fly secrets set GEMINI_API_KEY=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
+本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 
 ---
 
