@@ -1,5 +1,5 @@
 import { contradictionReason, findContradictions, isClaimRelation, isFabricated, normalizeTriple, type Normalizer, type Triple } from "../claims";
-import type { CanonFact, FabricatedFact, GenerationResult, ResponseEvaluation } from "../types";
+import type { CanonFact, Claim, FabricatedFact, ResponseEvaluation } from "../types";
 
 /**
  * Deterministic checker. The generation step is deliberately unconstrained
@@ -23,12 +23,13 @@ function canonTriple(fact: CanonFact, normalize: Normalizer): Triple | null {
 }
 
 export function evaluateGeneration(params: {
-  result: GenerationResult;
+  /** extract.ts が返答文から取り出した主張 */
+  claims: Claim[];
   visibleCanonFacts: CanonFact[];
   existingFabricatedFacts: FabricatedFact[];
   normalize: Normalizer;
 }): ResponseEvaluation {
-  const { result, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
+  const { claims, visibleCanonFacts, existingFabricatedFacts, normalize } = params;
 
   const canon = visibleCanonFacts.flatMap((fact) => {
     const triple = canonTriple(fact, normalize);
@@ -39,7 +40,7 @@ export function evaluateGeneration(params: {
   let canonConflicts = 0;
   let fabricatedConflicts = 0;
 
-  for (const claim of result.claims) {
+  for (const claim of claims) {
     const normalized = normalizeTriple(claim, normalize);
     const contradictions = findContradictions(normalized, existingFabricatedFacts);
     if (contradictions.length > 0) {
@@ -61,7 +62,7 @@ export function evaluateGeneration(params: {
   }
 
   const believabilityScore = 0.85;
-  const total = Math.max(result.claims.length, 1);
+  const total = Math.max(claims.length, 1);
   const canonContradictionScore = Math.min(1, canonConflicts / total);
   const fabricatedConsistencyScore = fabricatedConflicts > 0 ? 0 : 1;
 

@@ -11,6 +11,9 @@ interface ChatHeaderProps {
   /** 答え合わせ済みか。済んでいればボタンは結果を見る導線になる */
   revealed: boolean;
   onOpenSidebar: () => void;
+  /** 開発者モード（右パネル）の開閉。パネルを出さない狭い画面ではボタンも隠す */
+  devMode: boolean;
+  onToggleDevMode: () => void;
 }
 
 export function ChatHeader({
@@ -19,6 +22,8 @@ export function ChatHeader({
   sessionId,
   revealed,
   onOpenSidebar,
+  devMode,
+  onToggleDevMode,
 }: ChatHeaderProps) {
   return (
     <header className="flex h-16 shrink-0 items-center justify-between border-b border-hairline bg-canvas px-md">
@@ -38,6 +43,18 @@ export function ChatHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-xs">
+        <button
+          type="button"
+          onClick={onToggleDevMode}
+          aria-pressed={devMode}
+          className={`hidden rounded-md border px-sm py-xxs text-[12px] transition-colors lg:block ${
+            devMode
+              ? "border-primary bg-primary/10 text-primary"
+              : "border-hairline text-muted hover:bg-surface-card hover:text-ink"
+          }`}
+        >
+          開発者モード
+        </button>
         <Link
           href={`/debug/${sessionId}`}
           className="hidden px-sm py-xxs font-pixel text-[16px] text-muted hover:bg-surface-card hover:text-ink sm:block"

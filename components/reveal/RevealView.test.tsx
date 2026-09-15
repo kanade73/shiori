@@ -119,7 +119,7 @@ describe("RevealView", () => {
     expect(screen.queryByText("見抜いた")).toBeNull();
   });
 
-  it("予想して答えを見ると、予想を送り、結果（正解数・見抜いた/疑いすぎ・としおの前提）を出す", async () => {
+  it("予想して答えを見ると、予想を送り、結果（正解数・見抜いた/疑いすぎ）を出す", async () => {
     mocks.getReveal.mockResolvedValue(pending);
     mocks.submitReveal.mockResolvedValue(revealed({ t1: "lie", l1: "lie" }));
     render(<RevealView sessionId="s1" />);
@@ -134,9 +134,24 @@ describe("RevealView", () => {
     expect(screen.getByText("2件中 1件正解")).toBeTruthy();
     expect(screen.getAllByText("見抜いた").length).toBeGreaterThan(0);
     expect(screen.getAllByText("嘘と予想").length).toBeGreaterThan(0);
-    expect(screen.getByText("根拠: 第7話〜 検定に合格した")).toBeTruthy();
-    expect(screen.getByText("この会話で作られた設定です。")).toBeTruthy();
-    expect(screen.getByText("が嘘だと知ったうえで、話を合わせていました。", { exact: false })).toBeTruthy();
+  });
+
+  it("結果には解説・根拠・注釈を出さない（印と引用文だけ）", async () => {
+    mocks.getReveal.mockResolvedValue(revealed({}));
+    render(<RevealView sessionId="s1" />);
+    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    for (const text of [
+      /根拠/,
+      /元にした本物の設定/,
+      /この会話で作られた設定です/,
+      /本文中の位置は特定できませんでした/,
+      /判定していません/,
+      /話を合わせていました/,
+      /会話に出てきた順に/,
+      /話のつながりを図で見る/,
+    ]) {
+      expect(screen.queryByText(text)).toBeNull();
+    }
   });
 
   it("同じボタンをもう一度押すと予想を取り消せる", async () => {
@@ -161,32 +176,20 @@ describe("RevealView", () => {
     expect(screen.queryByRole("button", { name: /答えを見る/ })).toBeNull();
   });
 
-  it("結果には嘘の構造図が付き、主張のノードを押すとふりかえりの該当箇所へ飛ぶ", async () => {
+  it("結果に構造図は出さない", async () => {
     mocks.getReveal.mockResolvedValue(revealed({}));
     render(<RevealView sessionId="s1" />);
-    expect(await screen.findByText("嘘の構造図")).toBeTruthy();
-    fireEvent.click(screen.getByText("話のつながりを図で見る"));
-    const graph = screen.getByTestId("reveal-graph");
-    expect(graph.querySelectorAll("[data-node-kind='statement']").length).toBe(2);
-    expect(graph.querySelectorAll("[data-node-kind='entity']").length).toBe(1);
-    expect(graph.querySelectorAll("[data-node-kind='canon']").length).toBe(1);
-    expect(graph.querySelectorAll("[data-node-kind='toshio']").length).toBe(1);
-    expect(graph.querySelector("svg text")?.closest("svg")?.textContent).toContain("持つ");
-
-    const scrollIntoView = vi.fn();
-    const target = document.getElementById("statement-l1")!;
-    expect(target).toBeTruthy();
-    target.scrollIntoView = scrollIntoView;
-    fireEvent.click(within(graph).getByRole("button", { name: /2\. 嘘: 資格証の裏にレシピがある/ }));
-    expect(scrollIntoView).toHaveBeenCalled();
+    expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
+    expect(screen.queryByText("嘘の構造図")).toBeNull();
+    expect(screen.queryByTestId("reveal-graph")).toBeNull();
   });
 
-  it("主張が無ければ構造図は出さない", async () => {
+  it("主張が無ければ話の答えは出さない", async () => {
     const data = revealed({});
     if (data.status !== "revealed") throw new Error("unreachable");
     mocks.getReveal.mockResolvedValue({ ...data, statements: [], graph: { nodes: [], edges: [] } });
     render(<RevealView sessionId="s1" />);
     expect(await screen.findByText("会話をふりかえる")).toBeTruthy();
-    expect(screen.queryByText("嘘の構造図")).toBeNull();
+    expect(screen.queryByText("話の答え")).toBeNull();
   });
 });

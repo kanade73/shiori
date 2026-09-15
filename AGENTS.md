@@ -91,12 +91,14 @@
 0. **topic** — セッションに話題の場面がまだ無ければ上の `lookupSessionTopic` で調べ、あれば話題の切り替わりを判定する（切り替わったら引き直し、履歴をクレンジングする）
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
-3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)` と、返答文の中でその主張を述べた部分の抜き出し `quote`
-4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾と、本物の設定の直接上書きを検出（ネタバレの検査はしない）
-5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**。それでもダメなら定型の濁し返答に差し替える
+3. **generate** — ペルソナ + 材料（`directive` を含む）を渡し、**返答文（プレーンテキスト）だけ**を得る。記録の規則はここに書かない（書くとモデルが自己監視に寄って嘘をやめる）
+3.5. **extract** — `lib/server/llm/extract.ts`。返答文を別の呼び出しに渡し、述べた設定上の主張 `claims` を取り出す。各 claim は `subject / relation(閉じた語彙) / object / negated`・一文の `claim`・返答文からの抜き出し `quote`。**`grounding` はモデルではなくコードが決める**（視聴済み canonFacts と subject/object を照合し、一致しなければ fabricated）。`EXTRACT_ENDPOINT` を設定すれば自前の推論サーバに向き、失敗すれば Gemini に戻る。取り出しに失敗しても claims 空として返答文はそのまま返す
+4. **evaluate** — 決定的検査（`lib/server/llm/evaluate.ts` + `lib/server/claims.ts`）。既存の嘘との矛盾、本物の設定の直接上書きを検出（照合は視聴済み canonFacts 全件 + 話題の場面の事実）
+5. flagged なら矛盾の具体的な内容を差し戻し理由に付けて**1回だけ再生成**（generate → extract → evaluate をもう一度）。それでもダメなら定型の濁し返答に差し替える
 6. **としお割り込み**（`pipeline.ts` の `runToshioInterjection` → `llm/toshio.ts`、issue #6）— Route Handler がシオリの返答を流し切って保存した後に呼ぶ（シオリのパイプラインには含めない。としお分の Gemini 待ちでシオリの表示を遅らせないため）。材料（新しい claim か `theory`/`doubt`/`fact_question` 系の質問）があり、直近2ターン以内に割り込んでおらず、シオリが `avoid_spoiler` / `admit_uncertainty` で主張を避けていない場合だけ、2人目のキャラ「としお」に割り込みを検討させる。プロンプト内の `shouldComment` で本人に判断させる単純実装で、シオリのような evaluate → 差し戻しループは持たない（だからシオリが逸らした話題には乗せない）。シオリが語った本物の設定・嘘（この発話でついた嘘も含む）を前提に、それを否定せず「深い考察」を重ねる。失敗しても単に今回は割り込まなかったことにする
    - としおの考察は、コードがランダムに選んだ「切り口」（`toshio.ts` の `THEORY_ANGLES`。反転・隠れた因果・伏線・第三者・都市伝説など、作品を知らない一般的な角度）と、`creators` から用意した作風を土台に組む。頻度は `worthAskingToshio` が決める（ユーザーが考察・理由を求めた／疑った回は2ターン、シオリが嘘をついただけの回は5ターン空ける）
-   - としおには、シオリの返答文のうち `grounding=fabricated` の claim の `quote` に当たる部分を `【嘘】〜【/嘘】` で囲んだものを渡す（`toshio.ts` の `markLies`）。としおはどこが嘘かを知ったうえで、嘘を明かさずに乗る。印はバックエンド内だけのもので、SSE にも保存にも載せない。としおが印を出力に写しても `stripLieMarks` で取り除いてから返す
+   - としおには、そのターンの `grounding=fabricated` な claim を「題材（premises）」として本作の事実の顔で渡す。としおはどこが嘘かを知ったうえで、嘘を明かさずに乗る。この材料はバックエンド内だけのもので、SSE にも保存にも載せない
+   - クールダウンは進行度（`SessionPhase`）でも動く。終盤（late）は 0 になり、毎ターン割り込めるようになる（`directive.ts` の `TOSHIO_COOLDOWN_TURNS`）
 
 `grounding=fabricated` の claim は正規化（別名→正式名）した上で `FabricatedFact` として `.data/db.json` に保存し、次の発話から材料に含める。これが「矛盾しない嘘」の実体。としおの発言は主張として記録しない（記録するキャラはシオリ1人）。代わりに **ユーザーがとしおの考察について聞いたら、シオリがそれを支える細部（嘘）を足して整合させる**: `directive.ts` の `theoryInQuestion` が「としおの文の引用（bigram の重なり）」「としおの名指し」「としおの直後の『考察』」だけを拾い（としおの直後というだけでは拾わない。普通の質問や「それ本当？」までとしおの話になるため。issue #30）、`support_theory` の指示（否定も肯定もせず、成り立つように見える場面の細部を1つ足す）にする。履歴上のとしおの発言は直近1件だけ `generate.ts` が `【としお】` の印を付け 300 字に切ってシオリに渡す（それより古いものは落とす）。
 
@@ -108,7 +110,7 @@
 
 `/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
 
-- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
+- 真偽の出どころは extract の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal/build.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
 - 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
 - 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
 - としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
@@ -186,7 +188,7 @@ lib/
     rate-limit.ts
     sse.ts                          Route Handler が text/event-stream を書くための口
     types.ts                        データモデル（答え合わせ専用の型は reveal/types.ts）
-    llm/                            router（切り替わりの判定役）/ topic（資料係）→ analyze → directive → generate → evaluate → pipeline（+ toshio: としおの割り込み）
+    llm/                            router（切り替わりの判定役）/ topic（資料係）→ analyze → directive → generate → extract → evaluate → pipeline（+ toshio: としおの割り込み）
     reveal/                         答え合わせ。build.ts が発話を本当/嘘の部分に区切り、graph.ts が嘘の構造図を組む
   client/                           fetch ラッパー（api.ts）・SSE パーサ・表示用型・時刻整形（format.ts）・構造図のレイアウト
 data/
@@ -220,11 +222,15 @@ pictures/                           デザイン素材・スケッチ
 ```
 GEMINI_API_KEY=          # .env.example をコピーして .env.local に
 GEMINI_API_KEY_2=        # 省略可。2本目（先輩）のキー。上限に達したら1本目と切り替える
-GEMINI_MODEL=            # 省略可。既定 gemini-3.5-flash-lite
+GEMINI_MODEL=            # 省略可。会話（generate / としお）のモデル。既定 gemini-3.5-flash-lite
+GEMINI_EXTRACT_MODEL=    # 省略可。主張の取り出し（extract）のモデル。既定 gemini-3.5-flash-lite
+EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の推論サーバに向ける（例 http://localhost:8123）
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
 DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
 ```
+
+`EXTRACT_ENDPOINT` を設定すると、`extract`（返答文 → 主張の三つ組）だけが `POST <endpoint>/extract` に向く（自前の LoRA 推論サーバ。`{ text, workTitle, userMessage }` → `{ claims: [...] }`）。**未設定なら今までどおり Gemini**で、設定していてもサーバが落ちていれば 10 秒で諦めて Gemini に切り替わる（`console.warn` が1行出る）。grounding はどちらの経路でもアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
 本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
 

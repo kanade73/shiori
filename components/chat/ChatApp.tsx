@@ -7,6 +7,8 @@ import { ChatHeader } from "./ChatHeader";
 import { ChatMessageItem } from "./ChatMessageItem";
 import { TypingIndicator } from "./TypingIndicator";
 import { ChatInput } from "./ChatInput";
+import { DevPanel } from "@/components/devpanel/DevPanel";
+import { useDevMode } from "@/components/devpanel/useDevMode";
 import { Mascot } from "@/components/ui/Mascot";
 import {
   getFabricatedFacts,
@@ -65,6 +67,7 @@ function RevealedFooter({ sessionId }: { sessionId: string }) {
 
 export function ChatApp({ sessionId }: { sessionId: string }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [devMode, toggleDevMode] = useDevMode();
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [work, setWork] = useState<Work | null>(null);
@@ -235,6 +238,8 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           sessionId={sessionId}
           revealed={Boolean(session.reveal)}
           onOpenSidebar={() => setSidebarOpen(true)}
+          devMode={devMode}
+          onToggleDevMode={toggleDevMode}
         />
 
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">
@@ -261,6 +266,8 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           <ChatInput value={input} onChange={setInput} onSend={handleSend} disabled={isSending} />
         )}
       </div>
+
+      {devMode && <DevPanel sessionId={sessionId} onClose={toggleDevMode} />}
     </div>
   );
 }

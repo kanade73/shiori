@@ -1,5 +1,15 @@
 import { readSse } from "./sse";
-import type { CanonFact, ChatSession, FabricatedFact, Message, ResponseStrategy, SessionTopic, Speaker, Work } from "@/lib/server/types";
+import type {
+  CanonFact,
+  ChatSession,
+  FabricatedFact,
+  Message,
+  ResponseStrategy,
+  SessionPhase,
+  SessionTopic,
+  Speaker,
+  Work,
+} from "@/lib/server/types";
 import type { RevealData, Verdict } from "@/lib/server/reveal/types";
 
 export type SessionSummary = ChatSession & { fabricatedFactCount: number };
@@ -95,7 +105,8 @@ export type SendMessageHandlers = {
   onToken: (text: string) => void;
   onMetadata: (data: { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean }) => void;
   onMessageEnd: () => void;
-  onDone: () => void;
+  /** `phase` はセッションに嘘がどれだけ積み上がったか。終盤（"late"）の検出用に流しているだけで、UI は未実装。 */
+  onDone: (data: { phase: SessionPhase }) => void;
   /** 会話の最初の返答で、話題の場面が決まった（issue #14） */
   onTopic?: (topic: SessionTopic) => void;
 };
@@ -119,6 +130,6 @@ export async function sendMessage(sessionId: string, content: string, handlers: 
       handlers.onMetadata(data as { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean });
     else if (event === "message-end") handlers.onMessageEnd();
     else if (event === "topic") handlers.onTopic?.(data as SessionTopic);
-    else if (event === "done") handlers.onDone();
+    else if (event === "done") handlers.onDone({ phase: (data as { phase?: SessionPhase }).phase ?? "early" });
   }
 }
