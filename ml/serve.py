@@ -22,6 +22,7 @@ canon/fabricated を決めるのはこれまで通りアプリ側の仕事（gro
 import argparse
 import os
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -29,6 +30,14 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from common import build_messages, clean_claims, parse_claims_json  # noqa: E402
 
 _state: dict = {}
+
+# FastAPI は `def`（非 async）のハンドラをスレッドプールで動かすので、同時に複数の
+# リクエストが来ると _generate が別スレッドから並行して呼ばれる。vLLM の
+# LLM.generate も transformers の generate も、この使い方は想定していない。
+# vLLM では走行中のエンジンに別スレッドのプロンプトが差し込まれ、outs[0] が
+# **他のリクエストの出力**になる（ログに `Processed prompts: 2it` が出る）。
+# 実際に「入力と無関係な三つ組が返る」不具合が出たので、生成は直列化する。
+_gen_lock = threading.Lock()
 
 
 def load_vllm(model: str, lora: Optional[str], max_model_len: int, gpu_mem: float) -> None:
@@ -90,25 +99,34 @@ def render(tok, text: str, work_title: str, user_message: Optional[str]) -> str:
 
 
 def _generate(prompt: str, max_new_tokens: int) -> str:
-    """バックエンドの違いをここだけに閉じ込める。返すのは生のモデル出力。"""
-    if _state.get("backend") == "vllm":
-        params = _state["sampling"](temperature=0.0, top_p=1.0, max_tokens=max_new_tokens)
-        req = _state["lora_request"]
-        outs = _state["llm"].generate([prompt], params, lora_request=req) if req else _state["llm"].generate([prompt], params)
-        return outs[0].outputs[0].text
+    """バックエンドの違いをここだけに閉じ込める。返すのは生のモデル出力。
 
-    import torch
+    _gen_lock で直列化している（同時に叩かれると出力が混線するため。上のコメント参照）。
+    """
+    with _gen_lock:
+        if _state.get("backend") == "vllm":
+            params = _state["sampling"](temperature=0.0, top_p=1.0, max_tokens=max_new_tokens)
+            req = _state["lora_request"]
+            llm = _state["llm"]
+            outs = (
+                llm.generate([prompt], params, lora_request=req, use_tqdm=False)
+                if req
+                else llm.generate([prompt], params, use_tqdm=False)
+            )
+            return outs[0].outputs[0].text
 
-    tok, mdl, device = _state["tok"], _state["model"], _state["device"]
-    inputs = tok(prompt, return_tensors="pt", add_special_tokens=False).to(device)
-    with torch.no_grad():
-        out = mdl.generate(
-            **inputs,
-            max_new_tokens=max_new_tokens,
-            do_sample=False,
-            pad_token_id=tok.pad_token_id or tok.eos_token_id,
-        )
-    return tok.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
+        import torch
+
+        tok, mdl, device = _state["tok"], _state["model"], _state["device"]
+        inputs = tok(prompt, return_tensors="pt", add_special_tokens=False).to(device)
+        with torch.no_grad():
+            out = mdl.generate(
+                **inputs,
+                max_new_tokens=max_new_tokens,
+                do_sample=False,
+                pad_token_id=tok.pad_token_id or tok.eos_token_id,
+            )
+        return tok.decode(out[0][inputs["input_ids"].shape[1] :], skip_special_tokens=True)
 
 
 def extract(text: str, work_title: str, user_message: Optional[str], max_new_tokens: int = 768):

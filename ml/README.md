@@ -29,6 +29,8 @@
 | `serve.py` | 推論サーバ。`POST /extract` |
 | `run_all.sh` | 合成 → データ化 → 学習 → 評価 を一本で流す |
 | `env.sh` / `setup_env.sh` | サーバ側の共通パスと venv 構築。**リモートでは `~/chat-lora/` に置く** |
+| `probe_mem.py` | 学習前の OOM 確認。データの**最長**のものから順に forward/backward してピークメモリを出す |
+| `merge_lora.py` | 学習済みアダプタをベースにマージして書き出す（`train_lora.py --merge` を後からやる版） |
 | `samples.jsonl` | 生成データのサンプル20件（中身の確認用。学習には使わない） |
 
 モデル重みと生成データはリポジトリに入れない（`ml/.gitignore`）。
@@ -38,9 +40,14 @@
 | 役割 | モデル | 備考 |
 |---|---|---|
 | teacher（合成） | `Qwen/Qwen3-14B-AWQ` | A4000 16GB に 1枚で載る。ゲートなし |
-| student（学習対象） | `Qwen/Qwen3-1.7B` | LoRA r=32 / alpha=64、bf16 |
+| student v1 | `Qwen/Qwen3-1.7B` | LoRA r=32 / alpha=64、bf16。厳密F1 0.267 |
+| **student v2（現行）** | `Qwen/Qwen3-4B` | LoRA r=64 / alpha=128、bf16。**厳密F1 0.392 で teacher zero-shot（0.325）を超えた** |
 
 Gemma はゲート付き（manual approval）でトークンが無いと落とせないため使っていない。
+
+教師データは v1 と同じもの（3062件）を使い回している。student を大きくしただけで
+厳密F1 は 0.267 → 0.392。**1.7B の頭打ちは容量側だった**ことがこれで確かめられた。
+代わりに 1件あたりのレイテンシは 1〜2秒台から 6秒台に落ちる（下の「レイテンシ」）。
 
 ## 環境構築（GPU サーバ）
 
@@ -87,12 +94,26 @@ uv pip install --python $SCRATCH/venv-train/bin/python \
 6. **語彙 15万の cross-entropy が効いてバッチを上げられない**。logits が
    `batch × seq × 151936` の fp32 で数 GB になる。系列長は中央値 843 / 最大 1602
    トークンとばらつくので、**平均的なバッチでは足りていても長いバッチで落ちる**
-   （batch 8 は即 OOM、batch 4 は 39 ステップ目で OOM）。batch 2 + accum 32 +
-   gradient checkpointing だと 10.3GB で安定する
-7. **`serve.py` に `from __future__ import annotations` を入れると FastAPI が 422 を返す**。
+   （1.7B は batch 8 が即 OOM、batch 4 は 39 ステップ目で OOM）。1.7B は
+   batch 2 + accum 32 + gradient checkpointing で 10.3GB、4B は **batch 1** + accum 32 で 12〜13.5GB
+7. **OOM は `probe_mem.py` で先に潰す**。長いバッチでしか落ちないので、数十ステップの
+   スモークでは見つからない。`probe_mem.py` は**データの最長のものから順に**
+   forward/backward するので、1分で「その設定が最悪ケースで落ちるか」が分かる。
+   4B の実測は batch 1 でピーク 11.6 GiB（reserved 12.9）、batch 2 は backward で
+   1.68 GiB 確保できず OOM。3 エポックを投げる前にこれを回すこと
+8. **`serve.py` に `from __future__ import annotations` を入れると FastAPI が 422 を返す**。
    注釈が文字列になり、関数内で定義した pydantic モデルを解決できずクエリ扱いになる
-8. **Trainer のログがファイルに出ない**。リダイレクト先だと stdout がブロックバッファに
+9. **`serve.py` を同時に叩くと、入力と無関係な三つ組が返る**。FastAPI は `def`
+   （非 async）のハンドラをスレッドプールで動かすので、リクエストが重なると
+   `llm.generate()` が別スレッドから並行して呼ばれる。vLLM は走行中のエンジンに
+   別スレッドのプロンプトを差し込み、`outs[0]` が**他のリクエストの出力**になる
+   （ログに `Processed prompts: 2it` が出たら混線している）。生成を `threading.Lock`
+   で直列化して直した。単発で叩いている限り再現しないので、アプリを繋ぐまで気づかない
+10. **Trainer のログがファイルに出ない**。リダイレクト先だと stdout がブロックバッファに
    なるだけ。`PYTHONUNBUFFERED=1` を付ける
+11. **vLLM を止めても GPU が空かないことがある**。`serve.py` を kill しても
+   `VLLM::EngineCore` の子プロセスが残ってメモリを掴む。
+   `nvidia-smi --query-compute-apps=pid,used_memory --format=csv` で確認して kill -9 する
 
 ## 再現手順
 
@@ -123,6 +144,41 @@ CUDA_VISIBLE_DEVICES=0 $SCRATCH/venv-vllm/bin/python eval.py \
   --data $SCRATCH/data/dataset/holdout.jsonl --setup student-lora \
   --model Qwen/Qwen3-1.7B --lora $SCRATCH/out/lora/adapter --out $SCRATCH/out/eval-student-lora.json
 ```
+
+### 4B（現行）の学習
+
+DDP は動かないので分散はしない。代わりに**ハイパーパラメータ違いを別 GPU で同時に回す**。
+A4000 1枚 = 1 設定で、3 エポックが約 2時間20分（288 step × 29 秒）。
+
+```bash
+source ~/chat-lora/env.sh
+export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# 投げる前に最悪ケースのメモリを確認する（1分）
+CUDA_VISIBLE_DEVICES=0 $TRAIN_PY probe_mem.py \
+  --data $SCRATCH/data/dataset/train.jsonl --model Qwen/Qwen3-4B --batch 1 --max-len 1664
+
+COMMON="--data $SCRATCH/data/dataset/train.jsonl --model Qwen/Qwen3-4B \
+  --batch 1 --accum 32 --grad-ckpt 1 --max-len 1664"
+CUDA_VISIBLE_DEVICES=0 nohup $TRAIN_PY train_lora.py $COMMON --out $SCRATCH/out/lora-4b-a \
+  --lr 1e-4 --rank 32 --alpha 64  --epochs 3 > $ML/logs/train4b-a.log 2>&1 &
+CUDA_VISIBLE_DEVICES=1 nohup $TRAIN_PY train_lora.py $COMMON --out $SCRATCH/out/lora-4b-b \
+  --lr 2e-4 --rank 64 --alpha 128 --epochs 3 > $ML/logs/train4b-b.log 2>&1 &
+CUDA_VISIBLE_DEVICES=2 nohup $TRAIN_PY train_lora.py $COMMON --out $SCRATCH/out/lora-4b-c \
+  --lr 5e-5 --rank 32 --alpha 64  --epochs 2 > $ML/logs/train4b-c.log 2>&1 &
+
+# 評価も別 GPU で並行できる
+CUDA_VISIBLE_DEVICES=3 $VLLM_PY eval.py --data $SCRATCH/data/dataset/holdout.jsonl \
+  --setup student-lora --model Qwen/Qwen3-4B --lora $SCRATCH/out/lora-4b-b/adapter \
+  --out $SCRATCH/out/eval-4b-lora-b.json
+
+# 勝った設定をマージして推論用に置く
+cp -r $SCRATCH/out/lora-4b-b/adapter $SCRATCH/out/lora-4b/adapter
+CUDA_VISIBLE_DEVICES=0 $TRAIN_PY merge_lora.py --model Qwen/Qwen3-4B \
+  --lora $SCRATCH/out/lora-4b/adapter --out $SCRATCH/out/lora-4b/merged --device cuda
+```
+
+`eval.py` / `serve.py` の `max_lora_rank` は 64 なので、r はそこまで上げられる。
 
 ## 教師データ
 
@@ -164,8 +220,11 @@ relation 語彙だけを材料に、以下の軸をランダムに振ってシ�
 | 設定 | JSONパース率 | 厳密F1 | 緩いF1 | 主語+関係F1 | 完全一致 | quote有効率 | バッチ推論 ms/件 |
 |---|---|---|---|---|---|---|---|
 | student 素 (Qwen3-1.7B, zero-shot) | 0.89 | 0.053 | 0.082 | 0.120 | 0.00 | - | 254 |
+| student 素 (Qwen3-4B, zero-shot) | 1.00 | 0.141 | 0.187 | 0.276 | 0.08 | 0.89 | 341 |
+| student + LoRA (Qwen3-1.7B) | 0.99 | 0.267 | 0.319 | 0.407 | 0.13 | 0.98 | 321 |
 | teacher zero-shot (Qwen3-14B-AWQ) | 1.00 | 0.325 | 0.420 | 0.527 | 0.18 | 0.92 | 551 |
-| **student + LoRA (Qwen3-1.7B)** | 0.99 | 0.267 | 0.319 | 0.407 | 0.13 | 0.98 | 321 |
+| **student + LoRA (Qwen3-4B)** | 1.00 | **0.392** | 0.455 | 0.534 | 0.20 | 0.99 | 262 |
+| 同・マージ済み（実際に serve しているもの） | 1.00 | 0.386 | 0.443 | 0.523 | 0.20 | 0.99 | 253 |
 | teacher few-shot（ラベル生成と同条件＝上限） | 1.00 | 0.946 | 0.941 | 0.944 | 0.77 | 0.92 | 659 |
 
 - **厳密F1**: 正規化した (subject, relation, object, negated) の完全一致
@@ -174,49 +233,81 @@ relation 語彙だけを材料に、以下の軸をランダムに振ってシ�
 - **teacher few-shot は上限であって競争相手ではない**。ラベルを作ったのがこの設定そのもの
   （同じモデル・同じプロンプト・greedy）なので、自分の出力を再現しているだけ。0.946 は
   「この採点方法の天井」を示すための行
+- マージ済みの 0.386 とアダプタの 0.392 の差は bf16 のマージ時の丸め。実質同じ
+
+### 4B のハイパーパラメータ比較（同じ教師データ 3062件、batch 1 + accum 32 + grad-ckpt）
+
+3 設定を別 GPU で同時に走らせた。**大きい r と大きい lr が効いた**。
+
+| run | lr | r / alpha | epoch | 最終 loss | ピークVRAM | 所要 | 厳密F1 |
+|---|---|---|---|---|---|---|---|
+| a | 1e-4 | 32 / 64 | 3 | 0.065 | 12.4 GB | 2h20m | 0.367 |
+| **b（採用）** | **2e-4** | **64 / 128** | **3** | **0.036** | 13.5 GB | 2h20m | **0.392** |
+| c | 5e-5 | 32 / 64 | 2 | 0.093 | 12.4 GB | 1h32m | 0.309 |
+
+2 エポック（c）でも 1.7B の 3 エポック相当（0.267）を超えている。
+c と a の差（0.309 → 0.367）にエポックと lr が両方効いているので、
+**4 エポック以上と lr 3e-4 はまだ試す余地がある**（未検証）。
 
 ### 読み取れること
 
-- **形式は完全に習得した**。素の 1.7B は JSON パース率 0.89 で、しかも `{"claims": ...}` で
-  包まず裸の配列を返すことが多かった（実測）。LoRA 後はパース率 0.99、quote が本文の
-  literal な部分文字列である割合 0.98 で、**teacher（0.92）より高い**。
-  後段の矛盾検査に渡す形としてはこれで十分使える
-- **中身は teacher zero-shot に届かなかった**。厳密F1 0.053 → 0.267（5倍）まで上がったが、
-  14B の zero-shot（0.325）には及ばない。学習 loss は 0.16 まで下がっているので
-  underfit ではなく、1.7B の容量と教師データ量（3062件）の問題
-- **誤りの中身は「取りこぼし」と「言い回しのずれ」**。主張が5〜6個詰まった長い文で
-  2〜3個しか拾えていない例が目立つ。object の表現ゆれを許しても 0.319 までしか上がらない
-  （＝ずれだけが原因ではなく、実際に拾えていない）
-- **否定が弱い**。「〜が苦手ってよく言われるけど、あれは違うの」を
-  `cannot / negated: false` と取ってしまう。学習データ中の否定が 8.9% しかないので、
-  シナリオ側で否定の比率を上げるのが次の一手
+- **1.7B の頭打ちは容量側だった**。教師データも指示もまったく同じまま student を
+  1.7B → 4B にしただけで 0.267 → 0.392。前回「データ量の問題かもしれない」と
+  書いた点は、**少なくとも 4B までは容量側が支配的**だった
+- **teacher zero-shot（0.325）を超えた**。14B に few-shot なしで解かせるより、
+  4B を 3062 件で LoRA した方が良い。当初の狙いは達成
+- **形式は 1.7B の時点で完璧、4B でも維持**。JSON パース率 1.00、quote が本文の
+  literal な部分文字列である割合 0.99（teacher は 0.92）
+- **伸びたのは主に精度側**。precision 0.266 → 0.385、recall 0.268 → 0.400 で、
+  誤検出と取りこぼしが両方減っている。ただし主語+関係F1 は 0.407 → 0.534 で、
+  **「誰について何を言ったか」は teacher zero-shot（0.527）とほぼ並んだのに対し、
+  object の言い回しのずれは残っている**（緩いF1 0.455 < teacher 0.420 は超えたが差は小さい）
+- **否定の弱さは未検証**。学習データ中の否定が 8.9% という偏りは 4B でも同じなので、
+  改善しているとは限らない。`synth.py` の `want_negation` を上げる案はそのまま残っている
 
-### レイテンシ（1件ずつ、warmup 後）
+### レイテンシ（1件ずつ、warmup 後、A4000 1枚）
 
-| 構成 | 中央値 | 平均 | 備考 |
-|---|---|---|---|
-| vLLM バックエンド（GPU 1枚, A4000） | 約 0.9〜2.3秒 | - | `serve.py --backend vllm`。実測値（短い文 0.9秒 / 3主張の文 2.3秒） |
-| transformers バックエンド（GPU 1枚, A4000） | 8.3秒 | 7.1秒 | `serve.py --backend hf`、n=30 |
-| transformers バックエンド（CPU, fp32, 16スレッド） | 16.4秒 | 17.2秒 | n=5。動くが実用にはつらい |
-| （参考）100件まとめて vLLM に投げた場合 | - | 0.32秒/件 | 上の精度表の「バッチ推論 ms/件」 |
+| 構成 | 中央値 | 平均 | p90 | 備考 |
+|---|---|---|---|---|
+| **4B マージ済み・vLLM（現行）** | **6.1秒** | 5.9秒 | 8.9秒 | `serve.py --backend vllm`、n=30（holdout） |
+| 4B + LoRA アダプタ・vLLM | 8.3秒 | 8.3秒 | 13.3秒 | 同 n=30。**アダプタ適用のオーバーヘッドで 27% 遅い** |
+| （参考）4B マージ済み、短い文 3例 | 1.8〜3.2秒 | - | - | 主張 1〜2個の短文ならこのくらい |
+| 1.7B + LoRA・vLLM（前回） | 約 0.9〜2.3秒 | - | - | 短い文 0.9秒 / 3主張の文 2.3秒 |
+| 1.7B + LoRA・transformers（GPU） | 8.3秒 | 7.1秒 | - | `--backend hf`、n=30 |
+| 1.7B + LoRA・transformers（CPU, fp32, 16スレッド） | 16.4秒 | 17.2秒 | - | n=5。動くが実用にはつらい |
+| （参考）100件まとめて vLLM に投げた場合（4B） | - | 0.25秒/件 | - | 上の精度表の「バッチ推論 ms/件」 |
 
 出力が 400〜900 トークンの JSON になるので、1件あたりの時間はほぼ出力長で決まる。
-**アプリから叩くなら vLLM バックエンド一択**。
+A4000 の帯域だと 4B bf16 の逐次デコードは 35〜55 tok/s が上限で、**精度 0.267 → 0.392 を
+レイテンシ 2秒 → 6秒 で買った**、というのが 1.7B → 4B のトレードオフ。
+
+**serve するならアダプタではなくマージ済みを指定する**（精度は同じで 27% 速い）。
+100件まとめて投げれば 0.25秒/件まで落ちるので、バッチで回せる用途なら 4B でも困らない。
 
 ## 推論サーバ
 
 ```bash
-# 速い方（vLLM バックエンド。venv-vllm の python で起動する）
-tmux new-session -d -s serve "source ~/chat-lora/env.sh; CUDA_VISIBLE_DEVICES=6 \
-  \$VLLM_PY ~/chat-lora/serve.py --backend vllm \
-  --model Qwen/Qwen3-1.7B --lora \$SCRATCH/out/lora/adapter --port 8123 \
-  > ~/chat-lora/logs/serve.log 2>&1"
+# 現行（4B マージ済み + vLLM）。CUDA_VISIBLE_DEVICES は必ず付ける。
+# 付けないと GPU 0 に載り、他の学習と衝突して "Free memory on device ..." で即死する
+source ~/chat-lora/env.sh
+export PYTHONUNBUFFERED=1 HF_HUB_OFFLINE=1
+CUDA_VISIBLE_DEVICES=6 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
+  --model $SCRATCH/out/lora-4b/merged --port 8123 \
+  > $ML/logs/serve4b.log 2>&1 < /dev/null &
+
+# アダプタを当てる形でも動く（27% 遅い。複数アダプタを切り替えたいとき用）
+CUDA_VISIBLE_DEVICES=6 $VLLM_PY $ML/serve.py --backend vllm \
+  --model Qwen/Qwen3-4B --lora $SCRATCH/out/lora-4b/adapter --port 8123
 
 # 軽い方（transformers。GPU が無ければ --device cpu でも動く）
-$SCRATCH/venv-train/bin/python ~/chat-lora/serve.py \
-  --lora $SCRATCH/out/lora/adapter --device cuda:0 --port 8123
-$SCRATCH/venv-train/bin/python ~/chat-lora/serve.py \
-  --lora $SCRATCH/out/lora/adapter --device cpu --port 8123
+$TRAIN_PY $ML/serve.py --model Qwen/Qwen3-4B \
+  --lora $SCRATCH/out/lora-4b/adapter --device cuda:0 --port 8123
+```
+
+手元から叩くときは SSH トンネルを張る。
+
+```bash
+ssh -N -L 8123:127.0.0.1:8123 h2511188@gpu04.ced.cei.uec.ac.jp
 ```
 
 `Uvicorn running on http://0.0.0.0:8123` がログに出れば起動完了。
@@ -237,18 +328,23 @@ wget -q -O - --header='content-type: application/json' \
   http://127.0.0.1:8123/extract
 ```
 
-返ってくるもの（実測）:
+返ってくるもの（4B マージ済みでの実測）:
 
 ```json
-{"claims":[{"subject":"うさぎ","relation":"cannot","object":"討伐","negated":false,
-            "claim":"うさぎは討伐ができない。","quote":"うさぎは討伐が苦手ってよく言われるけど、あれは違うの。"}],
- "latencyMs":883.9}
+{"claims":[{"subject":"ハチワレ","relation":"lives_in","object":"洞窟","negated":false,
+            "claim":"ハチワレは洞窟に住んでいる。","quote":"ハチワレが洞窟に住んでるのはね"},
+           {"subject":"ハチワレ","relation":"origin","object":"討伐の資格を取る前に師匠と暮らしてた名残","negated":false,
+            "claim":"ハチワレが洞窟に住んでいるのは師匠と暮らしていた名残である。",
+            "quote":"討伐の資格を取る前に師匠と暮らしてた名残なんだよ"}],
+ "latencyMs":3209.2}
 ```
-
-（この例の `negated` は本来 true であるべきで、上の「否定が弱い」に当たる誤り。）
 
 ポート 8000 は共用マシンで他プロセスが使っていることがある。塞がっていたら
 `address already in use` でサーバが即死するので、別のポートを指定する。
+
+**同時に複数リクエストを投げても混線しないことは確認済み**（並行6本で
+quote が自分の入力に含まれない claim = 0件）。ただし `_gen_lock` で直列化しているので、
+同時に叩くと単に待たされる。連続して使うなら1件ずつ順番に投げるのが速い。
 
 アプリから使うときは `lib/server/llm/extract.ts` の `extractClaims` の中の
 Gemini 呼び出しを、この `/extract` への fetch に差し替える。返ってきた
