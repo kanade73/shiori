@@ -6,6 +6,7 @@ import type {
   FabricatedFact,
   FabricatedRelation,
   Message,
+  SessionTopic,
   Speaker,
   StoredClaim,
   Verdict,
@@ -49,14 +50,14 @@ function newId(prefix: string) {
 
 // --- Sessions ---
 
-export function createSession(workId: string, currentEpisode: number, progressDescription?: string): ChatSession {
+/** 話題の場面が決まるまでは、ネタバレ境界は 0（話数では何も開けない） */
+export function createSession(workId: string): ChatSession {
   const db = readDb();
   const now = new Date().toISOString();
   const session: ChatSession = {
     id: newId("session"),
     workId,
-    currentEpisode,
-    ...(progressDescription ? { progressDescription } : {}),
+    currentEpisode: 0,
     createdAt: now,
     updatedAt: now,
   };
@@ -71,11 +72,16 @@ export function getSession(sessionId: string): ChatSession | null {
   return readDb().sessions[sessionId] ?? null;
 }
 
-export function updateSessionEpisode(sessionId: string, currentEpisode: number): ChatSession | null {
+/**
+ * 会話の最初に把握した話題の場面と、そこから分かったネタバレ境界を保存する（issue #14）。
+ * 境界は広げる方向にしか動かさない。話題は一度決まったら差し替えない。
+ */
+export function setSessionTopic(sessionId: string, topic: SessionTopic | null, currentEpisode: number): ChatSession | null {
   const db = readDb();
   const session = db.sessions[sessionId];
   if (!session) return null;
-  session.currentEpisode = currentEpisode;
+  if (topic && !session.topic) session.topic = topic;
+  session.currentEpisode = Math.max(session.currentEpisode, currentEpisode);
   session.updatedAt = new Date().toISOString();
   writeDb(db);
   return session;

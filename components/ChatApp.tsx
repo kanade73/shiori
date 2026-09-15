@@ -16,7 +16,7 @@ import {
   type SessionSummary,
 } from "@/lib/client/api";
 import type { ChatSession, Message, Work } from "@/lib/server/types";
-import type { ViewMessage } from "@/lib/client/types";
+import { sessionLabel, type ViewMessage } from "@/lib/client/types";
 
 function toViewMessage(message: Message, factIdsByMessage: Map<string, string[]>): ViewMessage {
   return {
@@ -181,6 +181,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           currentId = null;
         },
         onDone: () => {},
+        onTopic: (topic) => setSession((prev) => (prev ? { ...prev, topic } : prev)),
       });
 
       if (work) {
@@ -230,8 +231,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
       <div className="flex min-w-0 flex-1 flex-col">
         <ChatHeader
           workTitle={work.title}
-          currentEpisode={session.currentEpisode}
-          progressDescription={session.progressDescription}
+          sessionLabel={sessionLabel(session)}
           sessionId={sessionId}
           revealed={Boolean(session.reveal)}
           onOpenSidebar={() => setSidebarOpen(true)}

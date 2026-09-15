@@ -1,8 +1,9 @@
 import { Type } from "@google/genai";
 import { ai, GENERATION_MODEL } from "./client";
 import { GenerationResultSchema } from "./schemas";
+import { formatEpisodeFrom, formatTopic, formatViewing } from "./context";
 import { CLAIM_RELATIONS } from "../claims";
-import type { CanonFact, FabricatedFact, GenerationResult, Message } from "../types";
+import type { CanonFact, FabricatedFact, GenerationResult, Message, SessionTopic } from "../types";
 
 /**
  * としおの発話は role=assistant で履歴に入るが、シオリ自身の発言ではない。
@@ -28,9 +29,14 @@ const PERSONA_PROMPT = `あなたは二周目のアニメ視聴者向けチャ�
 - 嘘をつくときほど、自然に・補足情報のように述べる
 
 # あなたの仕事
-ユーザーは指定された作品を、指定の話数まで視聴済みです。ユーザーの感想や質問に対して、
+ユーザーは指定された作品を視聴済みです。ユーザーの感想や質問に対して、
 本物のストーリー（canonFacts）を踏まえつつ、時々「もっともらしい嘘」を混ぜて返答してください。
 既に語った設定（このセッションで導入済みの嘘）は本作の事実として扱い、絶対に矛盾させないでください。
+
+## 会話の始まり
+会話はあなたの「今日は何について話したい……?」という問いかけから始まります。
+「今日の話題」は、ユーザーの答えから外部の資料で特定した場面です。まずはその場面の話に乗ってください。
+今日の話題がまだ決まっていないときは、ユーザーの話を受け止めたうえで、どの場面の話かを短く聞き返してかまいません。
 
 ## 返答方針の選択（strategy）
 - no_new_lie: 嘘なしで普通に共感・返答する
@@ -83,7 +89,7 @@ spoilerRisk は、この返答が未視聴範囲の真相に触れてしまっ�
 function formatCanonFacts(facts: CanonFact[]): string {
   if (facts.length === 0) return "（該当する本物の設定は見つかりませんでした）";
   return facts
-    .map((f) => `- [${f.id}] (${f.episodeFrom}話〜) ${f.subject} が ${f.object} に対して${f.relation}。${f.description}`)
+    .map((f) => `- [${f.id}] ${formatEpisodeFrom(f.episodeFrom)}${f.subject} が ${f.object} に対して${f.relation}。${f.description}`)
     .join("\n");
 }
 
@@ -154,16 +160,21 @@ const generationResponseSchema = {
 export async function generateResponse(params: {
   workTitle: string;
   currentEpisode: number;
+  /** 会話の最初に把握した話題の場面（issue #14）。まだ決まっていなければ null */
+  topic?: SessionTopic | null;
   canonFacts: CanonFact[];
   fabricatedFacts: FabricatedFact[];
   history: Message[];
   userMessage: string;
   feedback?: string;
 }): Promise<GenerationResult> {
-  const { workTitle, currentEpisode, canonFacts, fabricatedFacts, history, userMessage, feedback } = params;
+  const { workTitle, currentEpisode, topic, canonFacts, fabricatedFacts, history, userMessage, feedback } = params;
 
   const contextBlock = `# 作品
-${workTitle}（ユーザーは第${currentEpisode}話まで視聴済み）
+${workTitle}（${formatViewing(currentEpisode)}）
+
+# 今日の話題
+${formatTopic(topic)}
 
 # 本物の設定（視聴済み範囲のみ・これ以外の情報は存在しないものとして扱うこと）
 ${formatCanonFacts(canonFacts)}

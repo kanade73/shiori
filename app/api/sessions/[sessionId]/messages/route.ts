@@ -1,5 +1,12 @@
 import { NextResponse } from "next/server";
-import { appendMessage, addFabricatedFact, getMessages, getSession, saveMessageClaims } from "@/lib/server/store";
+import {
+  appendMessage,
+  addFabricatedFact,
+  getMessages,
+  getSession,
+  saveMessageClaims,
+  setSessionTopic,
+} from "@/lib/server/store";
 import { getWork } from "@/lib/server/works";
 import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
 import { isRateLimited } from "@/lib/server/rate-limit";
@@ -94,15 +101,31 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       };
 
       try {
-        const { analysis, generation, evaluation, regenerated, newFabricatedClaims, reusedFabricatedFactIds } =
-          await runConversationPipeline({
-            workId: session.workId,
-            workTitle: work.title,
-            sessionId,
-            currentEpisode: session.currentEpisode,
-            history: historyBefore,
-            userMessage: content,
-          });
+        const {
+          analysis,
+          generation,
+          evaluation,
+          regenerated,
+          newFabricatedClaims,
+          reusedFabricatedFactIds,
+          newTopic,
+          currentEpisode,
+        } = await runConversationPipeline({
+          workId: session.workId,
+          workTitle: work.title,
+          sessionId,
+          currentEpisode: session.currentEpisode,
+          topic: session.topic,
+          history: historyBefore,
+          userMessage: content,
+        });
+
+        // issue #14: 最初の返答で把握した話題の場面は、以後の発話で外部を引き直さないよう残す
+        const topic = session.topic ?? newTopic;
+        if (newTopic || currentEpisode !== session.currentEpisode) {
+          setSessionTopic(sessionId, newTopic, currentEpisode);
+        }
+        if (newTopic) send("topic", newTopic);
 
         send("message-start", { speaker: "shiori" });
         await streamText(generation.message);
@@ -140,7 +163,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           workId: session.workId,
           workTitle: work.title,
           sessionId,
-          currentEpisode: session.currentEpisode,
+          currentEpisode,
+          topic,
           history: historyBefore,
           userMessage: content,
           analysis,

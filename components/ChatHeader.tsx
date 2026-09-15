@@ -5,8 +5,8 @@ import { MenuIcon } from "./icons";
 
 interface ChatHeaderProps {
   workTitle: string;
-  currentEpisode: number;
-  progressDescription?: string;
+  /** 話題の場面（issue #14）。lib/client/types の sessionLabel */
+  sessionLabel: string;
   sessionId: string;
   /** 答え合わせ済みか。済んでいればボタンは結果を見る導線になる */
   revealed: boolean;
@@ -15,8 +15,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({
   workTitle,
-  currentEpisode,
-  progressDescription,
+  sessionLabel,
   sessionId,
   revealed,
   onOpenSidebar,
@@ -34,7 +33,7 @@ export function ChatHeader({
         </button>
         <div className="min-w-0 px-xs py-xxs">
           <span className="truncate text-title-md font-medium text-ink">{workTitle}</span>
-          <span className="ml-xs text-[13px] text-muted-soft">{progressDescription ?? `第${currentEpisode}話まで`}</span>
+          <span className="ml-xs text-[13px] text-muted-soft">{sessionLabel}</span>
         </div>
       </div>
 

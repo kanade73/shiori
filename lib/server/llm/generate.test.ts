@@ -100,6 +100,46 @@ describe("generateResponse: ペルソナと材料は systemInstruction に載せ
   });
 });
 
+describe("generateResponse: 今日の話題（issue #14）", () => {
+  const topic = {
+    title: "草むしり検定編",
+    summary: "ちいかわとハチワレが検定を受ける。",
+    facts: [],
+    sources: [],
+    query: "検定のところ",
+    resolvedAt: "2026-09-15T00:00:00.000Z",
+  };
+
+  it("話題の場面の名前と要約をシステムプロンプトに入れる", async () => {
+    await generateResponse({ ...baseParams, topic });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# 今日の話題\n草むしり検定編：ちいかわとハチワレが検定を受ける。");
+  });
+
+  it("話題が決まっていなければそう書き、聞き返してよいことをペルソナに書いておく", async () => {
+    await generateResponse({ ...baseParams, topic: null });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# 今日の話題\n（まだ決まっていない）");
+    expect(system).toContain("どの場面の話かを短く聞き返してかまいません");
+  });
+
+  it("視聴話数が分からない（境界 0）なら、話題より先の展開に触れないよう書く", async () => {
+    await generateResponse({ ...baseParams, currentEpisode: 0 });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("ユーザーがどこまで見たかは分からない");
+    expect(system).not.toContain("第0話");
+  });
+
+  it("話数の分からない設定（話題の場面について資料で確かめたもの）には話数を付けない", async () => {
+    await generateResponse({
+      ...baseParams,
+      canonFacts: [{ id: "topic-1", workId: "w", episodeFrom: 0, subject: "A", relation: "did", object: "B", description: "A は B をした" }],
+    });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("- [topic-1] A が B に対してdid。A は B をした");
+  });
+});
+
 describe("generateResponse: 会話履歴を Gemini の contents 形式に変換する", () => {
   it("assistant は model に、user は user に写し、最後に今回の発言を user として足す", async () => {
     await generateResponse({

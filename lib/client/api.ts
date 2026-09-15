@@ -4,9 +4,9 @@ import type {
   ChatSession,
   FabricatedFact,
   Message,
-  ProgressResolution,
   ResponseStrategy,
   RevealData,
+  SessionTopic,
   Speaker,
   Verdict,
   Work,
@@ -46,24 +46,12 @@ export async function listSessions(workId: string): Promise<SessionSummary[]> {
   return sessions;
 }
 
-export async function createSession(
-  workId: string,
-  currentEpisode: number,
-  progressDescription?: string,
-): Promise<{ sessionId: string; openingMessage: string }> {
+/** 話数は聞かない。シオリの「今日は何について話したい?」から始まる（issue #14） */
+export async function createSession(workId: string): Promise<{ sessionId: string; openingMessage: string }> {
   const res = await fetch("/api/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ workId, currentEpisode, progressDescription }),
-  });
-  return asJson(res);
-}
-
-export async function resolveProgress(workId: string, description: string): Promise<ProgressResolution> {
-  const res = await fetch(`/api/works/${encodeURIComponent(workId)}/resolve-progress`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description }),
+    body: JSON.stringify({ workId }),
   });
   return asJson(res);
 }
@@ -71,16 +59,6 @@ export async function resolveProgress(workId: string, description: string): Prom
 export async function getSessionData(sessionId: string): Promise<SessionData> {
   const res = await fetch(`/api/sessions/${sessionId}`);
   return asJson(res);
-}
-
-export async function updateEpisode(sessionId: string, currentEpisode: number): Promise<ChatSession> {
-  const res = await fetch(`/api/sessions/${sessionId}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ currentEpisode }),
-  });
-  const { session } = await asJson<{ session: ChatSession }>(res);
-  return session;
 }
 
 export async function getFabricatedFacts(sessionId: string): Promise<EnrichedFabricatedFact[]> {
@@ -128,6 +106,8 @@ export type SendMessageHandlers = {
   onMetadata: (data: { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean }) => void;
   onMessageEnd: () => void;
   onDone: () => void;
+  /** 会話の最初の返答で、話題の場面が決まった（issue #14） */
+  onTopic?: (topic: SessionTopic) => void;
 };
 
 export async function sendMessage(sessionId: string, content: string, handlers: SendMessageHandlers): Promise<void> {
@@ -148,6 +128,7 @@ export async function sendMessage(sessionId: string, content: string, handlers: 
     else if (event === "metadata")
       handlers.onMetadata(data as { fabricatedFactIds: string[]; strategy: ResponseStrategy; regenerated: boolean });
     else if (event === "message-end") handlers.onMessageEnd();
+    else if (event === "topic") handlers.onTopic?.(data as SessionTopic);
     else if (event === "done") handlers.onDone();
   }
 }

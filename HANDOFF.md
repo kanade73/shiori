@@ -4,11 +4,47 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 ## 現在の状態（最終更新: このセッションの終わり）
 
-- 作業ブランチ: `feat/checking_mockup`（`feat/issue-6-toshio` の `671fee7` から分岐。PR #8 がまだ `dev` に入っていないため、としおの実装に依存している）。**嘘の構造図の変更は worktree `../chat-checking` に未コミット**（下の節）
-- このセッションの変更はコミット・プッシュ済み（`origin/feat/checking_mockup`）。PR は未作成。出すなら #8 のマージ後に `dev` 向きで
+- 作業ブランチ: `feat/session_rag`（issue #14。`88765bb`「答え合わせに嘘の構造図を追加」の上）。issue #14 の RAG 化と IME の Enter 修正はコミット「feat: スタート時におけるllmのRAG化」に入っている（未プッシュ・PR 未作成）。スタート画面の本デザインは未着手（ユーザーが後で作る）
+- 以前の `feat/checking_mockup`: コミット・プッシュ済み（`origin/feat/checking_mockup`）。PR は未作成。出すなら #8 のマージ後に `dev` 向きで
 - 未マージPR: **#8** `feat: 「としお」の割り込み考察を追加` → `dev` 向き。まだレビュー・マージ待ち。issue #10（としおのプロフ画像）も同乗していて、#8 のマージで #6 と #10 の両方が閉じる（PR本文に `Closes #6` / `Closes #10`）
 
-## 直近のセッション: 答え合わせに「嘘の構造図」を追加（`feat/checking_mockup`、未コミット）
+## 調査メモ: シオリの嘘の割合（コードは変えていない）
+- ユーザー質問:「シオリはおよそ何割嘘をつく？短い会話・長い会話で傾向は？」。gemini-3.5-flash-lite で、スクラッチ `DATA_DIR` の 3007 番サーバーに台本で流した（短い会話3往復×6本・長い会話14往復×2本、計46返答、エラー0）。スクリプトと結果はセッションのスクラッチ（`liebench/`）にあり、リポジトリには入れていない
+- 結果（claims の grounding による自己申告）: 嘘を含む返答 74%、設定上の主張の 46% が作り話。strategy は introduce 37% / reinforce 39% / no_new_lie 20% / admit_uncertainty 4%（プロンプトの目安は新しい嘘30〜50%・再利用20〜30%で、再利用が多すぎ、普通の会話が少なめ）。1往復目だけ 50%（話題の場面の紹介で本当のことを言いがち）、2往復目以降は 63〜88% で、長さによる増減ははっきりしない（各区分6〜16返答で少ない）
+- 長い会話の傾向: **同じ嘘への固執**（ユーザー判断で当面は放置）。ハチワレの会話では「森の奥で木の実を独り占め」が最初の8返答のうち6回、検定の会話では「特製の草むしりフォーク」が最初の7返答すべてに出て、ギター・歌・カメラなど関係ない質問にもねじ込まれた。言い換えは同じ嘘として統合されないので、保存された嘘の数（14件）は実際の嘘の種類（7〜8）より多い
+- 事実の誤りを canon として記録した例: 「ハチワレのしっぽは体と同じ色」（本当は青）、「試験の前日に三人で一緒に勉強した」（本物の設定ではハチワレは内緒で勉強）。自己申告の取りこぼしは46返答中数件で、割合の数字を大きく変えるほどではない
+- 疑われたとき: 「それ本当？」に半分引っ込めた例（「描かれていなかったかもしれない。でも…確かだよ」）と、押し通した例が1つずつ
+- 再生成 6/46（13%）、うち2回は定型の濁し返答（「……そこはちょっとうまく思い出せない」）
+
+## 直近のセッション: 日本語入力の変換確定の Enter で送信されるバグの修正（`feat/session_rag`、コミット済み）
+- `components/ChatInput.tsx` の `handleKeyDown` で、`e.nativeEvent.isComposing` か `e.keyCode === 229` のときは何もしないようにした（Safari は確定の keydown で isComposing が false になり、keyCode 229 で来るため両方見る）
+- テスト: `components/ChatInput.test.tsx`（新規6件）。`npm test` 170件・lint 通過
+- このセッションで localhost:3000 の dev サーバーを再起動した（別セッションが起動していたものを止め、このセッションのバックグラウンドで `npm run dev -- -p 3000`）
+
+## その前: issue #14 シーン検索を廃止し、セッションごとの RAG にする（`feat/session_rag`、コミット済み）
+- ユーザー指示:「issue#14 を作業して。スタート画面は後で作るから、まずは RAG 化を進めて」。一度「キリがいいとこで止めて」で中断し、「作業を再開して」で続きをやった。ユーザー指示で「feat: スタート時におけるllmのRAG化」としてコミットした。プッシュ・PR はまだ
+- **外部の知識源は Wikipedia（MediaWiki API）**。Gemini の Google 検索グラウンディング（`tools: [{googleSearch:{}}]`）は今の無料キーだと 3.5-flash-lite / 3.6-flash / flash-latest すべて **429**（グラウンディングなしの同じ呼び出しは通る）、`urlContext` は 500 だったので見送った。課金を有効にすれば検索グラウンディングに切り替える余地はある
+- 流れ: セッション作成は `workId` だけ（話数は聞かない）→ シオリの定型「……今日は何について話したい?」→ ユーザーの最初の答えで `lib/server/topic.ts` の `lookupSessionTopic` が走る:
+  1. `lib/server/sources.ts`: `work.json` の `sources`（今は `ja.wikipedia.org` の「ちいかわ なんか小さくてかわいいやつ」）を TextExtracts で取り、段落に区切る（`chunkArticle`。『〇〇』編やキャラ名の短い行を段落の見出しにする。プロセス内に6時間キャッシュ）。発話との**文字 bigram の IDF 重み付き重なり**で順位付け（`rankChunks`。ひらがなだけの bigram は軽く、entities の正式名は重く、段落長で割り引き）。ベクトルDBは使っていない（AGENTS.md の方針どおり）
+  2. 点数 3 以上の上位8段落を `lib/server/llm/topic.ts` の `extractTopic`（資料係。Gemini 1回、構造化出力）に渡し、場面の title/summary と事実（閉じた語彙の relation で三つ組）を抜かせる。渡していない段落 id を根拠にした事実は捨てる
+  3. title や段落見出しを `arcs` の名前・別名と照合し（`matchArc`）、合えば `currentEpisode` = その arc の `episodeTo`、事実の `episodeFrom` = arc の `episodeFrom`。合わなければ境界は 0 のまま、事実は `episodeFrom: 0`（話数に関係なく見せる）
+- 結果は `ChatSession.topic`（`SessionTopic`）に保存（`store.setSessionTopic`。一度決まったら差し替えない・境界は広げる方向のみ）。**話題が決まるまでは発話のたびに調べ、決まったら以後は外部を引かない**（1セッションあたり Gemini +1回）。挨拶など点数の低い発話では資料係を呼ばない
+- `ChatSession.currentEpisode` の意味が変わった: 「話題にした場面から分かる、少なくともここまでは見ている話数」。新規セッションは 0（work.json の canonFacts は話数では何も見せない）
+- 話題の事実は `topic-1..n` の id の CanonFact として、retrieval（常に先頭）/ generate / evaluate（`allCanonFacts` にも足す）/ としお / 答え合わせの根拠 / debug 画面に流れる（`retrieval.getVisibleCanonFacts`）。プロンプトには「# 今日の話題」と、境界 0 のとき「どこまで見たかは分からない。今日の話題の場面より先の展開には触れない」を入れる（`llm/context.ts`）。シオリのペルソナに「話題が決まっていなければ短く聞き返してよい」を追記
+- SSE に `topic` イベント（シオリの吹き出しより前）を追加。ChatApp はヘッダーの見出しを更新する。見出しは `lib/client/types.ts` の `sessionLabel`（話題 → 旧データの `progressDescription` → 第N話まで → 「話題はこれから」）に統一。話数0の設定は `episodeFromLabel` で「今日の話題」と出す
+- 再開後に追加: `work.json` の `sources[].sections` で使う章を絞れるようにした（chiikawa は 概要/世界観/連作エピソード/登場キャラクター/用語。コラボ・ショップ・スタッフ・劇場版の章を外して段落 246→168）。資料係のプロンプトに「場面そのものの段落を優先し、用語・人物の段落は補足に使う」「続編・後日談は facts にも summary にも入れない」を追加。AGENTS.md に「話題の場面（セッションごとの RAG）」節を足し、シーン検索の記述を置き換えた
+- 削除: `lib/server/progress-resolver.ts`、`/api/works/[workId]/resolve-progress`、`resolveProgress`、`Progress*` 型、未使用だった PATCH `/api/sessions/[id]` と `updateEpisode` / `updateSessionEpisode`、`works.getAllEpisodes`。SetupScreen は作品カード +「シオリと話す」ボタン +「続きから」だけの仮の形（**スタート画面の本デザインはユーザーが後で作る**）
+- ついでの修正: 冒頭の問いかけにも空の claims を保存するようにした（以前は全セッションの答え合わせで「記録前の旧データあり」扱いになっていた）
+- テスト: `sources.test.ts`, `topic.test.ts`, `llm/topic.test.ts`, `llm/pipeline.topic.test.ts`, `store.topic.test.ts`, `app/api/sessions/route.test.ts` を新規、既存の messages route / pipeline.toshio / generate / ChatApp / store.reveal を更新。`npm test` 164件・lint・build 通過
+- 実 API での確認（`DATA_DIR` をスクラッチに向けた 3007 番の dev サーバー。停止済み）: 「草むしり検定のところの話がしたい」→ 話題「草むしり検定」・arc 一致で境界63、シオリが話題に乗って小さな嘘、としおも割り込み。「ハチワレが好き」→ 人物の話題（arc なし・境界0）で基本設定7件。「こんにちは」→ 資料係を呼ばず話題なし、シオリが聞き返す。再開後の改善版では「ラーメン屋に入れなかったとこ」→『郎』編（初めての郎編, 境界43）、「草むしり検定のところ」→『草むしり検定』編で、事実はその場面のものだけ（再挑戦などの後の展開は混ざらなかった）
+- **残課題**:
+  - 資料係が後の展開を事実に混ぜないかは LLM 任せ（決定的な検査は無い）。最初の版では混ざり、プロンプト改善後の実行では混ざらなかった。人物の話題（Wikipedia の登場人物節）には後の話のネタバレが多い
+  - bigram 検索は言い換えに弱い（『郎』編は8候補中5位でぎりぎり入る）。「うさぎがすき」は『すき焼きキャンペーン』編とうさぎの段落が同点付近で、資料係の判断に頼っている
+  - 会話の途中で話題が変わっても外部は引き直さない（初回の仕組みとして意図的にそうした）。必要なら「analyze で新しい arc を検出したら追加で引く」などを検討
+  - generate が `usedExistingFactIds` に canon の id（`topic-1` 等）を入れることがあり、metadata の `fabricatedFactIds` に混ざる（以前から canon id でも起こりうる既存の挙動）
+- 後片付けメモ: ビルド確認のため、古いビルド生成物 `.next-3001/` と `.next/types/`（削除済みの resolve-progress を参照していて型検査が落ちていた）を消した。どちらも gitignore の生成物で再生成される。`next build`/`next dev` が別 distDir で起動すると `tsconfig.json` の include を書き換えるので、毎回 `git checkout tsconfig.json` で戻している
+
+## その前のセッション: 答え合わせに「嘘の構造図」を追加（`feat/checking_mockup`、未コミット）
 - ユーザー要望:「答え合わせ画面で、嘘の論理関係をグラフなどで構造化して表示し、華やかにしてほしい」
 - 作業は `feat/issue-6-toshio` と並行するため **git worktree `../chat-checking`** で行った（`git worktree list` で見える）。変更は worktree 内に未コミットで置いてある。コミット・PR はユーザー判断
 - サーバー: `lib/server/reveal-graph.ts`（新規）の `buildRevealGraph` が、答え合わせ後の `RevealData.graph`（`RevealGraph` 型、`types.ts`）を作る。ノードは 主張(statement: 本当/嘘・番号) / 主語や目的語のキャラ・物(entity: `buildNormalizer` で別名を正式名に寄せる) / 嘘が元にした本物の設定(canon) / 嘘に乗ったとしお(toshio)。辺は subject（関係の語をラベルに）/ object（目的語が登場人物か他の主張の主語のときだけ）/ based_on / rode_on。**推測は入れず、記録から機械的に引ける関係だけ**。`FabricatedRelation` はどこからも書かれていないので使っていない

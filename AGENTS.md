@@ -37,6 +37,7 @@
 ```json
 {
   "work":       { "id": "chiikawa", "title": "...", "episodeCount": 377 },
+  "sources":    [ { "kind": "mediawiki", "endpoint": "https://ja.wikipedia.org/w/api.php", "page": "記事名", "sections": ["連作エピソード", "登場キャラクター", ...] } ],
   "arcs":       [ { "id": "arc-pajama", "title": "パジャマパーティーズ編", "episodeFrom": 144, "episodeTo": 155, "aliases": ["パジャマパーティーズ", ...] } ],
   "episodes":   [ { "id": "ep-001", "episodeNumber": 1, "title": "出発", "summary": "..." } ],
   "canonFacts": [ { "id": "...", "episodeFrom": 7, "subject": "...", "relation": "...", "object": "...", "description": "..." } ]
@@ -45,15 +46,28 @@
 
 - `canonFacts` が「本物の設定」。`subject / relation / object` の三つ組 + 一文の説明
 - `episodeFrom` がネタバレ境界。ユーザーの視聴話数以下のものしかモデルに渡さない
-- `arcs.aliases` は「パジャマパーティーズ編まで見た」のような自由記述を話数に解決するためのもの（`lib/server/progress-resolver.ts`）
-- `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
+- `sources` は会話の話題を調べにいく外部の知識源（下の「話題の場面」）。`sections` を書くとその章（と記事冒頭の導入）だけを使う。コラボ・グッズ・スタッフ一覧のような物語と関係ない章は外しておく
+- `arcs.aliases` は、話題の場面（外部資料の「『〇〇』編」などの見出し）を arc に対応づけて視聴済み話数を決めるのと、発話解析で arc の言及を拾うのに使う
+- `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）、外部資料の検索（別名で書かれても正式名で探す）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
 
 同じディレクトリに `cards.jsonl`（命題カード）も置いてあるが、これは `docs/specs/spec.md` の構想用で**現状コードは読んでいない**。
+
+### 話題の場面（セッションごとの RAG、issue #14）
+
+話数は聞かない。セッションはシオリの定型「……今日は何について話したい?」から始まり、ユーザーの答えから話題の場面を外部の知識源で調べる（以前のシーン検索 = 自由記述→話数の `progress-resolver` は廃止）。
+
+- `lib/server/sources.ts` — `sources` の MediaWiki 記事を TextExtracts で取り、段落に区切る（プロセス内キャッシュ）。発話との**文字 bigram の IDF 重み付き重なり**で段落を選ぶ。ベクトルDB・埋め込みは使わない
+- `lib/server/topic.ts` の `lookupSessionTopic` — 上位の段落を資料係（`llm/topic.ts`、Gemini 1回・構造化出力）に渡し、場面の名前・要約・事実（`relation` は claims と同じ閉じた語彙）を**資料に書かれたことだけから**抜かせる。場面が `arcs` に対応すればその arc の最後の話を視聴済み話数にする
+- 結果は `ChatSession.topic` に保存し、事実は `topic-N` の id の canonFact として以後の retrieve / generate / evaluate / としお / 答え合わせに流れる（`retrieval.getVisibleCanonFacts`）。**話題が決まるまでは発話のたびに調べ、決まったら以後は外部を引かない**。挨拶のように資料と重ならない発話では資料係を呼ばない。失敗しても話題なしのままシオリは返事をする
+- `ChatSession.currentEpisode` は「話題にした場面から分かる、少なくともここまでは見ている話数」。話題が決まるまで・arc に対応しない話題（人物など）では 0 のままで、work.json の canonFacts は話数では出さない
+- Gemini の Google 検索グラウンディングは無料枠のキーでは 429 になるため使っていない
+- 資料係が場面より後の展開を事実に混ぜないかはプロンプト頼み（決定的な検査は無い）。人物の段落には後の話が多く書かれているので、ネタバレの経路として意識しておくこと
 
 ### 会話パイプライン
 
 `lib/server/llm/pipeline.ts`。1発話ごとに以下を回す。
 
+0. **topic** — セッションに話題の場面がまだ無ければ、上の `lookupSessionTopic` で調べる
 1. **analyze** — 発話から言及キャラ・出来事・質問種別を抽出。**LLM は使わない**。`entities` / `arcs` の別名との文字列一致と正規表現で済ませる（1発話あたりの API 呼び出しを generate の1回に抑えるため）
 2. **retrieve** — 視聴済み範囲の canonFacts をキーワード一致で上位N件 + セッション内の**既存の嘘を全件**（言及キャラに関係するものを先頭に）
 3. **generate** — ペルソナ + 材料を渡し、返答文と `strategy` と、返答文が述べた設定上の主張 `claims` を構造化出力で得る。各 claim は `subject / relation(閉じた語彙) / object / negated / grounding(canon|fabricated)` と、返答文の中でその主張を述べた部分の抜き出し `quote`
@@ -72,7 +86,7 @@
 
 `/reveal/[sessionId]`（`components/RevealView.tsx`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
 
-- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getCanonFactsUpTo` の範囲だけ出す
+- 真偽の出どころは generate の `claims`。Route Handler がシオリの発話ごとに `saveMessageClaims` で `grounding` と `quote` ごと保存し、`lib/server/reveal.ts` が quote の位置で本文を区切って「本当 / 嘘 / 印なし（会話）」に塗り分ける。根拠の canonFact は `getVisibleCanonFacts`（話題の場面の事実 + 視聴済み範囲）だけ出す
 - 流れは「予想（本当/嘘を選ぶ）→ 答えを見る → 真偽つきの会話」。答え合わせ前の GET は問題文だけで真偽を返さない
 - 答え合わせは1回きり（`ChatSession.reveal`）。済んだセッションにはメッセージを送れない（409）
 - としおは主張を記録していないので、直前のシオリの返答の嘘を「知ったうえで乗った」ことだけを示す
@@ -101,7 +115,7 @@
 
 `lib/server/llm/client.ts` は `process.env.GEMINI_API_KEY` だけを SDK（`@google/genai`）に渡す。キーが無ければリクエストが認証エラーになり、パイプラインは catch して定型文にフォールバックする。**`.env.local` にキーを置かない限り API は使われない**。
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）。
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.6-flash`（Google AI Studio の無料枠で使える。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、としおが割り込むときに+1回、話題の場面が決まるまでの発話で資料係の+1回。
 
 ### 意図的に選んでいない技術
 
@@ -118,13 +132,13 @@
 
 ```
 app/
-  page.tsx                          作品選択 + 視聴進捗入力（SetupScreen）
+  page.tsx                          作品選択（SetupScreen。スタート画面は作り直し予定）
   chat/[sessionId]/page.tsx         チャット画面
   debug/[sessionId]/page.tsx        管理画面。本物の設定と生成された嘘を並べて見る
   reveal/[sessionId]/page.tsx       答え合わせ画面（ユーザー向け）。予想 → 真偽つきの会話
   api/
-    works/                          作品一覧・詳細・進捗の解決
-    sessions/                       セッション作成・取得・話数更新
+    works/                          作品一覧・詳細
+    sessions/                       セッション作成・取得
     sessions/[sessionId]/messages/  チャット本体（SSE）。パイプラインはここから呼ぶ
     sessions/[sessionId]/{canon-facts,fabricated-facts,fabricated-graph}/  debug 画面用
     sessions/[sessionId]/reveal/    答え合わせ（GET: 問題 or 結果 / POST: 予想を送って答え合わせ済みにする）
@@ -135,10 +149,11 @@ lib/
     store.ts                        .data/db.json の読み書き
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
     reveal.ts                       答え合わせ用に、発話を本当/嘘の部分に区切る
-    progress-resolver.ts            自由記述 → 話数
+    sources.ts                      外部の知識源（MediaWiki）の取得・段落分け・検索
+    topic.ts                        話題の場面の特定（セッションごとの RAG）
     rate-limit.ts
     types.ts                        データモデル
-    llm/                            analyze → generate → evaluate → pipeline（+ toshio: としおの割り込み）
+    llm/                            topic（資料係）→ analyze → generate → evaluate → pipeline（+ toshio: としおの割り込み）
   client/                           fetch ラッパー・SSE パーサ・表示用型
 data/
   chiikawa/work.json                ← コードはこの中身を知らない
@@ -158,7 +173,7 @@ pictures/                           デザイン素材・スケッチ
 - **作品名・キャラ名での条件分岐を書かない**。データとコードの分離が壊れる
 - **`NEXT_PUBLIC_` に API キーを置かない**。LLM 呼び出しは必ず Route Handler 側（`lib/server/` 配下は client から import しない。型だけは `import type` で可）
 - **抽象化を先回りしない**。プラグイン機構のようなものは、2作品目で実際に必要になるまで作らない
-- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts` / `getAllEpisodes` は debug 画面と進捗解決専用。生成に渡すのは `getCanonFactsUpTo` の結果だけ
+- **未視聴範囲を漏らす経路を作らない**。`getAllCanonFacts` は debug 画面と evaluate（ネタバレ検出）専用。生成に渡すのは `getCanonFactsUpTo` の結果と、話題の場面について外部資料で確かめた事実だけ
 
 ### work.json を書くとき
 

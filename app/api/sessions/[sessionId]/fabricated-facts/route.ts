@@ -10,7 +10,7 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
   }
 
   const facts = getFabricatedFacts(sessionId);
-  const canonFacts = getAllCanonFacts(session.workId);
+  const canonFacts = [...(session.topic?.facts ?? []), ...getAllCanonFacts(session.workId)];
   const messages = getMessages(sessionId);
 
   const enriched = facts.map((fact) => ({

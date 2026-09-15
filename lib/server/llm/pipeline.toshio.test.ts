@@ -17,6 +17,8 @@ vi.mock("../retrieval", () => ({
   retrieveCanonFacts: mocks.retrieveCanonFacts,
   retrieveFabricatedFacts: mocks.retrieveFabricatedFacts,
 }));
+// 話題の場面の特定（外部の知識源 + Gemini）は pipeline.test 側で見る。ここでは「特定できなかった」扱い
+vi.mock("../topic", () => ({ lookupSessionTopic: async () => null, episodeBoundaryFor: () => 0 }));
 vi.mock("../works", () => ({
   getAllCanonFacts: mocks.getAllCanonFacts,
   getEntities: () => [],
@@ -116,11 +118,12 @@ describe("runToshioInterjection: シオリの返答が確定した後に、材�
 
   it("としおにはシオリと同じ取り方の材料（視聴済み canonFacts・セッションの嘘・ユーザー発言・シオリの返答）を渡す", async () => {
     await runToshioInterjection(toshioParams);
-    expect(mocks.retrieveCanonFacts).toHaveBeenCalledWith("w", 3, toshioParams.analysis);
+    expect(mocks.retrieveCanonFacts).toHaveBeenCalledWith("w", 3, toshioParams.analysis, []);
     expect(mocks.retrieveFabricatedFacts).toHaveBeenCalledWith("s1", toshioParams.analysis);
     expect(mocks.generateToshioCommentary).toHaveBeenCalledWith({
       workTitle: "テスト作品",
       currentEpisode: 3,
+      topic: null,
       canonFacts: [visibleFact],
       fabricatedFacts: [existingLie],
       userMessage: "これって伏線じゃない？",

@@ -1,6 +1,6 @@
 import { getCanonFactsUpTo } from "./works";
 import { getFabricatedFacts } from "./store";
-import type { CanonFact, FabricatedFact, UserMessageAnalysis } from "./types";
+import type { CanonFact, ChatSession, FabricatedFact, UserMessageAnalysis } from "./types";
 
 const MAX_CANON_FACTS = 6;
 // Lies are never truncated by recency: a lie that drops out of the prompt is a
@@ -14,11 +14,31 @@ function textIncludesAny(text: string, needles: string[]): boolean {
 }
 
 /**
+ * セッションで見せてよい本物の設定の全部: 話題の場面について外部の資料で確かめたもの
+ * （issue #14）と、work.json のうち視聴済み範囲のもの。答え合わせの根拠や debug 画面に使う。
+ */
+export function getVisibleCanonFacts(session: Pick<ChatSession, "workId" | "currentEpisode" | "topic">): CanonFact[] {
+  return [...(session.topic?.facts ?? []), ...getCanonFactsUpTo(session.workId, session.currentEpisode)];
+}
+
+/**
  * Naive keyword-overlap retrieval instead of embeddings/pgvector - acceptable
  * per docs/specs/mvp-spec.md section 5 for an early/hackathon build. Never returns facts
  * beyond the viewer's current episode (spoilerLevel <= currentEpisode).
+ *
+ * `topicFacts` (the scene the user picked at the start, issue #14) always come
+ * first and are not counted against the cap: they are what this session is about.
  */
-export function retrieveCanonFacts(workId: string, currentEpisode: number, analysis: UserMessageAnalysis): CanonFact[] {
+export function retrieveCanonFacts(
+  workId: string,
+  currentEpisode: number,
+  analysis: UserMessageAnalysis,
+  topicFacts: CanonFact[] = [],
+): CanonFact[] {
+  return [...topicFacts, ...retrieveWorkCanonFacts(workId, currentEpisode, analysis)];
+}
+
+function retrieveWorkCanonFacts(workId: string, currentEpisode: number, analysis: UserMessageAnalysis): CanonFact[] {
   const visible = getCanonFactsUpTo(workId, currentEpisode);
   const keywords = [...analysis.mentionedCharacters, ...analysis.mentionedEvents];
 

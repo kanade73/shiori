@@ -3,9 +3,17 @@ import { generateResponse } from "./generate";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
 import { retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
+import { episodeBoundaryFor, lookupSessionTopic } from "../topic";
 import { getAllCanonFacts, getEntities } from "../works";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
-import type { Claim, GenerationResult, Message, ResponseEvaluation, UserMessageAnalysis } from "../types";
+import type {
+  Claim,
+  GenerationResult,
+  Message,
+  ResponseEvaluation,
+  SessionTopic,
+  UserMessageAnalysis,
+} from "../types";
 
 export type PipelineResult = {
   analysis: UserMessageAnalysis;
@@ -16,6 +24,10 @@ export type PipelineResult = {
   newFabricatedClaims: Claim[];
   /** Stored lies the final reply restated (by normalized triple) or explicitly reused. */
   reusedFabricatedFactIds: string[];
+  /** この発話で新しく把握した話題の場面。既に決まっていた、または特定できなかったなら null */
+  newTopic: SessionTopic | null;
+  /** 話題の場面を踏まえたネタバレ境界。セッションに保存し、としおにも同じ値を渡す */
+  currentEpisode: number;
 };
 
 // としおは毎回喋ると五月蝿いので、直近何ターンかは連続して割り込ませない
@@ -48,29 +60,43 @@ const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一
 const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
 
 /**
- * analyze (local) -> retrieve -> generate -> evaluate -> regenerate once if
- * flagged. Generation is unconstrained; consistency is enforced only after
- * the fact, against what the character already said in this session.
+ * (topic lookup until the session has one) -> analyze (local) -> retrieve ->
+ * generate -> evaluate -> regenerate once if flagged. Generation is
+ * unconstrained; consistency is enforced only after the fact, against what the
+ * character already said in this session.
  */
 export async function runConversationPipeline(params: {
   workId: string;
   workTitle: string;
   sessionId: string;
   currentEpisode: number;
+  /** セッションで既に把握している話題の場面。無ければこの発話から調べる（issue #14） */
+  topic?: SessionTopic | null;
   history: Message[];
   userMessage: string;
 }): Promise<PipelineResult> {
-  const { workId, workTitle, sessionId, currentEpisode, history, userMessage } = params;
+  const { workId, workTitle, sessionId, history, userMessage } = params;
+
+  // 話題の場面が決まるまでは、発話のたびに外部の知識源で調べる。決まったら以後は引かない
+  let topic = params.topic ?? null;
+  let newTopic: SessionTopic | null = null;
+  if (!topic) {
+    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage });
+    topic = newTopic;
+  }
+  const currentEpisode = Math.max(params.currentEpisode, episodeBoundaryFor(workId, topic));
+  const topicFacts = topic?.facts ?? [];
 
   const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
-  const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis);
+  const visibleCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis, topicFacts);
   const existingFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
-  const allCanonFacts = getAllCanonFacts(workId);
+  const allCanonFacts = [...topicFacts, ...getAllCanonFacts(workId)];
   const normalize = buildNormalizer(getEntities(workId));
 
   const genArgs = {
     workTitle,
     currentEpisode,
+    topic,
     canonFacts: visibleCanonFacts,
     fabricatedFacts: existingFabricatedFacts,
     history,
@@ -131,6 +157,8 @@ export async function runConversationPipeline(params: {
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),
+    newTopic,
+    currentEpisode,
   };
 }
 
@@ -145,14 +173,17 @@ export async function runToshioInterjection(params: {
   workId: string;
   workTitle: string;
   sessionId: string;
+  /** シオリのパイプラインが返した境界（話題の場面を踏まえたもの） */
   currentEpisode: number;
+  /** セッションの話題の場面（この発話で決まったものも含む） */
+  topic?: SessionTopic | null;
   /** シオリのパイプラインに渡したのと同じ、今回の発話より前の履歴 */
   history: Message[];
   userMessage: string;
   analysis: UserMessageAnalysis;
   generation: GenerationResult;
 }): Promise<string | null> {
-  const { workId, workTitle, sessionId, currentEpisode, history, userMessage, analysis, generation } = params;
+  const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation } = params;
 
   if (turnsSinceLastToshio(history) < TOSHIO_COOLDOWN_TURNS) return null;
   if (!worthAskingToshio(generation, analysis)) return null;
@@ -161,7 +192,8 @@ export async function runToshioInterjection(params: {
     const commentary = await generateToshioCommentary({
       workTitle,
       currentEpisode,
-      canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis),
+      topic: topic ?? null,
+      canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis, topic?.facts ?? []),
       fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,

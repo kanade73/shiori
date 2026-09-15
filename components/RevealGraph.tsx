@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { layoutGraph, type LaidOutNode } from "@/lib/client/graph-layout";
+import { episodeFromLabel } from "@/lib/client/types";
 import type { RevealGraph as RevealGraphData, RevealGraphEdge, RevealGraphNode, Verdict } from "@/lib/server/types";
 
 /**
@@ -75,7 +76,7 @@ function NodeShape({ item, dimmed, active }: { item: LaidOutNode; dimmed: boolea
           {ring}
           <rect x={-r} y={-r} width={r * 2} height={r * 2} rx={3} transform="rotate(45)" className="fill-canvas stroke-warning" strokeWidth={1.5} />
           <text y={r + 13} textAnchor="middle" className="fill-muted text-[9px]" style={{ pointerEvents: "none" }}>
-            第{node.episodeFrom}話〜 {trimLabel(node.label, 12)}
+            {episodeFromLabel(node.episodeFrom)} {trimLabel(node.label, 12)}
           </text>
         </g>
       );
@@ -216,7 +217,7 @@ export function RevealGraph({ graph, onNavigate }: { graph: RevealGraphData; onN
               item.node.kind === "statement"
                 ? `${item.node.number}. ${item.node.verdict === "lie" ? "嘘" : "本当"}: ${item.node.label}`
                 : item.node.kind === "canon"
-                  ? `本物の設定（第${item.node.episodeFrom}話〜）: ${item.node.label}`
+                  ? `本物の設定（${episodeFromLabel(item.node.episodeFrom)}）: ${item.node.label}`
                   : item.node.label;
             return (
               <g

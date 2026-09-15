@@ -5,7 +5,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Mascot } from "./Mascot";
 import { RevealGraph, statementAnchorId, toshioAnchorId } from "./RevealGraph";
 import { getReveal, getSessionData, submitReveal } from "@/lib/client/api";
-import { formatTime } from "@/lib/client/types";
+import { episodeFromLabel, formatTime, sessionLabel } from "@/lib/client/types";
 import type {
   ChatSession,
   RevealData,
@@ -304,7 +304,7 @@ function StatementRow({
   located: boolean;
 }) {
   const outcome = outcomeOf(statement.verdict, guess);
-  const sources = statement.sources.map((s) => `第${s.episodeFrom}話〜 ${s.description}`).join(" / ");
+  const sources = statement.sources.map((s) => `${episodeFromLabel(s.episodeFrom)} ${s.description}`).join(" / ");
 
   return (
     <li id={statementAnchorId(statement.id)} className="flex gap-xs rounded-md bg-surface-soft px-sm py-xs scroll-mt-lg target:ring-2 target:ring-primary">
@@ -519,7 +519,7 @@ export function RevealView({ sessionId }: { sessionId: string }) {
       </Link>
       <h1 className="mt-sm font-display text-display-sm font-medium text-ink">答え合わせ</h1>
       <p className="mt-xxs text-[13px] text-muted">
-        {work.title} ・ {session.progressDescription ?? `第${session.currentEpisode}話まで`}
+        {work.title} ・ {sessionLabel(session)}
         {data.status === "revealed" && ` ・ ${formatTime(data.reveal.revealedAt)} に答え合わせ済み`}
       </p>
 

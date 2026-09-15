@@ -4,6 +4,7 @@ import Link from "next/link";
 import { Mascot } from "./Mascot";
 import { PlusIcon, XIcon } from "./icons";
 import type { SessionSummary } from "@/lib/client/api";
+import { sessionLabel } from "@/lib/client/types";
 import type { Work } from "@/lib/server/types";
 
 interface SidebarProps {
@@ -63,12 +64,11 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
             <p className="text-[15px] font-medium text-ink">{work.title}</p>
             <dl className="mt-xs space-y-[2px] text-[12px] text-muted">
               <div className="flex justify-between gap-sm">
-                <dt className="shrink-0">視聴話数</dt>
+                <dt className="shrink-0">話題</dt>
                 <dd className="text-right">
                   {(() => {
                     const active = sessions.find((s) => s.id === activeSessionId);
-                    if (!active) return "-";
-                    return active.progressDescription ?? `第${active.currentEpisode}話まで`;
+                    return active ? sessionLabel(active) : "-";
                   })()}
                 </dd>
               </div>
@@ -97,7 +97,7 @@ export function Sidebar({ isOpen, onClose, work, sessions, activeSessionId }: Si
               }`}
             >
               <div className="flex items-center justify-between gap-xs">
-                <span className="truncate">{s.progressDescription ?? `第${s.currentEpisode}話まで`}</span>
+                <span className="truncate">{sessionLabel(s)}</span>
                 <span className="shrink-0 text-[11px] text-muted-soft">
                   {s.reveal ? "答え合わせ済み" : `${s.fabricatedFactCount}件`}
                 </span>
