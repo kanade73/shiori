@@ -37,7 +37,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
   return (
     <div className="bg-canvas px-md py-sm">
       <div className="mx-auto max-w-[760px]">
-        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-canvas px-sm py-xs shadow-sm transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgba(106,79,196,0.15)]">
+        <div className="flex items-end gap-xs rounded-xl border border-hairline bg-surface-soft px-sm py-xs transition-shadow focus-within:border-primary focus-within:shadow-[0_0_0_3px_rgb(var(--color-primary)_/_0.2)]">
           <textarea
             ref={textareaRef}
             rows={1}
@@ -70,7 +70,7 @@ export function ChatInput({ value, onChange, onSend, disabled }: ChatInputProps)
           <div className="flex shrink-0 items-center gap-xs text-[11px] text-muted-soft">
             <span className="hidden sm:inline">↵ 改行 / ⌘・Ctrl+↵ 送信</span>
             <span className="sm:hidden">⌘/Ctrl+Enterで送信</span>
-            <span className="h-[6px] w-[6px] rounded-full bg-success" />
+            <span className="h-[6px] w-[6px] bg-success" />
             シオリ・オンライン
           </div>
         </div>

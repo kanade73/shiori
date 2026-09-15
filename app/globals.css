@@ -3,8 +3,66 @@
 @tailwind utilities;
 
 @layer base {
-  html {
+  /* ライトテーマ（既定）: 白 × 紫。シオリのアイコンの白背景に近い明るさ */
+  :root {
     color-scheme: light;
+
+    --color-primary: 106 79 196;
+    --color-primary-active: 83 58 168;
+    --color-primary-disabled: 219 216 234;
+    --color-ink: 24 26 44;
+    --color-body: 67 69 92;
+    --color-body-strong: 43 45 68;
+    --color-muted: 106 109 134;
+    --color-muted-soft: 147 150 170;
+    --color-hairline: 220 216 234;
+    --color-hairline-soft: 231 228 241;
+    --color-canvas: 247 246 251;
+    --color-surface-soft: 239 237 247;
+    --color-surface-card: 233 230 244;
+    --color-surface-cream-strong: 222 217 238;
+    --color-surface-dark: 24 26 44;
+    --color-surface-dark-elevated: 36 39 64;
+    --color-surface-dark-soft: 30 33 56;
+    --color-on-primary: 255 255 255;
+    --color-on-dark: 236 234 246;
+    --color-on-dark-soft: 146 149 174;
+    --color-accent-steel: 80 91 149;
+    --color-accent-mauve: 159 144 187;
+    --color-success: 61 165 111;
+    --color-warning: 207 154 58;
+    --color-error: 198 67 90;
+  }
+
+  /* ダークテーマ: 藍黒 × 紫。シオリの髪色の藍黒を地に、目の紫をアクセントに */
+  [data-theme="dark"] {
+    color-scheme: dark;
+
+    --color-primary: 143 124 224;
+    --color-primary-active: 164 149 236;
+    --color-primary-disabled: 51 53 76;
+    --color-ink: 236 234 246;
+    --color-body: 196 198 218;
+    --color-body-strong: 222 221 240;
+    --color-muted: 146 149 174;
+    --color-muted-soft: 109 112 144;
+    --color-hairline: 43 46 73;
+    --color-hairline-soft: 36 39 64;
+    --color-canvas: 16 17 32;
+    --color-surface-soft: 23 25 48;
+    --color-surface-card: 30 33 56;
+    --color-surface-cream-strong: 38 42 68;
+    --color-surface-dark: 11 12 22;
+    --color-surface-dark-elevated: 30 33 56;
+    --color-surface-dark-soft: 20 22 42;
+    --color-on-primary: 20 21 42;
+    --color-on-dark: 236 234 246;
+    --color-on-dark-soft: 146 149 174;
+    --color-accent-steel: 111 122 184;
+    --color-accent-mauve: 165 151 204;
+    --color-success: 85 192 140;
+    --color-warning: 216 169 78;
+    --color-error: 224 96 118;
   }
 
   body {
@@ -12,13 +70,13 @@
   }
 
   ::selection {
-    background-color: #6a4fc433;
-    color: theme("colors.ink");
+    background-color: rgb(var(--color-primary) / 0.22);
+    color: rgb(var(--color-ink));
   }
 
   * {
     scrollbar-width: thin;
-    scrollbar-color: #6a4fc433 transparent;
+    scrollbar-color: rgb(var(--color-hairline)) transparent;
   }
 
   *::-webkit-scrollbar {
@@ -27,11 +85,18 @@
   }
 
   *::-webkit-scrollbar-thumb {
-    background-color: #6a4fc433;
+    background-color: rgb(var(--color-hairline));
     border-radius: 9999px;
   }
 
   *::-webkit-scrollbar-thumb:hover {
-    background-color: #6a4fc455;
+    background-color: rgb(var(--color-muted-soft));
+  }
+}
+
+@layer utilities {
+  /* ドット絵をぼやけさせない。Tailwind 3.4 には image-rendering ユーティリティが無いので自前で */
+  .image-pixelated {
+    image-rendering: pixelated;
   }
 }

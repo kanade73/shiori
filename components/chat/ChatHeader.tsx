@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { MenuIcon } from "@/components/ui/icons";
+import { ThemeToggle } from "@/components/ui/ThemeToggle";
 
 interface ChatHeaderProps {
   workTitle: string;
@@ -38,6 +39,7 @@ export function ChatHeader({
       </div>
 
       <div className="flex shrink-0 items-center gap-xs">
+        <ThemeToggle />
         <Link
           href={`/debug/${sessionId}`}
           className="hidden rounded-md px-sm py-xxs text-[13px] text-muted transition-colors hover:bg-surface-card hover:text-ink sm:block"

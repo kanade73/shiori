@@ -72,7 +72,7 @@ export function Mascot({
         src={src}
         alt={name}
         draggable={false}
-        className={`block h-full w-full select-none object-cover ${animated ? "animate-tilt" : ""}`}
+        className={`image-pixelated block h-full w-full select-none object-cover ${animated ? "animate-tilt" : ""}`}
         style={animated ? { animationDelay: `${delay}s` } : undefined}
       />
     </div>
