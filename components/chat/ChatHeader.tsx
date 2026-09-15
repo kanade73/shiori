@@ -5,8 +5,8 @@ import { MenuIcon } from "@/components/ui/icons";
 
 interface ChatHeaderProps {
   workTitle: string;
-  currentEpisode: number;
-  progressDescription?: string;
+  /** 話題の場面（issue #14）。lib/client/types の sessionLabel */
+  sessionLabel: string;
   sessionId: string;
   /** 答え合わせ済みか。済んでいればボタンは結果を見る導線になる */
   revealed: boolean;
@@ -18,8 +18,7 @@ interface ChatHeaderProps {
 
 export function ChatHeader({
   workTitle,
-  currentEpisode,
-  progressDescription,
+  sessionLabel,
   sessionId,
   revealed,
   onOpenSidebar,
@@ -39,7 +38,7 @@ export function ChatHeader({
         </button>
         <div className="min-w-0 px-xs py-xxs">
           <span className="truncate text-title-md font-medium text-ink">{workTitle}</span>
-          <span className="ml-xs text-[13px] text-muted-soft">{progressDescription ?? `第${currentEpisode}話まで`}</span>
+          <span className="ml-xs font-pixel text-[16px] text-muted-soft">{sessionLabel}</span>
         </div>
       </div>
 
@@ -58,13 +57,13 @@ export function ChatHeader({
         </button>
         <Link
           href={`/debug/${sessionId}`}
-          className="hidden rounded-md px-sm py-xxs text-[13px] text-muted transition-colors hover:bg-surface-card hover:text-ink sm:block"
+          className="hidden px-sm py-xxs font-pixel text-[16px] text-muted hover:bg-surface-card hover:text-ink sm:block"
         >
           偽設定を確認
         </Link>
         <Link
           href={`/reveal/${sessionId}`}
-          className="rounded-md bg-primary px-sm py-xxs text-[13px] font-medium text-on-primary transition-colors hover:bg-primary-active"
+          className="pixel-btn bg-primary px-sm py-xxs font-pixel text-[16px] text-on-primary hover:bg-primary-active"
         >
           {revealed ? "答え合わせの結果" : "答え合わせ"}
         </Link>

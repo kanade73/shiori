@@ -9,7 +9,7 @@ vi.mock("./client", () => ({
   EXTRACTION_MODEL: "test-extraction-model",
 }));
 
-import { formatDirective, generateReply } from "./generate";
+import { TOSHIO_HISTORY_MAX_CHARS, formatDirective, generateReply } from "./generate";
 
 function msg(role: Message["role"], content: string): Message {
   return { id: `m-${content}`, sessionId: "s1", role, content, createdAt: "2026-01-01T00:00:00Z" } as Message;
@@ -109,11 +109,11 @@ describe("generateReply: ペルソナと材料は systemInstruction に載せる
     expect(system).toContain("撤回しない");
   });
 
-  it("[企画の芯] 嘘の作り方（発想は自由・具体的な細部）はペルソナに残っている", async () => {
+  it("[企画の芯] 嘘の作り方（場面の中の細部に置く）はペルソナに残っている", async () => {
     await generateReply(baseParams);
     const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
     expect(system).toContain("嘘を作る際のルール");
-    expect(system).toContain("発想は自由");
+    expect(system).toContain("その場面で起きたこと・映っていた細部");
   });
 
   it("[ネタバレ防止は全廃] avoid_spoiler / ネタバレ をプロンプトに書かない", async () => {
@@ -125,8 +125,8 @@ describe("generateReply: ペルソナと材料は systemInstruction に載せる
 });
 
 describe("formatDirective: バックエンドが決めた「今回の指示」の文面", () => {
-  it("introduce は新しい設定を1つ混ぜるよう言う", () => {
-    expect(formatDirective({ kind: "introduce", phase: "early" })).toContain("新しい設定を1つ");
+  it("introduce は場面の細部を1つ混ぜるよう言う", () => {
+    expect(formatDirective({ kind: "introduce", phase: "early" })).toContain("場面の中の細部");
   });
 
   it("plain は新しい設定を要求しない", () => {
@@ -149,6 +149,56 @@ describe("formatDirective: バックエンドが決めた「今回の指示」�
   it("[エスカレーション] 終盤は足させる裏付けの数だけを増やす（内容には触れない）", () => {
     const late = formatDirective({ kind: "layer", phase: "late", doubted: [], detailCount: 3 });
     expect(late).toContain("裏付ける新しい細部を3つ");
+  });
+});
+
+describe("generateReply: 今日の話題（issue #14）", () => {
+  const topic = {
+    title: "草むしり検定編",
+    summary: "ちいかわとハチワレが検定を受ける。",
+    facts: [],
+    sources: [],
+    query: "検定のところ",
+    resolvedAt: "2026-09-15T00:00:00.000Z",
+  };
+
+  it("話題の場面の名前と要約をシステムプロンプトに入れる", async () => {
+    await generateReply({ ...baseParams, topic });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# 今日の話題\n草むしり検定編：ちいかわとハチワレが検定を受ける。");
+  });
+
+  it("話題が決まっていなければそう書き、聞き返してよいことをペルソナに書いておく", async () => {
+    await generateReply({ ...baseParams, topic: null });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# 今日の話題\n（まだ決まっていない）");
+    expect(system).toContain("どの場面の話かを短く聞き返してかまいません");
+  });
+
+  it("視聴話数が分からない（境界 0）なら、話題より先の展開に触れないよう書く", async () => {
+    await generateReply({ ...baseParams, currentEpisode: 0 });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("ユーザーがどこまで見たかは分からない");
+    expect(system).not.toContain("第0話");
+  });
+
+  it("話題が切り替わっていれば、前に話した話題を名前だけ入れる（無ければ見出しごと出さない）", async () => {
+    await generateReply({ ...baseParams, topic, pastTopics: [{ ...topic, title: "『郎』編" }] });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("# ここまでに話した話題");
+    expect(system).toContain("- 『郎』編");
+    generateContent.mockClear();
+    await generateReply({ ...baseParams, topic });
+    expect(generateContent.mock.calls[0][0].config.systemInstruction).not.toContain("# ここまでに話した話題");
+  });
+
+  it("話数の分からない設定（話題の場面について資料で確かめたもの）には話数を付けない", async () => {
+    await generateReply({
+      ...baseParams,
+      canonFacts: [{ id: "topic-1", workId: "w", episodeFrom: 0, subject: "A", relation: "did", object: "B", description: "A は B をした" }],
+    });
+    const system: string = generateContent.mock.calls[0][0].config.systemInstruction;
+    expect(system).toContain("- [topic-1] A が B に対してdid。A は B をした");
   });
 });
 
@@ -187,19 +237,25 @@ describe("generateReply: 会話履歴を Gemini の contents 形式に変換す�
     expect(contents[contents.length - 1].role).toBe("user");
   });
 
-  it("としおの発話（speaker=toshio）はシオリの会話ではないので履歴から落とす", async () => {
+  it("としおの発話は直近1件だけ【としお】の印を付けて model 側に載せ、古いものは落とす", async () => {
+    const long = "結論から言うとね……".repeat(60);
     await generateReply({
       ...baseParams,
       history: [
         msg("user", "これって伏線じゃない？"),
         { ...msg("assistant", "そうだね。"), speaker: "shiori" },
-        { ...msg("assistant", "結論から言うとね……"), speaker: "toshio" },
+        { ...msg("assistant", "古い考察"), speaker: "toshio", id: "t1" },
+        msg("user", "ふーん"),
+        { ...msg("assistant", "うん。"), speaker: "shiori" },
+        { ...msg("assistant", long), speaker: "toshio", id: "t2" },
       ],
     });
     const contents = generateContent.mock.calls[0][0].contents;
     expect(contents).toEqual([
       { role: "user", parts: [{ text: "これって伏線じゃない？" }] },
       { role: "model", parts: [{ text: "そうだね。" }] },
+      { role: "user", parts: [{ text: "ふーん" }] },
+      { role: "model", parts: [{ text: `うん。\n【としお】${long.slice(0, TOSHIO_HISTORY_MAX_CHARS)}` }] },
       { role: "user", parts: [{ text: "1話どうだった？" }] },
     ]);
   });

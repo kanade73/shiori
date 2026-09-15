@@ -84,7 +84,7 @@ describe("stageReached / stageSummary", () => {
   it("analyze は質問種別と言及した語、directive は指示の種類を出す", () => {
     const [turn] = fold([analyze, directive]);
     expect(stageSummary(turn, "analyze")).toBe("考察 / ハチワレ");
-    expect(stageSummary(turn, "directive")).toBe("新しい設定を1つ");
+    expect(stageSummary(turn, "directive")).toBe("場面の細部を1つ");
   });
 
   it("layer の directive は裏付けの数まで出す", () => {

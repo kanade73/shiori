@@ -17,3 +17,13 @@ export const GENERATION_MODEL = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 // 分類ができればよいので、既定では会話より軽いモデルを使う。将来ここをローカルの
 // 軽量モデル（LoRA）に差し替える想定で、モデル名だけ別の環境変数にしてある。
 export const EXTRACTION_MODEL = process.env.GEMINI_EXTRACT_MODEL || "gemini-3.5-flash-lite";
+
+// 話題の切り替わりの判定役（issue #14 の続き）。文脈の小さい判定だけなので軽いモデルでよい。
+// 無料枠の上限はモデルごと（flash-lite で1分15回）なので、シオリの generate（GEMINI_MODEL）とは
+// 別のモデルにして枠を食い合わないようにする。GEMINI_MODEL と同じにすると、判定のある発話で
+// シオリの分の枠を削る
+export const ROUTER_MODEL = process.env.GEMINI_ROUTER_MODEL || "gemini-3.1-flash-lite";
+
+// 外部資料の段落のベクトル検索用。gemini-embedding-001 は1リクエストで最大100件まとめて埋め込める
+// （gemini-embedding-2 は複数入力を1本のベクトルに束ねるので、段落ごとの検索には使えない）
+export const EMBEDDING_MODEL = process.env.GEMINI_EMBEDDING_MODEL || "gemini-embedding-001";

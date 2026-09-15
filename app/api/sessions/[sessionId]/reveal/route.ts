@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getFabricatedFacts, getMessageClaims, getMessages, getSession, revealSession } from "@/lib/server/store";
-import { getCanonFactsUpTo, getEntities } from "@/lib/server/works";
+import { getEntities } from "@/lib/server/works";
+import { getVisibleCanonFacts } from "@/lib/server/retrieval";
 import { buildReveal, toRevealData } from "@/lib/server/reveal/build";
 import type { ChatSession } from "@/lib/server/types";
 import type { Verdict } from "@/lib/server/reveal/types";
@@ -10,7 +11,7 @@ function build(session: ChatSession) {
     messages: getMessages(session.id),
     messageClaims: getMessageClaims(session.id),
     fabricatedFacts: getFabricatedFacts(session.id),
-    canonFacts: getCanonFactsUpTo(session.workId, session.currentEpisode),
+    canonFacts: getVisibleCanonFacts(session),
   });
 }
 

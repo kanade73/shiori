@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getFabricatedFacts, getMessages, getSession } from "@/lib/server/store";
 import { getAllCanonFacts } from "@/lib/server/works";
+import { getTopicFacts } from "@/lib/server/retrieval";
 
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
@@ -10,7 +11,7 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
   }
 
   const facts = getFabricatedFacts(sessionId);
-  const canonFacts = getAllCanonFacts(session.workId);
+  const canonFacts = [...getTopicFacts(session), ...getAllCanonFacts(session.workId)];
   const messages = getMessages(sessionId);
 
   const enriched = facts.map((fact) => ({

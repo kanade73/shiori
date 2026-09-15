@@ -21,7 +21,7 @@ export type TraceTurn = {
   at: string;
   userText?: string;
   analyze?: { mentionedCharacters: string[]; mentionedEvents: string[]; questionType: string };
-  directive?: { kind: "introduce" | "layer" | "plain"; phase: string; doubted: string[]; detailCount?: number };
+  directive?: { kind: "introduce" | "layer" | "support_theory" | "plain"; phase: string; doubted: string[]; detailCount?: number };
   attempts: TraceAttempt[];
   regenerateReason?: string;
   fallback?: boolean;
@@ -117,8 +117,9 @@ export const QUESTION_TYPE_LABEL: Record<string, string> = {
 };
 
 export const DIRECTIVE_LABEL: Record<string, string> = {
-  introduce: "新しい設定を1つ",
+  introduce: "場面の細部を1つ",
   layer: "裏付けを重ねる",
+  support_theory: "としおの考察を支える",
   plain: "素の返答",
 };
 
