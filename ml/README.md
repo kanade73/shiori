@@ -325,9 +325,9 @@ $TRAIN_PY $ML/serve.py --model Qwen/Qwen3-1.7B \
 トンネルの URL（例 `http://localhost:8123`）を指す。
 
 ```bash
-ssh -N -L 8123:127.0.0.1:8123 h2511188@gpu04.ced.cei.uec.ac.jp
+ssh -N -L 8123:127.0.0.1:8123 <user>@<gpu-host>
 # 4B も並べて見るなら
-ssh -N -L 8124:127.0.0.1:8124 h2511188@gpu04.ced.cei.uec.ac.jp
+ssh -N -L 8124:127.0.0.1:8124 <user>@<gpu-host>
 ```
 
 `Uvicorn running on http://0.0.0.0:8123` がログに出れば起動完了。
@@ -340,7 +340,7 @@ curl -s localhost:8123/extract -H 'content-type: application/json' -d '{
 }' | python3 -m json.tool
 ```
 
-**gpu04 には curl が入っていない**ので、サーバ上で叩くときは wget を使う。
+**GPU サーバには curl が入っていない**ので、サーバ上で叩くときは wget を使う。
 
 ```bash
 wget -q -O - --header='content-type: application/json' \

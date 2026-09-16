@@ -1,5 +1,5 @@
 #!/bin/bash
-# GPU サーバ（gpu04）に venv を2つ作る。~/chat-lora/env.sh を先に置いておくこと。
+# GPU サーバに venv を2つ作る。~/chat-lora/env.sh を先に置いておくこと。
 #   bash setup_env.sh
 #
 # venv を分けているのは、vLLM が transformers のバージョンを強く縛るため

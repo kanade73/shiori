@@ -45,18 +45,18 @@
 
 ## 成果物の場所
 
-### リモート（gpu04.ced.cei.uec.ac.jp / ユーザー h2511188）
+### リモート（大学の GPU サーバ。ホスト名とユーザー名は伏せてある）
 
 | もの | パス |
 |---|---|
-| スクリプト一式・ログ | `~/chat-lora/`（= `/home2/y2025/h2511188/chat-lora`） |
-| venv・HFキャッシュ・重み・データ | `/var/tmp/h2511188/chat-lora/`（**ホームは quota が厳しいので置けない**） |
-| **採用 1.7B アダプタ / マージ済み** | `/var/tmp/h2511188/chat-lora/out/lora/{adapter,merged}`（serve しているのは `merged`） |
-| 比較用 4B アダプタ | `/var/tmp/h2511188/chat-lora/out/lora-4b/adapter`（= run b のコピー） |
-| 比較用 4B マージ済み | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged`（7.6GB） |
-| 4B のハイパラ比較 3 本 | `/var/tmp/h2511188/chat-lora/out/lora-4b-{a,b,c}/adapter` |
-| 教師データ（4B でもこれを使った） | `/var/tmp/h2511188/chat-lora/data/dataset/{train,holdout}.jsonl` |
-| 評価結果 | `/var/tmp/h2511188/chat-lora/out/eval-*.json`（`.preds.jsonl` に生出力）。4B は `eval-4b-*.json` |
+| スクリプト一式・ログ | `~/chat-lora/`（= `/home/<user>/chat-lora`） |
+| venv・HFキャッシュ・重み・データ | `/var/tmp/<user>/chat-lora/`（**ホームは quota が厳しいので置けない**） |
+| **採用 1.7B アダプタ / マージ済み** | `/var/tmp/<user>/chat-lora/out/lora/{adapter,merged}`（serve しているのは `merged`） |
+| 比較用 4B アダプタ | `/var/tmp/<user>/chat-lora/out/lora-4b/adapter`（= run b のコピー） |
+| 比較用 4B マージ済み | `/var/tmp/<user>/chat-lora/out/lora-4b/merged`（7.6GB） |
+| 4B のハイパラ比較 3 本 | `/var/tmp/<user>/chat-lora/out/lora-4b-{a,b,c}/adapter` |
+| 教師データ（4B でもこれを使った） | `/var/tmp/<user>/chat-lora/data/dataset/{train,holdout}.jsonl` |
+| 評価結果 | `/var/tmp/<user>/chat-lora/out/eval-*.json`（`.preds.jsonl` に生出力）。4B は `eval-4b-*.json` |
 | 学習ログ | `~/chat-lora/logs/train4b-{a,b,c}.log` / サーバは `logs/serve4b.log` |
 
 `~/chat-lora/env.sh` を `source` すると `$SCRATCH` `$VLLM_PY` `$TRAIN_PY` `$ML` が入る。
@@ -80,8 +80,8 @@ CUDA_VISIBLE_DEVICES=7 setsid nohup $VLLM_PY $ML/serve.py --backend vllm \
   --model $SCRATCH/out/lora-4b/merged --port 8124 > $ML/logs/serve4b.log 2>&1 < /dev/null &
 
 # 手元から（アプリの EXTRACT_ENDPOINT = http://localhost:8123）
-ssh -N -L 8123:127.0.0.1:8123 h2511188@gpu04.ced.cei.uec.ac.jp
-ssh -N -L 8124:127.0.0.1:8124 h2511188@gpu04.ced.cei.uec.ac.jp   # 4B も見るなら
+ssh -N -L 8123:127.0.0.1:8123 <user>@<gpu-host>
+ssh -N -L 8124:127.0.0.1:8124 <user>@<gpu-host>   # 4B も見るなら
 ```
 
 学習・評価のプロセスは全部落としてあるので、推論サーバ以外は GPU を掴んでいない。
@@ -99,7 +99,7 @@ ssh -N -L 8124:127.0.0.1:8124 h2511188@gpu04.ced.cei.uec.ac.jp   # 4B も見る�
 ssh が切れても続くよう、**必ず tmux の中で回す**（ノートを閉じても平気）。
 
 ```bash
-ssh h2511188@gpu04.ced.cei.uec.ac.jp
+ssh <user>@<gpu-host>
 tmux new-session -d -s pipeline "bash ~/chat-lora/run_all.sh 3200 8 2 > ~/chat-lora/logs/pipeline.log 2>&1"
 tmux ls                       # 生きているか
 tail -f ~/chat-lora/logs/pipeline.log
@@ -123,7 +123,7 @@ lr / r / epoch の当たりを 2時間20分で1回引けた（逐次なら 6時�
 ## ハマったところ（同じところで詰まらないように）
 
 1. **ホームの quota**。`pip install vllm` の途中で `Disk quota exceeded`。
-   venv も HF キャッシュも `/var/tmp/h2511188/` に逃がした
+   venv も HF キャッシュも `/var/tmp/<user>/` に逃がした
 2. **CUDA バージョン**。素の `uv pip install vllm` は vllm 0.29 + torch cu130 を引き、
    driver 570（CUDA 12.8）では `The NVIDIA driver on your system is too old`。
    `vllm==0.11.0`（torch 2.8.0+cu128）に固定
@@ -154,7 +154,7 @@ lr / r / epoch の当たりを 2時間20分で1回引けた（逐次なら 6時�
    衝突して `Free memory on device (0.73/15.61 GiB) ...` で即死する。必ず付ける
 12. **vLLM を kill しても GPU が空かないことがある**。`VLLM::EngineCore` の子プロセスが残る。
    `nvidia-smi --query-compute-apps=pid,used_memory --format=csv` で見て kill -9 する
-13. **gpu04 に `curl` が無い**。動作確認は `wget --post-data` か Python の urllib で
+13. **GPU サーバ に `curl` が無い**。動作確認は `wget --post-data` か Python の urllib で
 14. **port 8000 は他プロセスが使っていることがある**。塞がっていると uvicorn が即死するので別ポートへ
 
 ## 仮置きにした判断
