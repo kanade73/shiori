@@ -147,9 +147,9 @@ create table if not exists creator_profiles (
   primary key (work_id, name)
 );
 
--- --- RLS ----------------------------------------------------------------
+-- --- RLS と権限 ----------------------------------------------------------
 
--- ポリシーを1つも作らないので、anon / authenticated キーでは何も見えない。
+-- ポリシーを1つも作らないので、anon / authenticated キーでは1行も見えない。
 -- service_role は RLS を迂回するので、サーバー側だけが読み書きできる。
 alter table sessions             enable row level security;
 alter table messages             enable row level security;
@@ -158,3 +158,26 @@ alter table fabricated_facts     enable row level security;
 alter table fabricated_relations enable row level security;
 alter table source_chunks        enable row level security;
 alter table creator_profiles     enable row level security;
+
+-- **権限は明示する。** Supabase の既定権限（ALTER DEFAULT PRIVILEGES）は、どのロールで
+-- どう作ったかで変わる。ダッシュボードの SQL Editor で作った表と `npm run db:push` で作った表で
+-- 食い違い、service_role が `permission denied` になったことがある。
+grant usage on schema public to service_role;
+grant select, insert, update, delete on
+  sessions, messages, message_claims, fabricated_facts, fabricated_relations, source_chunks, creator_profiles
+  to service_role;
+-- messages.seq / fabricated_facts.seq（bigserial）を採番するのに要る
+grant usage, select on all sequences in schema public to service_role;
+
+-- ブラウザに出るキー（anon / authenticated）からは権限ごと取り上げる。
+-- RLS でも止まるが、権限の側でも閉じておく
+revoke all on
+  sessions, messages, message_claims, fabricated_facts, fabricated_relations, source_chunks, creator_profiles
+  from anon, authenticated;
+
+-- 関数は既定で PUBLIC が実行できるので、いったん取り上げてからサーバーにだけ渡す
+revoke all on function match_source_chunks(text, text, vector, integer) from public, anon, authenticated;
+grant execute on function match_source_chunks(text, text, vector, integer) to service_role;
+
+-- 権限を変えたら PostgREST に読み直させる
+notify pgrst, 'reload schema';
