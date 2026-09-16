@@ -249,7 +249,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
   }
 
   async function confirmDeleteSession() {
-    if (!deleteTarget) return;
+    if (!deleteTarget) return false;
     const id = deleteTarget.id;
     setDeleting(true);
     setDeleteError(null);
@@ -258,16 +258,17 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "削除に失敗しました");
       setDeleting(false);
-      return;
+      return false;
     }
     setDeleting(false);
     setDeleteTarget(null);
     // 開いている会話を消したら、ここには居られないので最初の画面へ
     if (id === sessionId) {
       router.push("/");
-      return;
+      return true;
     }
     setSessions((prev) => prev.filter((s) => s.id !== id));
+    return true;
   }
 
   if (loading) return <CenteredNote>読み込み中……</CenteredNote>;

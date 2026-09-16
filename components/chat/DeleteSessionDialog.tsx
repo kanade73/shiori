@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Mascot } from "@/components/ui/Mascot";
 
 interface DeleteSessionDialogProps {
@@ -8,16 +8,26 @@ interface DeleteSessionDialogProps {
   sessionLabel: string;
   deleting: boolean;
   error: string | null;
-  onConfirm: () => void;
+  onConfirm: () => Promise<boolean>;
   onCancel: () => void;
 }
 
 /**
  * サイドバーのゴミ箱を押したときの確認。シオリが吹き出しで引き止める。
- * 「いいえ」を「はい」の1.5倍の大きさにして、消さない方へ寄せる（Esc・背景のクリックも「いいえ」）
+ * 「いいえ」を「はい」の1.5倍の大きさにして、消さない方へ寄せる。
+ * 「はい」では落ち込み、「いいえ」ではウィンクしてから退場する。Esc・背景のクリックではすぐ閉じる。
  */
 export function DeleteSessionDialog({ sessionLabel, deleting, error, onConfirm, onCancel }: DeleteSessionDialogProps) {
   const noRef = useRef<HTMLButtonElement>(null);
+  const onConfirmRef = useRef(onConfirm);
+  const onCancelRef = useRef(onCancel);
+  const [exitAction, setExitAction] = useState<"confirm" | "cancel" | null>(null);
+  const isLeaving = exitAction !== null;
+
+  useEffect(() => {
+    onConfirmRef.current = onConfirm;
+    onCancelRef.current = onCancel;
+  }, [onCancel, onConfirm]);
 
   useEffect(() => {
     noRef.current?.focus();
@@ -25,17 +35,31 @@ export function DeleteSessionDialog({ sessionLabel, deleting, error, onConfirm, 
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape" && !deleting) onCancel();
+      if (e.key === "Escape" && !deleting && !isLeaving) onCancel();
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [deleting, onCancel]);
+  }, [deleting, isLeaving, onCancel]);
+
+  useEffect(() => {
+    if (!exitAction) return;
+    const timeout = window.setTimeout(() => {
+      if (exitAction === "cancel") {
+        onCancelRef.current();
+        return;
+      }
+      void onConfirmRef.current().then((deleted) => {
+        if (!deleted) setExitAction(null);
+      });
+    }, 900);
+    return () => window.clearTimeout(timeout);
+  }, [exitAction]);
 
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-md"
       onClick={() => {
-        if (!deleting) onCancel();
+        if (!deleting && !isLeaving) onCancel();
       }}
     >
       <div
@@ -43,7 +67,7 @@ export function DeleteSessionDialog({ sessionLabel, deleting, error, onConfirm, 
         aria-modal="true"
         aria-labelledby="delete-session-title"
         aria-describedby="delete-session-target"
-        className="animate-fade-up flex flex-col items-center"
+        className={`${isLeaving ? "animate-delete-dialog-exit" : "animate-fade-up"} flex flex-col items-center`}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="pixel-frame pixel-frame-strong pixel-dither bg-surface-card px-md py-sm text-center">
@@ -61,13 +85,20 @@ export function DeleteSessionDialog({ sessionLabel, deleting, error, onConfirm, 
           <div className="h-[4px] w-[4px] bg-muted-soft" />
         </div>
 
-        <Mascot size={160} variant="display" name="シオリ" className="mt-xxs" />
+        <Mascot
+          size={160}
+          variant="display"
+          expression={exitAction === "confirm" ? "sad" : exitAction === "cancel" ? "wink" : "neutral"}
+          animated={!isLeaving}
+          name="シオリ"
+          className="mt-xxs"
+        />
 
         <div className="mt-md flex items-center gap-sm">
           <button
             type="button"
-            onClick={onConfirm}
-            disabled={deleting}
+            onClick={() => setExitAction("confirm")}
+            disabled={deleting || isLeaving}
             className="pixel-btn h-[40px] w-[96px] border-2 border-hairline bg-canvas font-pixel text-[16px] text-muted hover:bg-surface-soft hover:text-ink disabled:opacity-50"
           >
             はい
@@ -75,8 +106,8 @@ export function DeleteSessionDialog({ sessionLabel, deleting, error, onConfirm, 
           <button
             ref={noRef}
             type="button"
-            onClick={onCancel}
-            disabled={deleting}
+            onClick={() => setExitAction("cancel")}
+            disabled={deleting || isLeaving}
             className="pixel-btn h-[60px] w-[144px] bg-primary font-pixel text-[24px] text-on-primary hover:bg-primary-active disabled:opacity-50"
           >
             いいえ
