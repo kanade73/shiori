@@ -4,6 +4,7 @@ import { extractClaims } from "./extract";
 import { countUserMessages, decideDirective, decideSessionPhase, isSceneKnown, toshioCooldownTurns } from "./directive";
 import { evaluateGeneration } from "./evaluate";
 import { generateToshioCommentary } from "./toshio";
+import { decideExpression } from "./expression";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
 import { detectTopicShift } from "../topic-shift";
@@ -18,6 +19,7 @@ import type {
   ResponseEvaluation,
   SessionPhase,
   SessionTopic,
+  ShioriExpression,
   TurnDirective,
   UserMessageAnalysis,
 } from "../types";
@@ -30,6 +32,8 @@ export type PipelineResult = {
   directive: TurnDirective;
   /** 嘘がどれだけ積み上がったか。UI がこれを読んで終盤を検出できる。 */
   phase: SessionPhase;
+  /** この返答で見せるシオリの表情（directive とユーザーの聞き方から決める。嘘の有無には連動しない） */
+  expression: ShioriExpression;
   regenerated: boolean;
   /** Fabricated claims from the final reply, normalized, that are not already stored. */
   newFabricatedClaims: Claim[];
@@ -306,6 +310,7 @@ export async function runConversationPipeline(params: {
     evaluation,
     directive,
     phase,
+    expression: decideExpression({ directive, analysis, generation }),
     regenerated,
     newFabricatedClaims,
     reusedFabricatedFactIds: Array.from(reused),

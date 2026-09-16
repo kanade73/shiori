@@ -30,6 +30,7 @@ function toViewMessage(message: Message): ViewMessage {
     content: message.content,
     createdAt: message.createdAt,
     speaker: message.speaker,
+    expression: message.expression,
   };
 }
 
@@ -163,18 +164,18 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
 
     try {
       await sendMessage(sessionId, text, {
-        onMessageStart: (speaker) => {
+        onMessageStart: (speaker, expression) => {
           if (!placeholderUsed) {
             placeholderUsed = true;
             currentId = placeholderId;
-            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker } : m)));
+            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker, expression } : m)));
             return;
           }
           const id = `local-assistant-${crypto.randomUUID()}`;
           currentId = id;
           setMessages((prev) => [
             ...prev,
-            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker },
+            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker, expression },
           ]);
         },
         onToken: (chunk) => {
@@ -302,7 +303,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           <div className="mx-auto max-w-[860px] py-sm">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
-                <TypingIndicator key={message.id} speaker={message.speaker} />
+                <TypingIndicator key={message.id} speaker={message.speaker} expression={message.expression} />
               ) : (
                 <ChatMessageItem key={message.id} message={message} />
               ),

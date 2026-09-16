@@ -4,6 +4,17 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: シオリの表情差分を組み込んだ（dev の作業ツリー、未コミット）
+
+ユーザーが `pictures/` に描いた差分のうち**ウインクだけ**をアプリに入れた（おこり・どやがお・おちこみも描いて一度組み込んだが、「ずっと無表情の方が不思議感がある」との判断で外し、生成した画像も消した。元絵は `pictures/` に残っている。差分はベースと髪・服・輪郭が1px単位で同じで、目と口だけ違う）。設計は AGENTS.md の「シオリの表情」。
+
+- **画像**: `public/character/avatar-wink-{64,128,256}.png` と `display-{...}-512.png`。既存の avatar/display と同じ切り出し位置を総当たりで割り出して（`avatar-256` との差 2.1/255、`display-512` との差 1.4/255）、同じ手順で作った。作り直すときは PIL で `pictures/<表情>.png` を (152,50,1042,940) で切って NEAREST 縮小（立ち絵は (30,48,1162,1180) → 512）
+- **サーバー**: `ShioriExpression` 型（`types.ts`）、`Message.expression`、`store.appendMessage` の第5引数、`lib/server/llm/expression.ts`（`decideExpression` / `FALLBACK_EXPRESSION`）。`PipelineResult.expression` を Route Handler が `message-start` に `{ speaker: "shiori", expression }` で送り、保存時にも付ける。wink は感想を語り合う回だけで、それ以外（疑い・考察・場面の聞き返し・分からないふり・落ちた定型文）は neutral。としおには付けない。答え合わせの `RevealMessage.expression` にも通してある
+- **クライアント**: `Mascot` に `expression` prop（`data-expression` 属性。としおは無視）。`ViewMessage.expression`。`TypingIndicator` も表情を受けるので、本文を待つ間から顔が変わる
+- **ユーザーの指摘「アイコンが小さくて表情が分からない」**: 最初は会話の横に 208px の立ち絵（`ShioriStage`）を置いたが、ユーザーの判断で外し、**吹き出しのアバターを 44px → 72px にした**（`Mascot` の `AVATAR_SIZE`。画像の選択は 64px を超えたら 128px の画像を使うように閾値を 80 → 64 に変えた。シオリ・としお共通）
+- 検証: `npm test` 416件（`expression.test.ts`、`ChatApp.test.tsx` に表情2件、`route.test.ts` に message-start の表情1件を追加）・`tsc --noEmit`・eslint 通過。3001 の dev サーバー（このリポジトリ）に一時セッションを作って db.json に表情つきの発話を直接足し、headless Chrome で目視。セッションは削除済み
+- **未コミット**。ブランチも切っていない（dev の作業ツリーに `tsconfig.json` の変更と `pictures/` の新規 png と一緒に置いてある）。次は `feat/expressions` のようなブランチに載せて dev へ PR
+
 ## 2026-09-15: 答え合わせで本文に位置を付けられなかった主張を表示（dev に直コミット）
 
 dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.tsx` は本文の印だけを出していたため、旧セッションの quote が無い嘘や、抜き出しが本文と一致しなかった主張が答え合わせから消えていた。`RevealMessage.statementIds` にはあるが `segments` に現れない主張を、本文の下に印付き（嘘/本当）の一覧で出すようにした（`data-testid="reveal-unplaced"`）。位置が分かる主張は本文の印だけで、一覧には重ねない。テストは `RevealView.test.tsx` に追加。これで dev → main の昇格判定は OK（build / tsc / lint / test 全通過、fast-forward 可）。

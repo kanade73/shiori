@@ -1,4 +1,4 @@
-import type { ChatSession, ResponseStrategy, Speaker } from "@/lib/server/types";
+import type { ChatSession, ResponseStrategy, ShioriExpression, Speaker } from "@/lib/server/types";
 
 export type ViewMessage = {
   id: string;
@@ -9,7 +9,10 @@ export type ViewMessage = {
   strategy?: ResponseStrategy;
   /** role === "assistant" のときのみ意味を持つ。未設定は「シオリ」。 */
   speaker?: Speaker;
+  /** シオリの発話の表情。message-start で届く。無ければ neutral */
+  expression?: ShioriExpression;
 };
+
 
 /**
  * セッションの見出し。会話の最初に把握した話題の場面（issue #14）を出す。

@@ -76,8 +76,8 @@ describe("ChatApp: 1回の送信で複数の吹き出しを積む", () => {
 
     await waitFor(() => expect(assistantBubbles()).toHaveLength(2));
     const [shiori, toshio] = assistantBubbles();
-    expect(shiori.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-64.png");
-    expect(toshio.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-64.png");
+    expect(shiori.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-128.png");
+    expect(toshio.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-128.png");
     expect(within(toshio).getByAltText("としお")).toBeTruthy();
   });
 
@@ -159,7 +159,7 @@ describe("ChatApp: 返答を待つ間の表示", () => {
     await renderAndSend("これって伏線じゃない？");
 
     const typing = (await screen.findByText("入力中")).parentElement!.parentElement!;
-    expect(typing.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-64.png");
+    expect(typing.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-128.png");
 
     release();
     await screen.findByText("結論から言うとね。");
@@ -383,5 +383,46 @@ describe("ChatApp: 新しいセッション", () => {
     expect(await screen.findByText("work not found")).toBeTruthy();
     expect(mocks.push).not.toHaveBeenCalled();
     expect((screen.getByRole("button", { name: "新しいセッション" }) as HTMLButtonElement).disabled).toBe(false);
+  });
+});
+
+describe("ChatApp: シオリの表情", () => {
+  it("message-start の表情が吹き出しのアバターに出る。としおには付かない", async () => {
+    mocks.sendMessage.mockImplementation(async (_s: string, _c: string, h: SendMessageHandlers) => {
+      h.onMessageStart("shiori", "wink");
+      h.onToken("……別に、嘘じゃない。");
+      h.onMetadata({ fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
+      h.onMessageEnd();
+      h.onMessageStart("toshio");
+      h.onToken("結論から言うとね。");
+      h.onMetadata({ fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
+      h.onMessageEnd();
+      h.onDone({ phase: "early" });
+    });
+    await renderAndSend("それ本当？");
+    await waitFor(() => expect(assistantBubbles()).toHaveLength(2));
+    const [shiori, toshio] = assistantBubbles();
+    expect(shiori.querySelector("[data-expression]")?.getAttribute("data-expression")).toBe("wink");
+    expect(shiori.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-wink-128.png");
+    expect(toshio.querySelector("[data-expression]")).toBeNull();
+    expect(toshio.querySelector("img")?.getAttribute("src")).toBe("/character/toshio-128.png");
+  });
+
+  it("保存済みの発話の表情も再読み込みで出る。表情の無い旧データと開始の定型文は neutral", async () => {
+    mocks.getSessionData.mockResolvedValue({
+      work,
+      session,
+      fabricatedFactCount: 0,
+      messages: [
+        { id: "m1", sessionId: "s1", role: "assistant", content: "……今日は何について話したい?", createdAt: "2026-01-01T00:00:00Z", speaker: "shiori" },
+        { id: "m2", sessionId: "s1", role: "user", content: "考察して", createdAt: "2026-01-01T00:00:01Z" },
+        { id: "m3", sessionId: "s1", role: "assistant", content: "ふふ。", createdAt: "2026-01-01T00:00:02Z", speaker: "shiori", expression: "wink" },
+      ],
+    });
+    render(<ChatApp sessionId="s1" />);
+    await screen.findByPlaceholderText("感想やシーンの話を送ってみて...");
+    const [first, second] = assistantBubbles();
+    expect(first.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-128.png");
+    expect(second.querySelector("img")?.getAttribute("src")).toBe("/character/avatar-wink-128.png");
   });
 });
