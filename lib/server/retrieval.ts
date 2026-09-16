@@ -71,20 +71,23 @@ function retrieveWorkCanonFacts(workId: string, currentEpisode: number, analysis
 }
 
 /** Every active lie in the session. This is what evaluate checks against. */
-export function getActiveFabricatedFacts(sessionId: string): FabricatedFact[] {
-  return getFabricatedFacts(sessionId).filter((fact) => fact.status === "active");
+export async function getActiveFabricatedFacts(sessionId: string): Promise<FabricatedFact[]> {
+  return (await getFabricatedFacts(sessionId)).filter((fact) => fact.status === "active");
 }
 
 /**
  * The few lies worth reminding the character of for this turn: the ones about
  * mentioned entities, newest first, topped up with the most recent ones.
  */
-export function retrieveFabricatedFacts(sessionId: string, analysis?: UserMessageAnalysis): FabricatedFact[] {
+export async function retrieveFabricatedFacts(
+  sessionId: string,
+  analysis?: UserMessageAnalysis,
+): Promise<FabricatedFact[]> {
   const keywords = analysis ? [...analysis.mentionedCharacters, ...analysis.mentionedEvents] : [];
   const relevance = (fact: FabricatedFact) =>
     keywords.length > 0 && textIncludesAny(`${fact.subject} ${fact.object} ${fact.claim}`, keywords) ? 1 : 0;
 
-  return getActiveFabricatedFacts(sessionId)
+  return (await getActiveFabricatedFacts(sessionId))
     .sort((a, b) => relevance(b) - relevance(a) || b.createdAt.localeCompare(a.createdAt))
     .slice(0, MAX_FABRICATED_FACTS_FOR_PROMPT);
 }

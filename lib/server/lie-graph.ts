@@ -10,8 +10,8 @@ import type { RevealGraph, RevealStatement } from "./reveal/types";
  * 答え合わせは発話ごとの claims（本当も含む）を並べるが、こちらは保存済みの嘘だけ。
  * どれも嘘なので verdict は lie 固定で、としおの発話は載せない。
  */
-export function buildLieGraph(sessionId: string, workId: string): RevealGraph {
-  const facts = getFabricatedFacts(sessionId).filter((f) => f.status === "active");
+export async function buildLieGraph(sessionId: string, workId: string): Promise<RevealGraph> {
+  const facts = (await getFabricatedFacts(sessionId)).filter((f) => f.status === "active");
   const statements: RevealStatement[] = facts.map((f) => ({
     id: f.id,
     messageId: f.introducedMessageId,

@@ -4,6 +4,42 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: 完全無料デプロイへの移行 — Vercel + Supabase（`feat/vercel-supabase`、dev `5bfa4cb` から切った。**PR 未作成**）
+
+永続化を `.data/db.json` + sqlite-vec のファイルから **Supabase（Postgres + pgvector）** に移し、ホストを Fly.io から **Vercel Hobby** に変えた。どちらも無料枠。会話パイプライン・話題特定・答え合わせのロジックには触っていない。
+
+### なぜ Cloudflare Pages ではないか（当初の指示から変えた点）
+
+Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://developers.cloudflare.com/workers/platform/limits/)）。`sources.rankChunks`（段落168件の bigram ランキング）を実測すると **1回 5.6ms**（M系 Mac）で、1発話で最大2回走る。載せるには段落検索を SQL 側に作り直す必要があり、検索の挙動が変わる。Vercel Hobby は CPU ms の上限が無く Next.js がネイティブに動くので、変更が「永続化の差し替え」だけで済む。
+
+### 変わったこと
+
+- **`supabase/schema.sql`（新規）** — sessions / messages / message_claims / fabricated_facts / fabricated_relations / source_chunks（vector(768)）/ creator_profiles + `match_source_chunks` の SQL 関数。全テーブル RLS 有効・ポリシー無し（service_role だけが触れる）。時刻の列は text（アプリの ISO 文字列がそのまま入る）、発話と嘘の並びは `bigserial` の `seq`
+- **`store.ts` が全関数 async** — 意味論（id 採番・話題の退避・答え合わせ1回きり・削除の連鎖）は `store.ts`、行の出し入れは `store-backend.ts` の `StoreBackend`。本番は `store-supabase.ts` の1本で、`store-memory.ts` は**テスト専用**（`setStoreBackend(memoryBackend())`）。`dataDir()` は削除
+- **`vector-db.ts` を削除**（sqlite-vec / `node:sqlite` ごと）。`embeddings.ts` は「段落が1件でもあるか確かめる → 検索語を1件埋め込む → `match_source_chunks`」だけになった
+- **段落そのものの埋め込みはオフライン**（`npm run embed [workId]` = `scripts/embed-chunks.ts`）。サーバーレスでは「応答後に1分おきに80件ずつ」の裏の仕事が成立しないため。流し忘れても bigram だけで会話は成立する
+- `creator.ts` の作風キャッシュを `creator_profiles` テーブルへ（`node:fs` が消えて、アプリに fs を読むのは `works.ts` だけになった）
+- `next.config.mjs`: `outputFileTracingIncludes` に `./data/**/*.json`（**これが無いと本番で作品が0件になる**）。`output: "standalone"` は `DOCKER_BUILD=1` のときだけ
+- messages の Route Handler に `export const maxDuration = 60`（Hobby の上限）
+- `fly.toml` を削除、`Dockerfile` からボリューム前提と sqlite-vec 対応（Debian ベース）を外して alpine に戻した
+- 開発者モードの events SSE: `start` が async になったので、**購読を init より先に張って、init を送るまでの段を溜める**ようにした（DB を待っている間のイベントを取りこぼさないため）
+
+### 検証の状況
+
+- `npm test` 405件・`tsc --noEmit`・`npm run lint`・`npm run build` すべて通過
+- `npm run embed` は env の読み込み（`@next/env`）→ Wikipedia の取得まで動き、Supabase の env が無い旨のエラーで止まることを確認
+- **実 Supabase に対しては未検証**（プロジェクトがまだ無い）。下の「次にやること」の1〜3を済ませてから、会話 → 答え合わせ → 削除を通すこと
+- 手元の `.env.local` は **`GEMINI_API_KEY` が空**（`GROQ_API_KEY` だけ入っている）。ビルド時に出る `API key should be set when using the Gemini API.` はそれが理由で、今回の変更とは関係ない
+
+### 次にやること
+
+1. supabase.com で無料プロジェクトを作る（region: Tokyo）→ Settings → API の `Project URL` と `service_role` を `.env.local` へ
+2. SQL Editor に `supabase/schema.sql` を貼って流す
+3. `npm run embed`（Gemini のキーが要る）→ `npm run dev` で会話〜答え合わせ〜削除を通し、Table Editor に行が入るのを確認
+4. Vercel にリポジトリを繋ぎ、`GEMINI_API_KEY` / `GEMINI_API_KEY_2` / `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を登録してデプロイ
+5. **Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら週2回 ping する GitHub Actions を足す
+6. `feat/groq-fallback`（未マージ）とこのブランチは、`AGENTS.md` / `.env.example` / `lib/server/llm/` あたりで衝突する見込み。マージの順番を決めること
+
 ## 2026-09-16: hotfix — Gemini 経路の claims 抽出が 503 で落ちて嘘が記録されない（`hotfix/extract-gemini-503`）
 
 手元の推論を設定していない環境（本番・`.env.local` に EXTRACT_* が無い手元）では extract が Gemini `gemini-3.1-flash-lite` に投げるが、混雑（503 UNAVAILABLE）のたびに再試行なしで claims 空になり、ついた嘘が1件も記録されなかった（答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。`extract.ts` の Gemini 経路にだけ 503 の再試行（1s / 2s / 4s の3回、`GEMINI_UNAVAILABLE_RETRY_DELAYS_MS`）を入れた。429 と無効なキーは key-pool の領分なので触らない。経路をまたぐフォールバックも入れていない。dev と main の両方に PR を出した。手元での実 API の確認は generate 側が 429（無料枠）で止まり未検証。ユニットテストは通っている。

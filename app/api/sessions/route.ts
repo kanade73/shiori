@@ -7,10 +7,13 @@ export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const workId = searchParams.get("workId") ?? undefined;
   // Hide sessions whose work no longer exists under data/.
-  const sessions = listSessions(workId).filter((session) => getWork(session.workId)).map((session) => ({
-    ...session,
-    fabricatedFactCount: getFabricatedFacts(session.id).filter((f) => f.status === "active").length,
-  }));
+  const visible = (await listSessions(workId)).filter((session) => getWork(session.workId));
+  const sessions = await Promise.all(
+    visible.map(async (session) => ({
+      ...session,
+      fabricatedFactCount: (await getFabricatedFacts(session.id)).filter((f) => f.status === "active").length,
+    })),
+  );
   return NextResponse.json({ sessions });
 }
 
@@ -30,10 +33,10 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "work not found" }, { status: 404 });
   }
 
-  const session = createSession(workId);
-  const opening = appendMessage(session.id, "assistant", OPENING_MESSAGE, "shiori");
+  const session = await createSession(workId);
+  const opening = await appendMessage(session.id, "assistant", OPENING_MESSAGE, "shiori");
   // 定型の問いかけで、設定には触れていない（答え合わせで「記録前の旧データ」扱いにしない）
-  saveMessageClaims(session.id, opening.id, []);
+  await saveMessageClaims(session.id, opening.id, []);
   // ユーザーが答えを打っている間に、話題を探す資料と段落の埋め込み（ベクトルDB）を用意し始める
   prepareTopicSearch(workId);
 

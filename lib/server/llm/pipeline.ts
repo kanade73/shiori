@@ -181,8 +181,8 @@ export async function runConversationPipeline(params: {
   // 確かめた設定も本物として数える）。守りは evaluate に寄せる。
   const promptCanonFacts = retrieveCanonFacts(workId, currentEpisode, analysis, topicFacts);
   const watchedCanonFacts = [...topicFacts, ...getCanonFactsUpTo(workId, currentEpisode)];
-  const promptFabricatedFacts = retrieveFabricatedFacts(sessionId, analysis);
-  const existingFabricatedFacts = getActiveFabricatedFacts(sessionId);
+  const promptFabricatedFacts = await retrieveFabricatedFacts(sessionId, analysis);
+  const existingFabricatedFacts = await getActiveFabricatedFacts(sessionId);
   const normalize = buildNormalizer(getEntities(workId));
 
   const phase = decideSessionPhase({
@@ -369,7 +369,7 @@ export async function runToshioInterjection(params: {
       currentEpisode,
       topic: topic ?? null,
       canonFacts: retrieveCanonFacts(workId, currentEpisode, analysis, topic?.facts ?? []),
-      fabricatedFacts: retrieveFabricatedFacts(sessionId, analysis),
+      fabricatedFacts: await retrieveFabricatedFacts(sessionId, analysis),
       userMessage,
       shioriMessage: generation.message,
       premises: generation.claims.filter(isFabricated),

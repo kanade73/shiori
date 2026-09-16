@@ -14,21 +14,24 @@ import { createSseWriter, SSE_HEADERS, type SseWriter } from "@/lib/server/sse";
 import { emitPipelineEvent } from "@/lib/server/events";
 import type { Message } from "@/lib/server/types";
 
+// 1発話で Gemini を数回叩き、返答を SSE で流し切るまで関数を握る。Vercel Hobby の上限は 60 秒
+export const maxDuration = 60;
+
 const MAX_CONTENT_LENGTH = 1000;
 // シオリに渡す直近の履歴。としおの発話は generate 側で落とすので、実質ユーザー↔シオリの往復5回分。
 const HISTORY_LIMIT = 12;
 
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
-  if (!getSession(sessionId)) {
+  if (!(await getSession(sessionId))) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
-  return NextResponse.json({ messages: getMessages(sessionId) });
+  return NextResponse.json({ messages: await getMessages(sessionId) });
 }
 
 export async function POST(req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
@@ -56,12 +59,12 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
     return NextResponse.json({ error: "work not found" }, { status: 404 });
   }
 
-  const storedMessages = getMessages(sessionId);
+  const storedMessages = await getMessages(sessionId);
   const historyBefore: Message[] = storedMessages.slice(-HISTORY_LIMIT);
   // 進行度はセッション全体で数える。history は直近だけに打ち切ってあるので、
   // 実数（今回の発話を含む）をパイプラインに渡す。
   const userMessageCount = storedMessages.filter((m) => m.role === "user").length + 1;
-  const userRecord = appendMessage(sessionId, "user", content);
+  const userRecord = await appendMessage(sessionId, "user", content);
 
   let writer: SseWriter | null = null;
   const stream = new ReadableStream<Uint8Array>({
@@ -97,20 +100,20 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         // issue #14: 話題の場面（最初の話題、または途中で切り替わった先）を残し、以後の発話の材料にする
         const topic = newTopic ?? session.topic;
         if (newTopic || currentEpisode !== session.currentEpisode) {
-          setSessionTopic(sessionId, newTopic, currentEpisode);
+          await setSessionTopic(sessionId, newTopic, currentEpisode);
         }
         if (newTopic) send("topic", newTopic);
 
         send("message-start", { speaker: "shiori" });
         await streamText(generation.message);
 
-        const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
+        const assistantMessage = await appendMessage(sessionId, "assistant", generation.message, "shiori");
         // 答え合わせ用に、この返答の主張を真偽（grounding）と抜き出し位置（quote）ごと残す
-        saveMessageClaims(sessionId, assistantMessage.id, generation.claims);
+        await saveMessageClaims(sessionId, assistantMessage.id, generation.claims);
 
         const newFactIds: string[] = [];
         for (const claim of newFabricatedClaims) {
-          const fact = addFabricatedFact({
+          const fact = await addFabricatedFact({
             sessionId,
             subject: claim.subject,
             relation: claim.relation,
@@ -159,7 +162,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         if (toshioMessage) {
           send("message-start", { speaker: "toshio" });
           await streamText(toshioMessage);
-          appendMessage(sessionId, "assistant", toshioMessage, "toshio");
+          await appendMessage(sessionId, "assistant", toshioMessage, "toshio");
           // としおの発話は嘘の仕組み（FabricatedFact / strategy）に乗っていない
           send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
           send("message-end", {});
@@ -172,8 +175,8 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         const fallback = fallbackMessage();
         send("message-start", { speaker: "shiori" });
         await streamText(fallback);
-        const fallbackMessageRecord = appendMessage(sessionId, "assistant", fallback, "shiori");
-        saveMessageClaims(sessionId, fallbackMessageRecord.id, []);
+        const fallbackMessageRecord = await appendMessage(sessionId, "assistant", fallback, "shiori");
+        await saveMessageClaims(sessionId, fallbackMessageRecord.id, []);
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
         send("message-end", {});
         send("done", { phase: "early" });

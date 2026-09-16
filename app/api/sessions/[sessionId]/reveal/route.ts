@@ -6,23 +6,23 @@ import { buildReveal, toRevealData } from "@/lib/server/reveal/build";
 import type { ChatSession } from "@/lib/server/types";
 import type { Verdict } from "@/lib/server/reveal/types";
 
-function build(session: ChatSession) {
-  return buildReveal({
-    messages: getMessages(session.id),
-    messageClaims: getMessageClaims(session.id),
-    fabricatedFacts: getFabricatedFacts(session.id),
-    canonFacts: getVisibleCanonFacts(session),
-  });
+async function build(session: ChatSession) {
+  const [messages, messageClaims, fabricatedFacts] = await Promise.all([
+    getMessages(session.id),
+    getMessageClaims(session.id),
+    getFabricatedFacts(session.id),
+  ]);
+  return buildReveal({ messages, messageClaims, fabricatedFacts, canonFacts: getVisibleCanonFacts(session) });
 }
 
 /** 答え合わせ前は問題（真偽なし）だけ、答え合わせ後は真偽つきの会話を返す。 */
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
-  return NextResponse.json(toRevealData(build(session), session.reveal, getEntities(session.workId)));
+  return NextResponse.json(toRevealData(await build(session), session.reveal, getEntities(session.workId)));
 }
 
 /**
@@ -31,7 +31,7 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
  */
 export async function POST(req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
@@ -42,14 +42,14 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
     return NextResponse.json({ error: "guesses must be an object" }, { status: 400 });
   }
 
-  const built = build(session);
+  const built = await build(session);
   const ids = new Set(built.statements.map((s) => s.id));
   const guesses: Record<string, Verdict> = {};
   for (const [id, value] of Object.entries(raw)) {
     if (ids.has(id) && (value === "true" || value === "lie")) guesses[id] = value;
   }
 
-  const revealed = revealSession(sessionId, guesses);
+  const revealed = await revealSession(sessionId, guesses);
   if (!revealed) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }

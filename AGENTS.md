@@ -48,7 +48,7 @@
 - `episodeFrom` がネタバレ境界。ユーザーの視聴話数以下のものしかモデルに渡さない
 - `sources` は会話の話題を調べにいく外部の知識源（下の「話題の場面」）。`sections` を書くとその章（と記事冒頭の導入）だけを使う。コラボ・グッズ・スタッフ一覧のような物語と関係ない章は外しておく
 - `arcs.aliases` は、話題の場面（外部資料の「『〇〇』編」などの見出し）を arc に対応づけて視聴済み話数を決めるのと、発話解析で arc の言及を拾うのに使う。見出しの表記ゆれ（『』・前後編の <後>・（副題）・小書きの仮名・途中で切れた『シーサーの』編）は `topic.matchArc` が作品を問わず吸収するので、資料の見出しに合わせて別名を足す必要はない（issue #33）。呼び方がまるで違う見出し（『プリズン』編 = オデと牢獄編）は対応しない
-- `creators` は作り手（`{ "role": "原作", "name": "...", "source": { mediawiki の記事 }, "style"?: [...] }`）。としおが「この作者はこういう描き方をする人だから、あの細部は意図的で本当は〜」と作風を土台に考察を組むための材料。データ側に要るのは役割・名前・本人の記事名だけで、作風の要点は `lib/server/creator.ts` が記事から資料係（`llm/creator.ts`）に1回だけ抜かせて `DATA_DIR/creators/<workId>.json` に残す。`style` を手で書けば記事は読まない。実在の人物なので、抜くのは作品内の描き方の癖だけ（私生活・発言・経歴は入れない）。無ければとしおは作風なしで語る
+- `creators` は作り手（`{ "role": "原作", "name": "...", "source": { mediawiki の記事 }, "style"?: [...] }`）。としおが「この作者はこういう描き方をする人だから、あの細部は意図的で本当は〜」と作風を土台に考察を組むための材料。データ側に要るのは役割・名前・本人の記事名だけで、作風の要点は `lib/server/creator.ts` が記事から資料係（`llm/creator.ts`）に1回だけ抜かせて Supabase の `creator_profiles` に残す。`style` を手で書けば記事は読まない。実在の人物なので、抜くのは作品内の描き方の癖だけ（私生活・発言・経歴は入れない）。無ければとしおは作風なしで語る
 - `entities` はキャラ・場所・物の正式名と別名。発話解析（`llm/analyze.ts`）、外部資料の検索（別名で書かれても正式名で探す）と、嘘を保存する前の表記ゆれ吸収（`lib/server/claims.ts`）に使う。別名が足りないと同じキャラの嘘が別物扱いになり矛盾検出が抜けるので、作品を足すときは主要キャラ分を必ず書く
 
 同じディレクトリに `cards.jsonl`（命題カード）も置いてあるが、これは `docs/specs/spec.md` の構想用で**現状コードは読んでいない**。
@@ -64,10 +64,10 @@
 - 段落の検索は bigram とベクトルの2本立て（`topic.selectCandidates`）。ベクトルは言い換え（「大きい敵を倒しにいく話」→『おっきい討伐』編）や固有名詞の無い曖昧な言い方（「牢屋のとこ」→『プリズン』編）に強く、bigram は固有名詞に強い
   - 文字で十分に重なる（bigram の最高点が3以上）なら、両方の順位を Reciprocal Rank Fusion で混ぜて上位8段落
   - 文字でほとんど重ならなければ、コサイン類似度 0.66 以上の段落だけ（bigram の偶然の重なりは混ぜない）。挨拶・相づち15種の最も近い段落は 0.60〜0.65、文字では重ならない場面の言い換えは 0.66〜0.68 で、差は小さい（gemini-embedding-001・768次元で測った値。モデルを変えたら測り直すこと）。この経路で資料係に渡るのは1〜3段落程度で、文脈はむしろ小さい
-- **ベクトルDB（issue #22）**: `lib/server/vector-db.ts`。SQLite に sqlite-vec の拡張を読み込んだ組み込み型で、`DATA_DIR/vectors/<埋め込みモデル>-<次元>.sqlite` のファイル1本に段落の埋め込み（作品ごとの区画）を持ち、近傍の探索も DB の中でする。別のサーバーは立てない。`lib/server/embeddings.ts` が Gemini の埋め込み（`gemini-embedding-001`）と DB への出し入れを受け持つ
-  - 埋め込みの無料枠は「1分100件（まとめて送っても1件ずつ数える）」なので、段落は裏で80件ずつ1分おきに埋め込む（段落168件で約2分）。埋め込み済みの段落が1件でもあればその中で探し、1件も無ければ bigram だけで検索する（会話は待たせない）。記事が書き換わってもう無い段落は、次に埋め込むときに DB から消す
-  - セッションを作った時点（ユーザーが最初の答えを打つ前）に `topic.prepareTopicSearch` が資料の取得と段落の埋め込みを始める
-  - sqlite-vec の Linux 版の拡張は glibc 向けなので、Docker のベースは alpine ではなく Debian（`node:22-bookworm-slim`）。`next.config.mjs` で `sqlite-vec` をバンドルから外し、プラットフォーム別の拡張ファイルを standalone の出力に含めている
+- **ベクトル検索（issue #22）**: Supabase の pgvector（`source_chunks` テーブル + `match_source_chunks` の SQL 関数、`supabase/schema.sql`）。段落は作品ごとに `work_id` で分かれ、近傍の探索は DB の中でする。`lib/server/embeddings.ts` が Gemini の埋め込み（`gemini-embedding-001`・768次元）と検索を受け持つ
+  - **段落そのものの埋め込みは実行時に作らない。`npm run embed [workId]`（`scripts/embed-chunks.ts`）でオフラインに作る。** サーバーレスでは「応答を返した後も1分おきに埋め込み続ける」裏の仕事が成立しないため。記事はめったに変わらないので、デプロイ前に一度流せばよい。埋め込みの無料枠は「1分100件（まとめて送っても1件ずつ数える）」なので、スクリプトは80件ずつ1分おきに送り、記事から消えた段落は DB から消す
+  - 実行時にするのは「この作品の段落が1件でもあるか確かめる → 検索語を1件埋め込む → pgvector を引く」だけ。1件も入っていなければ検索語の埋め込みも使わず、bigram だけで検索する（`npm run embed` を流し忘れても会話は成立する）
+  - セッションを作った時点（ユーザーが最初の答えを打つ前）に `topic.prepareTopicSearch` が資料（MediaWiki の記事）だけ先に取ってきて温めておく
 
 #### 話題の切り替わり（`lib/server/topic-shift.ts`）
 
@@ -118,9 +118,16 @@
 
 ### 永続化
 
-`lib/server/store.ts`。JSONファイル1本（`.data/db.json`、gitignore済み）にセッション・メッセージ・嘘を全部持つ。単一プロセス・単一ユーザー前提。セッション・嘘のために DB を入れる要件は今のところない。外部資料の段落の埋め込みだけは、ベクトルDB（`lib/server/vector-db.ts`、`.data/vectors/*.sqlite`）に持つ（上の「話題の場面」）。
+すべて Supabase（Postgres + pgvector）。スキーマは `supabase/schema.sql` の1本で、Supabase の SQL Editor に貼って流す。手元も本番も同じプロジェクトを見る（**ファイル版は残していない。「ローカルだけ動く」経路を作らないため**）。
 
-置き場所は `DATA_DIR` 環境変数で差し替えられる（未設定なら `process.cwd()/.data`）。本番は Fly.io の永続ボリュームを `/app/.data` にマウントし、再起動・再デプロイをまたいで `db.json` とベクトルDBを残す（`fly.toml` の `[mounts]`）。
+- `lib/server/supabase.ts` … service_role キーのクライアント。全テーブルが RLS 有効・ポリシー無しなので、サーバー側だけが読み書きできる。**client から import しない**
+- `lib/server/store.ts` … セッションとしての振る舞い（id の採番・話題が切り替わったときの退避・答え合わせは1回きり・削除の連鎖）だけを持つ。**全関数が async**
+- `lib/server/store-backend.ts` / `store-supabase.ts` … 行の出し入れと、行 ↔ `types.ts` の型の変換。本番の実装は `supabaseBackend` の1本
+- `lib/server/store-memory.ts` … **テスト専用**のインメモリ実装。`setStoreBackend(memoryBackend())` で差し込む。アプリのコードから使わないこと
+
+時刻の列はすべて text で、アプリが作った ISO 文字列がそのまま入る（DB を経由しても値が変わらず、辞書順で並べ替えられる）。発話と嘘の並びは `bigserial` の `seq`。
+
+**サーバーレスなので、プロセス内に持っている状態はインスタンスをまたいで共有されない**（会話の芯には効かないものだけ残してある）: `sources.ts` の6時間キャッシュ（コールドスタートで記事を引き直す）、`llm/key-pool.ts` のクールダウン、`rate-limit.ts`、`events.ts` の開発者モード用のイベントバス（events の SSE と messages の POST が別インスタンスに乗ると届かない。dev 専用機能なので許容）。
 
 ---
 
@@ -132,9 +139,9 @@
 | チャットUI | 自前。`POST /api/sessions/[id]/messages` の SSE を `lib/client/sse.ts` で読む |
 | バックエンド | Next.js Route Handlers（別サーバーを立てない） |
 | LLM | Google Gen AI SDK（`@google/genai`）+ zod 構造化出力 |
-| 永続化 | JSONファイル（`.data/db.json`） |
-| ベクトルDB | sqlite-vec（`node:sqlite` に読み込む組み込み型。`.data/vectors/`）。外部資料の段落の検索だけに使う |
-| デプロイ | Fly.io（Docker コンテナ 1 台 + 永続ボリューム）。`Dockerfile` はホスト非依存で Railway / Render でも動く |
+| 永続化 | Supabase（Postgres）。`supabase/schema.sql` |
+| ベクトルDB | Supabase の pgvector（`source_chunks` + `match_source_chunks`）。外部資料の段落の検索だけに使う |
+| デプロイ | Vercel（Hobby = 無料）。`Dockerfile` も残してあり Railway / Render / 手元の Docker でも動く |
 
 ### LLM 呼び出しの ON/OFF は API キーの有無で決まる
 
@@ -142,14 +149,16 @@
 
 **キーの切り替え（issue #11）**: `GEMINI_API_KEY_2`（先輩のキー）もあれば、無料枠の上限（429）に達したキーからもう1本に切り替え、同じリクエストをすぐ送り直す。以後はそちらを使い続け、そちらも尽きたら元のキーに戻る（`lib/server/llm/key-pool.ts`）。休ませるのは (キー, モデル) の組で、1日の上限なら太平洋時間の0時まで、1分の上限ならエラーに書かれた待ち時間だけ。両方休み中なら送らずに投げ、今の fallback に任せる。混雑（503）では切り替えない。無効なキーはプロセスの間ずっと外す。`client.ts` の `ai` がこれを包んでいるので、呼び出し側は SDK と同じ `ai.models.generateContent` / `embedContent` のまま使う（`ai` に他のメソッドを足すときは包みにも足すこと）。SDK の `retryOptions` は付けない（429 を待ってから投げるので切り替えが遅れる）。無料枠はプロジェクトごとなので、2本のキーは別アカウントで作ったものでないと意味がない。ログにはキーの文字列ではなく環境変数名を出す
 
-モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、手元の推論を設定していなければ主張の取り出しで同じ回数（別モデル）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
+モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、手元の推論を設定していなければ主張の取り出しで同じ回数（別モデル）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、段落そのものの埋め込みは実行時には呼ばない（`npm run embed` でオフラインに作る）。
 
 ### 意図的に選んでいない技術
 
 提案しないこと。理由があって外している。
 
 - **Python バックエンドの分離** — 3日で結合を2回やる余裕がない
-- **Supabase / Postgres / サーバーを立てるベクトルDB（Chroma・Qdrant・pgvector など）** — 単一ユーザー・設定数十件・書き込みほぼ無しの要件に対して過剰で、コンテナ1台の構成も崩れる。canonFacts・嘘の retrieval はキーワード一致で足りている。ベクトルDBは外部資料の段落の検索（話題の特定）にだけ、組み込み型の sqlite-vec を使う（issue #22）。セッション・嘘の永続化を SQLite に移す要件は今のところない
+- **サーバーを別に立てるベクトルDB（Chroma・Qdrant など）** — 単一ユーザー・段落数百件の要件に対して過剰。ベクトル検索は Supabase の pgvector に相乗りさせる（外部資料の段落の検索 = 話題の特定にだけ使う。issue #22）
+- **canonFacts・嘘の retrieval をベクトル化すること** — キーワード一致で足りている。ここを pgvector に載せ替える要件は今のところない
+- ~~Supabase / Postgres~~ — **無料でデプロイするために採用した**（ファイル1本の永続化は、ボリュームを持てるホストを前提にしていた）。サーバーレスでは「単一プロセス・単一ユーザー」の前提が置けないので、セッション・嘘・段落の埋め込みは全部 Supabase に置く
 - **LangChain 等のフレームワーク** — 処理が単純で、抽象層のデバッグコストの方が高い
 - **LoRA / ローカルLLM** — 口調はプロンプトのみで維持する方針。崩れることが確認できるまで入れない。勝手に学習パイプラインを組み始めないこと
 
@@ -178,11 +187,14 @@ components/
 lib/
   server/
     works.ts                        data/ の読み込み
-    store.ts                        .data/db.json の読み書き
+    store.ts                        セッション・発話・嘘・主張（Supabase）
     retrieval.ts                    canonFacts / 既存の嘘の取り出し
     sources.ts                      外部の知識源（MediaWiki）の取得・段落分け・検索（bigram・順位の融合）
-    embeddings.ts                   外部資料の段落のベクトル検索（Gemini の埋め込み・裏での埋め込み作成）
-    vector-db.ts                    ベクトルDB（sqlite-vec。DATA_DIR/vectors/ の SQLite ファイル）
+    embeddings.ts                   外部資料の段落のベクトル検索（検索語の埋め込み → pgvector）
+    supabase.ts                     Supabase のクライアント（service_role。client から import しない）
+    store-backend.ts                store の下の層の型
+    store-supabase.ts               その本番の実装（行 ↔ 型の変換）
+    store-memory.ts                 テスト専用のインメモリ実装
     topic.ts                        話題の場面の特定（セッションごとの RAG）
     topic-shift.ts                  話題の切り替わりの判定（ゲート → 判定役）
     rate-limit.ts
@@ -194,6 +206,8 @@ lib/
 data/
   chiikawa/work.json                ← コードはこの中身を知らない
   momotaro/cards.jsonl              次段構想用（未使用）
+supabase/schema.sql                 Supabase のスキーマ（SQL Editor に貼って流す）
+scripts/embed-chunks.ts             外部資料の段落の埋め込みを作る（npm run embed。オフライン）
 ml/                                 claims 抽出の LoRA（合成・学習・評価・推論サーバ serve.py）。アプリとは別プロセス
 public/character/                   シオリのドット絵（アバター各サイズ）
 docs/specs/                         仕様書
@@ -230,12 +244,21 @@ EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の LoRA �
 GEMINI_EXTRACT_MODEL=    # 省略可。上の2つがどちらも無いときに取り出しに使う Gemini のモデル。既定 gemini-3.1-flash-lite
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
-DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）
+SUPABASE_URL=            # 必須。Supabase プロジェクトの URL（Settings → API）
+SUPABASE_SERVICE_ROLE_KEY=  # 必須。service_role キー。サーバー専用（NEXT_PUBLIC_ には置かない）
 ```
 
 `extract`（返答文 → 主張の三つ組）の経路は `extract.ts` の `extractRoute` が上から順に選ぶ。`EXTRACT_OLLAMA_MODEL` があれば Ollama の `POST <OLLAMA_HOST>/api/chat`（`ml/common.py` と同じ指示文を JSON schema 付き・`think: false`・temperature 0 で投げる。60 秒で諦める）、`EXTRACT_ENDPOINT` があれば `POST <EXTRACT_ENDPOINT>/extract`（自前の LoRA 推論サーバ `ml/serve.py`。`{ text, workTitle, userMessage }` → `{ claims: [...] }`。10 秒で諦める。学習・評価・起動手順は `ml/README.md`）、どちらも無ければ Gemini（`GEMINI_EXTRACT_MODEL`。同じ指示文を構造化出力で投げる。シオリの `GEMINI_MODEL` と無料枠を食い合わないよう既定は別モデル）。**選んだ経路が使えなくても別の経路には切り替えない**。`console.warn` を1行出し、その発話の claims は空になる（返答文はそのまま返るので会話は止まらない）。grounding はアプリ側の `groundClaims` が canonFacts と照合して付ける。
 
-本番の API キーは `fly secrets set GEMINI_API_KEY=... GEMINI_API_KEY_2=...` で登録する（`.env.local` はイメージに含まれない）。`DATA_DIR` は `fly.toml` の `[env]` で設定済み。
+### デプロイ（Vercel + Supabase、どちらも無料枠）
+
+1. supabase.com で無料プロジェクトを作り、SQL Editor に `supabase/schema.sql` を貼って流す
+2. `.env.local` に `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を入れ、`npm run embed` で段落の埋め込みを作る（作品を足したら流し直す）
+3. Vercel にリポジトリを繋ぎ、Project Settings → Environment Variables に `GEMINI_API_KEY`（`_2` も）と `SUPABASE_*` を登録する
+
+`data/` は `next.config.mjs` の `outputFileTracingIncludes` で関数に同梱される（`lib/server/works.ts` が `process.cwd()/data` を fs で読むため。これが無いと本番で作品が0件になる）。SSE を流し切るまで関数を握るので、messages の Route Handler には `maxDuration = 60`（Hobby の上限）を置いてある。
+
+**Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら、週2回くらい軽いクエリを投げる仕組みを足すこと。
 
 ---
 
