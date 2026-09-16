@@ -22,6 +22,7 @@ import {
 } from "@/lib/client/api";
 import type { ChatSession, Message, Work } from "@/lib/server/types";
 import { sessionLabel, type ViewMessage } from "@/lib/client/types";
+import { localId } from "@/lib/client/id";
 
 function toViewMessage(message: Message): ViewMessage {
   return {
@@ -144,7 +145,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     setIsSending(true);
 
     const userMessage: ViewMessage = {
-      id: `local-user-${crypto.randomUUID()}`,
+      id: `local-user-${localId()}`,
       role: "user",
       content: text,
       createdAt: new Date().toISOString(),
@@ -152,7 +153,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     // 返答を待つ間も入力中の表示を出すため、吹き出しは先に1つ積んでおき、
     // 最初の message-start はそれに充てる。1回の送信でシオリ→（ときどき）としお、
     // と複数の発話が届きうるので、2つ目以降の message-start は新しく積む。
-    const placeholderId = `local-assistant-${crypto.randomUUID()}`;
+    const placeholderId = `local-assistant-${localId()}`;
     setMessages((prev) => [
       ...prev,
       userMessage,
@@ -171,7 +172,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
             setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker, expression } : m)));
             return;
           }
-          const id = `local-assistant-${crypto.randomUUID()}`;
+          const id = `local-assistant-${localId()}`;
           currentId = id;
           setMessages((prev) => [
             ...prev,
