@@ -21,13 +21,19 @@ export type OtherWorkDetection = { otherWork: string; names: string[] };
 
 /**
  * 外部資料の本文に出てこない語だけ残す（本作の語彙を作品ごとに書かずに済ませる）。
- * 資料の側もカタカナの語（連続）に切って、語ごと一致するものだけを「資料にある」とみなす。
- * 部分一致にすると「ナックル」が「ナックルダスター」（ちいかわの記事にある）に吸われて落ちてしまう。
+ * カタカナの語は、資料の側もカタカナの語（連続）に切って語ごと一致するものだけを「資料にある」とみなす
+ * （部分一致にすると「ナックル」が「ナックルダスター」（ちいかわの記事にある）に吸われて落ちる）。
+ * 漢字・かな混じりの語（形態素解析で切り出した名前）は資料の本文に含まれていれば「資料にある」。
  */
+const KATAKANA_WORD = /^[\p{Script=Katakana}ー]+$/u;
 export function namesMissingFromSources(names: string[], chunks: SourceChunk[]): string[] {
   if (names.length === 0) return [];
-  const corpus = new Set(katakanaWords(chunks.map((c) => `${c.label} ${c.heading} ${c.text}`).join(" ")).map((w) => toKatakana(normalizeText(w))));
-  return names.filter((name) => !corpus.has(toKatakana(normalizeText(name))));
+  const text = chunks.map((c) => `${c.label} ${c.heading} ${c.text}`).join(" ");
+  const corpusWords = new Set(katakanaWords(text).map((w) => toKatakana(normalizeText(w))));
+  const corpusText = normalizeText(text);
+  return names.filter((name) =>
+    KATAKANA_WORD.test(name) ? !corpusWords.has(toKatakana(normalizeText(name))) : !corpusText.includes(normalizeText(name)),
+  );
 }
 
 export async function detectOtherWork(params: {

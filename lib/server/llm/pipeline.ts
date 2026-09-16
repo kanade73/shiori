@@ -10,6 +10,7 @@ import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
 import { detectTopicShift } from "../topic-shift";
 import { detectOtherWork, type OtherWorkDetection } from "../other-work";
 import { unknownKatakanaWords } from "../names";
+import { properNounCandidates } from "../morph";
 import { getArcs, getCanonFactsUpTo, getEntities } from "../works";
 import { getCreatorProfiles } from "../creator";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
@@ -146,6 +147,11 @@ export async function runConversationPipeline(params: {
   // 本作の名前でも資料の語でもない固有名詞（「ナックル」「ユピー」）は別の作品の話かを先に判定する。
   // 別の作品の話なら、話題の特定・切り替わりの判定（資料の検索・埋め込み）は走らせない
   const corrected = correctUserMessage(workId, userMessage);
+  // 漢字・かな混じりの名前（炭治郎・五条悟）は形態素解析で切り出す。辞書が読めなくても会話は止めない
+  const properNouns = await properNounCandidates(userMessage).catch((error) => {
+    console.warn("形態素解析に失敗（カタカナの語だけで続ける）:", error);
+    return [] as string[];
+  });
   const otherWork: OtherWorkDetection | null = await detectOtherWork({
     workId,
     workTitle,
@@ -156,6 +162,7 @@ export async function runConversationPipeline(params: {
       arcs: getArcs(workId),
       workTitle,
       corrections: corrected.corrections,
+      extraWords: properNouns,
     }),
   });
 
@@ -195,7 +202,7 @@ export async function runConversationPipeline(params: {
   const emit = createTurnEmitter(sessionId, turnId);
   emit({ stage: "user", text: userMessage });
 
-  const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage, workTitle });
+  const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage, workTitle, properNouns });
   emit({
     stage: "analyze",
     mentionedCharacters: analysis.mentionedCharacters,

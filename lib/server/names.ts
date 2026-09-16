@@ -122,8 +122,11 @@ export function applyNameCorrections(userMessage: string, corrections: NameCorre
 }
 
 /**
- * 発話の中の、作品の名前（登場人物・編・作品名）のどれでもなく、会話の一般語でもないカタカナの語。
+ * 発話の中の、作品の名前（登場人物・編・作品名）のどれでもなく、会話の一般語でもない語。
  * 別の作品の話をしている手がかりの候補。外部資料に出てくる語はこの後 other-work.ts が落とす。
+ *
+ * 見るのはカタカナの語（3文字以上。正規表現で切れる）と、`extraWords` に渡された語
+ * （形態素解析で切り出した固有名詞らしい語。morph.ts。漢字・かな混じりの名前はこちら）。
  */
 export function unknownKatakanaWords(params: {
   userMessage: string;
@@ -131,22 +134,31 @@ export function unknownKatakanaWords(params: {
   arcs: Arc[];
   workTitle: string;
   corrections?: NameCorrection[];
+  /** 形態素解析で切り出した固有名詞らしい語。カタカナ以外もここから入る */
+  extraWords?: string[];
 }): string[] {
-  const { userMessage, entities, arcs, workTitle, corrections = [] } = params;
+  const { userMessage, entities, arcs, workTitle, corrections = [], extraWords = [] } = params;
   const known = new Set<string>();
   for (const { form } of entityForms(entities)) known.add(form);
   for (const arc of arcs) for (const raw of [arc.title, ...arc.aliases]) known.add(toKatakana(normalizeText(raw)));
   known.add(toKatakana(normalizeText(workTitle)));
-  const knownText = toKatakana(normalizeText([workTitle, ...arcs.flatMap((a) => [a.title, ...a.aliases])].join(" ")));
+  const knownText = toKatakana(
+    normalizeText(
+      [workTitle, ...arcs.flatMap((a) => [a.title, ...a.aliases]), ...entities.flatMap((e) => [e.name, ...e.aliases])].join(" "),
+    ),
+  );
   const corrected = new Set(corrections.map((c) => c.written));
 
   const result: string[] = [];
-  for (const word of katakanaWords(userMessage)) {
-    if (word.length < MIN_NAME_LENGTH || corrected.has(word) || result.includes(word)) continue;
+  const candidates = [...katakanaWords(userMessage).filter((w) => w.length >= MIN_NAME_LENGTH), ...extraWords];
+  for (const word of candidates) {
+    if (corrected.has(word) || result.includes(word)) continue;
     const key = toKatakana(normalizeText(word));
-    if (known.has(key) || COMMON_KATAKANA.has(key)) continue;
-    // 編の名前・作品名の一部（「パジャマパーティーズ」の中の「パジャマ」）は見知らぬ語ではない
+    if (key.length === 0 || known.has(key) || COMMON_KATAKANA.has(key)) continue;
+    // 編の名前・作品名・登場人物の名前の一部（「パジャマパーティーズ」の中の「パジャマ」）は見知らぬ語ではない
     if (knownText.includes(key)) continue;
+    // 誤字と判定した語を含む並び（「ハコワレ先輩」）も見知らぬ語ではない
+    if (corrections.some((c) => word.includes(c.written))) continue;
     result.push(word);
   }
   return result;

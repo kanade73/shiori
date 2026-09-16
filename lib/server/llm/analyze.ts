@@ -56,8 +56,10 @@ export function analyzeUserMessage(params: {
   userMessage: string;
   /** 作品名。見知らぬ語の判定で作品名（とその一部）を除くため。省略可 */
   workTitle?: string;
+  /** 形態素解析で切り出した固有名詞らしい語（morph.ts。非同期なので呼び出し側が渡す）。省略可 */
+  properNouns?: string[];
 }): UserMessageAnalysis {
-  const { workId, currentEpisode, userMessage, workTitle = "" } = params;
+  const { workId, currentEpisode, userMessage, workTitle = "", properNouns = [] } = params;
   const corrected = correctUserMessage(workId, userMessage);
   const text = normalizeText(corrected.text);
 
@@ -84,6 +86,7 @@ export function analyzeUserMessage(params: {
     arcs: getArcs(workId),
     workTitle,
     corrections: corrected.corrections,
+    extraWords: properNouns,
   });
 
   return {

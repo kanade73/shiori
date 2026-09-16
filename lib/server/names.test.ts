@@ -106,3 +106,26 @@ describe("unknownKatakanaWords: 作品の名前のどれでもないカタカナ
     ).toEqual([]);
   });
 });
+
+describe("unknownKatakanaWords: 形態素解析で切り出した語（extraWords）", () => {
+  const base = { entities, arcs, workTitle: "ちいかわ" };
+
+  it("漢字の名前も見知らぬ語として通す", () => {
+    expect(unknownKatakanaWords({ ...base, userMessage: "炭治郎と禰豆子が好き", extraWords: ["炭治郎", "禰豆子"] })).toEqual(["炭治郎", "禰豆子"]);
+  });
+
+  it("登場人物の名前の一部・誤字を含む並びは見知らぬ語ではない", () => {
+    expect(
+      unknownKatakanaWords({
+        ...base,
+        userMessage: "ハコワレ先輩とモモンガ",
+        corrections: [{ written: "ハコワレ", entity: "ハチワレ" }],
+        extraWords: ["ハコワレ先輩", "モモンガ"],
+      }),
+    ).toEqual([]);
+  });
+
+  it("カタカナの語と重なっても1回", () => {
+    expect(unknownKatakanaWords({ ...base, userMessage: "ユピーの戦い", extraWords: ["ユピー"] })).toEqual(["ユピー"]);
+  });
+});

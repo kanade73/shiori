@@ -83,3 +83,9 @@ describe("detectOtherWork", () => {
     expect(await detectOtherWork({ ...base, unknownNames: ["ナックル"] })).toBeNull();
   });
 });
+
+describe("namesMissingFromSources: 漢字・かな混じりの語は資料の本文に含まれていれば落とす", () => {
+  it("資料に無い漢字の名前は残り、資料にある語（鎧さん）は落ちる", () => {
+    expect(namesMissingFromSources(["炭治郎", "鎧さん"], [chunk("鎧さんにナックルダスターで撃退された。")])).toEqual(["炭治郎"]);
+  });
+});
