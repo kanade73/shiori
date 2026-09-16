@@ -95,10 +95,72 @@ function objectMatches(a: string, b: string): boolean {
 }
 
 /**
+ * 「本物の設定の一文をなぞっただけ」の主張を拾うための relation。
+ * 記録係は一文を複数の三つ組に割る（「うさぎがそのスプーンを使って、こっそりと脱出用の
+ * 穴を掘っていた」→ did / has / secret）ので、三つ組の object や relation が本物の
+ * 設定の `object` と一致しなくても、述べていること自体は設定の説明文に書いてある。
+ * likes / can / identity / lives_in のような値を持つ関係は、説明文に語が出てくるだけ
+ * では同じ主張と言えない（「ちいかわ達 is ゴブリン」の object も説明文にある）ので外す。
+ */
+const RESTATEMENT_RELATIONS = new Set<ClaimRelation>(["has", "did", "secret", "related_to", "other"]);
+/** 抜き出し（quote）で説明文と照らすときの最短の長さ。「うさぎが」程度の断片では見ない */
+const MIN_RESTATEMENT_QUOTE_LENGTH = 6;
+/**
+ * 文字 bigram の何割が説明文に含まれていれば同じことを述べたとみなすか。
+ * 活用の違い（「しがみつき」と「しがみつく」、「おもてなしをした」と「おもてなしする」）と
+ * 「〜がする」程度の語尾を吸収するための緩さで、言い換え（「再登場」と「再会」）は通さない値
+ * （実会話5セッション・主張60件で測った。本当の言い直し「甘い卵焼きのような匂いがする」が 0.77、
+ * 言い換え「身体がもちもちしている」が 0.70）。
+ */
+const RESTATEMENT_BIGRAM_COVERAGE = 0.75;
+
+function bigrams(text: string): string[] {
+  const out: string[] = [];
+  for (let i = 0; i + 1 < text.length; i += 1) out.push(text.slice(i, i + 2));
+  return out;
+}
+
+/** text の bigram のうち description に含まれる割合。text が短すぎれば 0。 */
+export function bigramCoverage(text: string, description: string): number {
+  const grams = bigrams(text);
+  if (grams.length < 3) return 0;
+  const hit = grams.filter((g) => description.includes(g)).length;
+  return hit / grams.length;
+}
+
+/** 「〜達」「〜たち」の集合を、その一員を主語にした主張と同じ主語とみなすための揃え。 */
+function stripGroupSuffix(subject: string): string {
+  return subject.replace(/(達|たち)$/u, "");
+}
+
+/**
+ * 主張が本物の設定の説明文（description）をなぞっているか。subject は一致済みの前提。
+ * 返答文からの抜き出し（quote）が説明文にほぼそのまま出てくるなら、relation を問わず設定の
+ * 言い直し。object で照らすのは `RESTATEMENT_RELATIONS` のときだけ。
+ */
+function restatesDescription(
+  claim: ExtractedClaim,
+  object: string,
+  description: string,
+): boolean {
+  if (description.length === 0) return false;
+  const quote = normalizeText(claim.quote ?? "");
+  if (quote.length >= MIN_RESTATEMENT_QUOTE_LENGTH) {
+    if (quote.includes(description)) return true;
+    if (bigramCoverage(quote, description) >= RESTATEMENT_BIGRAM_COVERAGE) return true;
+  }
+  if (!RESTATEMENT_RELATIONS.has(claim.relation)) return false;
+  if (object.length >= 2 && description.includes(object)) return true;
+  return bigramCoverage(object, description) >= RESTATEMENT_BIGRAM_COVERAGE;
+}
+
+/**
  * 主張が「本物の設定」のどれを述べたものかを探す。純粋関数。
  * 判定は正規化（entities の別名 → 正式名）した subject / relation / object の一致で行う。
  * canonFact の relation は自由記述なので、閉じた語彙で書かれているときだけ厳密に
  * 比べ、そうでなければ subject と object の一致をもって同じ事実とみなす。
+ * 三つ組では一致しなくても、設定の説明文をなぞっているだけの主張（`restatesDescription`）は
+ * canon にする。一文が複数の三つ組に割れたとき、本物の言い直しが嘘として塗られないため。
  * 否定の主張（negated）は本物の設定の裏返しなので、一致しても canon にはしない。
  */
 export function matchCanonFacts(
@@ -112,12 +174,18 @@ export function matchCanonFacts(
   if (subject.length === 0) return [];
 
   return canonFacts.filter((fact) => {
-    if (normalize(fact.subject) !== subject) return false;
-    if (!objectMatches(object, normalize(fact.object))) return false;
-    const canonRelation = normalizeText(fact.relation);
-    if (CLOSED_RELATIONS.has(canonRelation))
-      return canonRelation === normalizeText(claim.relation);
-    return true;
+    const description = normalizeText(fact.description ?? "");
+    if (stripGroupSuffix(normalize(fact.subject)) !== stripGroupSuffix(subject)) {
+      // 資料係は「ハチワレがカードダスで引き当てた」を subject=カブトムシ の事実として出すことがある。
+      // 主語が説明文の中に名前で出ていて、述べていることも説明文にあるなら、その事実の言い直し
+      return subject.length >= 2 && description.includes(subject) && restatesDescription(claim, object, description);
+    }
+    if (objectMatches(object, normalize(fact.object))) {
+      const canonRelation = normalizeText(fact.relation);
+      if (!CLOSED_RELATIONS.has(canonRelation)) return true;
+      if (canonRelation === normalizeText(claim.relation)) return true;
+    }
+    return restatesDescription(claim, object, description);
   });
 }
 
