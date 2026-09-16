@@ -18,7 +18,7 @@ export async function GET(req: Request) {
 }
 
 // issue #14: 話数は聞かない。シオリの問いかけへの答えから、話題の場面を外部の知識源で調べる
-const OPENING_MESSAGE = "……今日は何について話したい?";
+const OPENING_MESSAGE = "今日は何について話したい?";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);

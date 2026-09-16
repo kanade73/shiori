@@ -1,4 +1,4 @@
-import type { ClaimRelation, Speaker } from "../types";
+import type { ClaimRelation, ShioriExpression, Speaker } from "../types";
 
 /**
  * 答え合わせ（会話の終わりに、シオリととしおの話の真偽を明かす）の型。
@@ -66,6 +66,8 @@ export type RevealMessage = {
   id: string;
   role: "user" | "assistant";
   speaker?: Speaker;
+  /** シオリの発話の表情（チャット画面と同じ顔を出す） */
+  expression?: ShioriExpression;
   content: string;
   createdAt: string;
   segments: RevealSegment[];

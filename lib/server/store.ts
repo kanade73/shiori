@@ -1,6 +1,16 @@
 import type { StoreBackend } from "./store-backend";
 import { supabaseBackend } from "./store-supabase";
-import type { ChatSession, Claim, FabricatedFact, FabricatedRelation, Message, SessionTopic, Speaker, StoredClaim } from "./types";
+import type {
+  ChatSession,
+  Claim,
+  FabricatedFact,
+  FabricatedRelation,
+  Message,
+  SessionTopic,
+  ShioriExpression,
+  Speaker,
+  StoredClaim,
+} from "./types";
 import type { Verdict } from "./reveal/types";
 
 /**
@@ -101,6 +111,7 @@ export async function appendMessage(
   role: Message["role"],
   content: string,
   speaker?: Speaker,
+  expression?: ShioriExpression,
 ): Promise<Message> {
   const message: Message = {
     id: newId("msg"),
@@ -109,6 +120,7 @@ export async function appendMessage(
     content,
     createdAt: new Date().toISOString(),
     ...(speaker ? { speaker } : {}),
+    ...(expression ? { expression } : {}),
   };
   await backend.addMessage(message);
 

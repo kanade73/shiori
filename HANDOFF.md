@@ -4,7 +4,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
-## 2026-09-16: 完全無料デプロイへの移行 — Vercel + Supabase（`feat/vercel-supabase`、dev `5bfa4cb` から切った。**PR 未作成**）
+## 2026-09-16: 完全無料デプロイへの移行 — Vercel + Supabase（`feat/vercel-supabase`、dev `5bfa4cb` から切り、`53acca0`（表情・口調・README）を取り込み済み。**PR 未作成**）
 
 永続化を `.data/db.json` + sqlite-vec のファイルから **Supabase（Postgres + pgvector）** に移し、ホストを Fly.io から **Vercel Hobby** に変えた。どちらも無料枠。会話パイプライン・話題特定・答え合わせのロジックには触っていない。
 
@@ -23,6 +23,7 @@ Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://devel
 - messages の Route Handler に `export const maxDuration = 60`（Hobby の上限）
 - `fly.toml` を削除、`Dockerfile` からボリューム前提と sqlite-vec 対応（Debian ベース）を外して alpine に戻した
 - 開発者モードの events SSE: `start` が async になったので、**購読を init より先に張って、init を送るまでの段を溜める**ようにした（DB を待っている間のイベントを取りこぼさないため）
+- `origin/dev`（PR #46 表情・#47 口調・#48 README）を取り込み済み。衝突は `store.ts` / messages の Route Handler / HANDOFF の3つで、**相方が足した `Message.expression` を Supabase 側にも通した**（`messages.expression` 列、`store-supabase.ts` の写し替え、`appendMessage` の第5引数）。README の構成表と「動かす」も Supabase / Vercel に直した
 
 ### 検証の状況
 
@@ -40,6 +41,25 @@ Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://devel
 5. **Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら週2回 ping する GitHub Actions を足す
 6. `feat/groq-fallback`（未マージ）とこのブランチは、`AGENTS.md` / `.env.example` / `lib/server/llm/` あたりで衝突する見込み。マージの順番を決めること
 
+## 2026-09-16: シオリの口調を「サバサバ・感情の起伏なし」に寄せ、三点リーダーをやめた（`fix/shiori-tone`、PR #47 → dev）
+
+ユーザーの指摘「三点リーダーを使いすぎ。もっとサバサバして感情の起伏が少ない方がいい」。出どころは、モデルへの直接の指示ではなく **開始の定型文 `……今日は何について話したい?`（履歴の最初の model 発話として毎回渡る）と、ペルソナ内の同じ引用、および「ダウナー」という性格付け** で、モデルがそれを真似ていた。
+
+- `app/api/sessions/route.ts` の `OPENING_MESSAGE`、`pipeline.ts` の `FALLBACK_MESSAGE` / `SAFE_UNCERTAIN_MESSAGE`、`ChatApp.tsx` の送信失敗時の定型文から `……` を外した
+- `generate.ts` のペルソナ: 「ダウナーで淡々」→「サバサバしていて感情の起伏が少ない。驚かない・はしゃがない・落ち込まない」「言い淀まず短く言い切る」。文体に「三点リーダーを使わない。文頭の間や語尾の余韻も付けない」「言い淀みの相づちを入れない」を追加。疑われたときの節に「むきにならず、声を荒げず、いつも通り言い切る」を追加
+- としおの「結論から言うとね……」はとしおの口調なので残した
+- テストの定型文を合わせて更新。実際の Gemini の出力で三点リーダーが消えたかは**まだ確認していない**（プロンプトの指示なので、残るなら差し戻し理由に三点リーダーの有無を足す手もある）
+
+## 2026-09-16: シオリの表情差分を組み込んだ（`feat/expressions`、PR #46 → dev）
+
+ユーザーが `pictures/` に描いた差分のうち**ウインクだけ**をアプリに入れた（おこり・どやがお・おちこみも描いて一度組み込んだが、「ずっと無表情の方が不思議感がある」との判断で外し、生成した画像も消した。元絵は `pictures/` に残っている。差分はベースと髪・服・輪郭が1px単位で同じで、目と口だけ違う）。設計は AGENTS.md の「シオリの表情」。
+
+- **画像**: `public/character/avatar-wink-{64,128,256}.png` と `display-{...}-512.png`。既存の avatar/display と同じ切り出し位置を総当たりで割り出して（`avatar-256` との差 2.1/255、`display-512` との差 1.4/255）、同じ手順で作った。作り直すときは PIL で `pictures/<表情>.png` を (152,50,1042,940) で切って NEAREST 縮小（立ち絵は (30,48,1162,1180) → 512）
+- **サーバー**: `ShioriExpression` 型（`types.ts`）、`Message.expression`、`store.appendMessage` の第5引数、`lib/server/llm/expression.ts`（`decideExpression` / `FALLBACK_EXPRESSION`）。`PipelineResult.expression` を Route Handler が `message-start` に `{ speaker: "shiori", expression }` で送り、保存時にも付ける。wink は感想を語り合う回だけで、それ以外（疑い・考察・場面の聞き返し・分からないふり・落ちた定型文）は neutral。としおには付けない。答え合わせの `RevealMessage.expression` にも通してある
+- **クライアント**: `Mascot` に `expression` prop（`data-expression` 属性。としおは無視）。`ViewMessage.expression`。`TypingIndicator` も表情を受けるので、本文を待つ間から顔が変わる
+- **ユーザーの指摘「アイコンが小さくて表情が分からない」**: 最初は会話の横に 208px の立ち絵（`ShioriStage`）を置いたが、ユーザーの判断で外し、**吹き出しのアバターを 44px → 72px にした**（`Mascot` の `AVATAR_SIZE`。画像の選択は 64px を超えたら 128px の画像を使うように閾値を 80 → 64 に変えた。シオリ・としお共通）
+- 検証: `npm test` 416件（`expression.test.ts`、`ChatApp.test.tsx` に表情2件、`route.test.ts` に message-start の表情1件を追加）・`tsc --noEmit`・eslint 通過。3001 の dev サーバー（このリポジトリ）に一時セッションを作って db.json に表情つきの発話を直接足し、headless Chrome で目視。セッションは削除済み
+- **未コミット**。ブランチも切っていない（dev の作業ツリーに `tsconfig.json` の変更と `pictures/` の新規 png と一緒に置いてある）。次は `feat/expressions` のようなブランチに載せて dev へ PR
 ## 2026-09-16: hotfix — Gemini 経路の claims 抽出が 503 で落ちて嘘が記録されない（`hotfix/extract-gemini-503`）
 
 手元の推論を設定していない環境（本番・`.env.local` に EXTRACT_* が無い手元）では extract が Gemini `gemini-3.1-flash-lite` に投げるが、混雑（503 UNAVAILABLE）のたびに再試行なしで claims 空になり、ついた嘘が1件も記録されなかった（答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。`extract.ts` の Gemini 経路にだけ 503 の再試行（1s / 2s / 4s の3回、`GEMINI_UNAVAILABLE_RETRY_DELAYS_MS`）を入れた。429 と無効なキーは key-pool の領分なので触らない。経路をまたぐフォールバックも入れていない。dev と main の両方に PR を出した。手元での実 API の確認は generate 側が 429（無料枠）で止まり未検証。ユニットテストは通っている。
@@ -86,12 +106,12 @@ dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.
 
 ### 現在つながっている推論サーバ（手元）
 
-リモート gpu04 で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
+リモート GPU サーバ で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
 
 | ポート | モデル | リモートのパス |
 |---|---|---|
-| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
-| 8124 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/<user>/chat-lora/out/lora/merged` |
+| 8124 | 4B マージ済み（比較用） | `/var/tmp/<user>/chat-lora/out/lora-4b/merged` |
 
 `../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8123`（= 1.7B）にしてある。サーバは `setsid nohup` だと SSH 切断で落ちたことがあるので tmux で起動する。
 

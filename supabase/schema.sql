@@ -37,6 +37,8 @@ create table if not exists messages (
   role       text not null check (role in ('user', 'assistant')),
   -- 'shiori' | 'toshio'。旧データの null は shiori とみなす
   speaker    text,
+  -- シオリの表情（'neutral' | 'wink'）。旧データ・としおは null = neutral
+  expression text,
   content    text not null,
   created_at text not null
 );

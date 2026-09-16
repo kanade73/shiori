@@ -43,9 +43,9 @@ describe("POST /api/sessions", () => {
   it("作品だけでセッションを作り、シオリの問いかけを最初の発話として保存する", async () => {
     const res = await post({ workId: "w" });
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ sessionId: "s1", openingMessage: "……今日は何について話したい?" });
+    expect(await res.json()).toEqual({ sessionId: "s1", openingMessage: "今日は何について話したい?" });
     expect(mocks.createSession).toHaveBeenCalledWith("w");
-    expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", "……今日は何について話したい?", "shiori");
+    expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", "今日は何について話したい?", "shiori");
   });
 
   it("問いかけには「主張なし」を記録する（答え合わせで記録前の旧データ扱いにしない）", async () => {

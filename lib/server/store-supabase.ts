@@ -9,6 +9,7 @@ import type {
   FabricatedRelationType,
   Message,
   SessionTopic,
+  ShioriExpression,
   Speaker,
   StoredClaim,
 } from "./types";
@@ -39,6 +40,7 @@ type MessageRow = {
   session_id: string;
   role: Message["role"];
   speaker: Speaker | null;
+  expression: ShioriExpression | null;
   content: string;
   created_at: string;
 };
@@ -121,6 +123,7 @@ function toMessage(row: MessageRow): Message {
     content: row.content,
     createdAt: row.created_at,
     ...(row.speaker ? { speaker: row.speaker } : {}),
+    ...(row.expression ? { expression: row.expression } : {}),
   };
 }
 
@@ -190,7 +193,7 @@ export const supabaseBackend: StoreBackend = {
     const rows = unwrap(
       await supabase()
         .from("messages")
-        .select("id, session_id, role, speaker, content, created_at")
+        .select("id, session_id, role, speaker, expression, content, created_at")
         .eq("session_id", sessionId)
         .order("seq", { ascending: true }),
       "発話の取得に失敗",
@@ -204,6 +207,7 @@ export const supabaseBackend: StoreBackend = {
       session_id: message.sessionId,
       role: message.role,
       speaker: message.speaker ?? null,
+      expression: message.expression ?? null,
       content: message.content,
       created_at: message.createdAt,
     });

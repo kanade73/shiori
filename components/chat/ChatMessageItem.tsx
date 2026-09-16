@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Mascot } from "@/components/ui/Mascot";
+import { AVATAR_SIZE, Mascot } from "@/components/ui/Mascot";
 import { CopyIcon } from "@/components/ui/icons";
 import { formatTime } from "@/lib/client/format";
 import type { ViewMessage } from "@/lib/client/types";
@@ -45,7 +45,7 @@ export function ChatMessageItem({ message }: { message: ViewMessage }) {
 
   return (
     <div className="group animate-fade-up flex gap-sm px-md py-xxs">
-      <Mascot size={44} delay={0.4} name={speakerName} character={message.speaker} />
+      <Mascot size={AVATAR_SIZE} delay={0.4} name={speakerName} character={message.speaker} expression={message.expression} />
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline gap-xs">
           <span className="font-pixel text-[16px] text-ink">{speakerName}</span>

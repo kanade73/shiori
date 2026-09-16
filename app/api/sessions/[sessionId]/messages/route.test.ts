@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/llm/pipeline", () => ({
   runConversationPipeline: mocks.runConversationPipeline,
   runToshioInterjection: mocks.runToshioInterjection,
-  fallbackMessage: () => "……ちょっと分からなくなった。もう一度言って。",
+  fallbackMessage: () => "ちょっと分からなくなった。もう一度言って。",
 }));
 vi.mock("@/lib/server/store", () => ({
   appendMessage: mocks.appendMessage,
@@ -54,6 +54,7 @@ function pipelineResult(overrides: Record<string, unknown> = {}) {
     reusedFabricatedFactIds: [],
     newTopic: null,
     currentEpisode: 3,
+    expression: "neutral",
     ...overrides,
   };
 }
@@ -104,6 +105,14 @@ beforeEach(() => {
 });
 
 describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→としおを順に流す", () => {
+  it("シオリの message-start にはパイプラインが決めた表情が付き、としおには付かない", async () => {
+    mocks.runConversationPipeline.mockResolvedValue(pipelineResult({ expression: "wink" }));
+    const events = await collect(await post());
+    const starts = events.filter((e) => e.event === "message-start").map((e) => e.data);
+    expect(starts).toEqual([{ speaker: "shiori", expression: "wink" }, { speaker: "toshio" }]);
+    expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori", "wink");
+  });
+
   it("message-start(shiori) … message-end, message-start(toshio) … message-end, done の順で届く", async () => {
     const events = await collect(await post());
     const kinds = events.map((e) => e.event).filter((e) => e !== "token");
@@ -118,7 +127,7 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     await collect(await post("これって伏線じゃない？"));
     expect(mocks.appendMessage.mock.calls).toEqual([
       ["s1", "user", "これって伏線じゃない？"],
-      ["s1", "assistant", SHIORI, "shiori"],
+      ["s1", "assistant", SHIORI, "shiori", "neutral"],
       ["s1", "assistant", TOSHIO, "toshio"],
     ]);
   });
@@ -143,7 +152,7 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
   it("としおはシオリの発話を保存し終えてから、同じ材料（履歴・分析・生成結果）で呼ぶ", async () => {
     mocks.runToshioInterjection.mockImplementation(async () => {
       // 呼ばれた時点でシオリの発話は保存済み
-      expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori");
+      expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori", "neutral");
       return TOSHIO;
     });
     const pipeline = pipelineResult();
@@ -199,9 +208,11 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     const events = await collect(await post());
     spy.mockRestore();
     expect(mocks.runToshioInterjection).not.toHaveBeenCalled();
-    expect(bubbles(events)).toEqual([["shiori", "……ちょっと分からなくなった。もう一度言って。"]]);
+    expect(bubbles(events)).toEqual([["shiori", "ちょっと分からなくなった。もう一度言って。"]]);
     expect(events.map((e) => e.event).filter((e) => e !== "token")).toEqual(["message-start", "metadata", "message-end", "done"]);
-    expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "……ちょっと分からなくなった。もう一度言って。", "shiori");
+    expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "ちょっと分からなくなった。もう一度言って。", "shiori", "neutral");
+    // 落ちた回も message-start に表情（素の顔）が付く
+    expect(events[0].data).toEqual({ speaker: "shiori", expression: "neutral" });
   });
 });
 
@@ -309,7 +320,7 @@ describe("POST /api/sessions/[id]/messages: クライアント切断（enqueue-a
     await reader.cancel(); // タブを閉じたことにする
 
     await vi.waitFor(() => expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", TOSHIO, "toshio"));
-    expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori");
+    expect(mocks.appendMessage).toHaveBeenCalledWith("s1", "assistant", SHIORI, "shiori", "neutral");
     // 切断は pipeline の失敗ではないので、フォールバックの定型文は保存されない
     expect(mocks.appendMessage).toHaveBeenCalledTimes(3);
     expect(spy).not.toHaveBeenCalled();
