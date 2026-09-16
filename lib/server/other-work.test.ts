@@ -1,14 +1,17 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceChunk } from "./types";
 
-// issue #1 ナックルベンチのルート1: 「ナックルとユピー」を別の作品と見分ける2段（ゲート → 判定役）。
-// 判定役（Gemini）と外部資料の取得は差し替える。
+// issue #1 ナックルベンチのルート1: 「ナックルとユピー」を別の作品と見分ける2段（ゲート → Wikipedia）。
+// Wikipedia の検索と外部資料の取得は差し替える（pickWork は本物）。
 const mocks = vi.hoisted(() => ({
-  judgeOtherWork: vi.fn(),
+  lookupWorkOfName: vi.fn(),
   loadSourceChunks: vi.fn(),
   getSources: vi.fn(),
 }));
-vi.mock("./llm/other-work", () => ({ judgeOtherWork: mocks.judgeOtherWork }));
+vi.mock("./wiki-lookup", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./wiki-lookup")>()),
+  lookupWorkOfName: mocks.lookupWorkOfName,
+}));
 vi.mock("./sources", () => ({ loadSourceChunks: mocks.loadSourceChunks }));
 vi.mock("./works", () => ({ getSources: mocks.getSources }));
 
@@ -26,7 +29,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.getSources.mockReturnValue([{ kind: "mediawiki" }]);
   mocks.loadSourceChunks.mockResolvedValue(chunks);
-  mocks.judgeOtherWork.mockResolvedValue({ otherWork: "" });
+  mocks.lookupWorkOfName.mockResolvedValue(null);
 });
 
 describe("namesMissingFromSources: 外部資料の本文に出てくる語は落とす", () => {
@@ -42,45 +45,50 @@ describe("namesMissingFromSources: 外部資料の本文に出てくる語は落
 
 describe("detectOtherWork", () => {
   const base = { workId: "w", workTitle: "ちいかわ", userMessage: "ナックルとユピーの戦いは感動したよね。" };
+  const hxh = { work: "HUNTER×HUNTER", rule: "list" as const };
 
-  it("見知らぬ語が無ければ、資料も判定役も見ない", async () => {
+  it("見知らぬ語が無ければ、資料も Wikipedia も見ない", async () => {
     expect(await detectOtherWork({ ...base, unknownNames: [] })).toBeNull();
     expect(mocks.loadSourceChunks).not.toHaveBeenCalled();
-    expect(mocks.judgeOtherWork).not.toHaveBeenCalled();
+    expect(mocks.lookupWorkOfName).not.toHaveBeenCalled();
   });
 
-  it("見知らぬ語が資料で全部落ちれば、判定役を呼ばない（API を増やさない）", async () => {
+  it("見知らぬ語が資料で全部落ちれば、Wikipedia に聞かない（通信を増やさない）", async () => {
     expect(await detectOtherWork({ ...base, userMessage: "ポシェットの鎧さん", unknownNames: ["ポシェット"] })).toBeNull();
-    expect(mocks.judgeOtherWork).not.toHaveBeenCalled();
+    expect(mocks.lookupWorkOfName).not.toHaveBeenCalled();
   });
 
-  it("資料に無い語だけを判定役に渡し、別の作品ならその名前を返す", async () => {
-    mocks.judgeOtherWork.mockResolvedValue({ otherWork: "HUNTER×HUNTER" });
+  it("資料に無い語だけを Wikipedia に聞き、別の作品ならその名前を返す", async () => {
+    mocks.lookupWorkOfName.mockResolvedValue(hxh);
     const result = await detectOtherWork({ ...base, unknownNames: ["ナックル", "ユピー"] });
-    expect(mocks.judgeOtherWork).toHaveBeenCalledWith({
-      workTitle: "ちいかわ",
-      userMessage: base.userMessage,
-      names: ["ナックル", "ユピー"],
-    });
+    expect(mocks.lookupWorkOfName).toHaveBeenCalledWith("ナックル", "ちいかわ");
+    expect(mocks.lookupWorkOfName).toHaveBeenCalledWith("ユピー", "ちいかわ");
     expect(result).toEqual({ otherWork: "HUNTER×HUNTER", names: ["ナックル", "ユピー"] });
   });
 
-  it("判定役が「本作の話」（空文字）なら null", async () => {
-    expect(await detectOtherWork({ ...base, unknownNames: ["ナックル"] })).toBeNull();
-  });
-
-  it("外部の知識源が無い作品では、見知らぬ語をそのまま判定役に見せる", async () => {
-    mocks.getSources.mockReturnValue([]);
-    mocks.judgeOtherWork.mockResolvedValue({ otherWork: "HUNTER×HUNTER" });
-    const result = await detectOtherWork({ ...base, unknownNames: ["ナックル"] });
-    expect(mocks.loadSourceChunks).not.toHaveBeenCalled();
+  it("語ごとに解けた作品が割れたら多数決。同数なら強い規則（一覧記事）で解けた方", async () => {
+    mocks.lookupWorkOfName.mockImplementation(async (word: string) =>
+      word === "ナックル" ? { work: "帰ってきたウルトラマン", rule: "appears_in" } : hxh,
+    );
+    const result = await detectOtherWork({ ...base, unknownNames: ["ナックル", "ユピー"] });
     expect(result?.otherWork).toBe("HUNTER×HUNTER");
   });
 
-  it("判定役が失敗しても null（本作の話として続ける）", async () => {
-    vi.spyOn(console, "error").mockImplementation(() => {});
-    mocks.judgeOtherWork.mockRejectedValue(new Error("429"));
+  it("Wikipedia でどの語も解けなければ null（本作の話）", async () => {
     expect(await detectOtherWork({ ...base, unknownNames: ["ナックル"] })).toBeNull();
+  });
+
+  it("1発話で聞く語は3つまで", async () => {
+    await detectOtherWork({ ...base, unknownNames: ["ア", "イ", "ウ", "エ", "オ"].map((c) => c + "ルファ") });
+    expect(mocks.lookupWorkOfName).toHaveBeenCalledTimes(3);
+  });
+
+  it("外部の知識源が無い作品では、見知らぬ語をそのまま Wikipedia に聞く", async () => {
+    mocks.getSources.mockReturnValue([]);
+    mocks.lookupWorkOfName.mockResolvedValue(hxh);
+    const result = await detectOtherWork({ ...base, unknownNames: ["ナックル"] });
+    expect(mocks.loadSourceChunks).not.toHaveBeenCalled();
+    expect(result?.otherWork).toBe("HUNTER×HUNTER");
   });
 });
 
