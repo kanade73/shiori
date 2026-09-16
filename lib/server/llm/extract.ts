@@ -46,7 +46,9 @@ export const EXTRACT_TIMEOUT_MS = 10_000;
  */
 export const OLLAMA_TIMEOUT_MS = 60_000;
 
-const CLOSED_RELATIONS = new Set<string>(CLAIM_RELATIONS.map((r) => normalizeText(r)));
+const CLOSED_RELATIONS = new Set<string>(
+  CLAIM_RELATIONS.map((r) => normalizeText(r)),
+);
 const RELATION_VOCABULARY = new Set<string>(CLAIM_RELATIONS);
 
 /**
@@ -99,7 +101,11 @@ function objectMatches(a: string, b: string): boolean {
  * 比べ、そうでなければ subject と object の一致をもって同じ事実とみなす。
  * 否定の主張（negated）は本物の設定の裏返しなので、一致しても canon にはしない。
  */
-export function matchCanonFacts(claim: ExtractedClaim, canonFacts: CanonFact[], normalize: Normalizer): CanonFact[] {
+export function matchCanonFacts(
+  claim: ExtractedClaim,
+  canonFacts: CanonFact[],
+  normalize: Normalizer,
+): CanonFact[] {
   if (claim.negated) return [];
   const subject = normalize(claim.subject);
   const object = normalize(claim.object);
@@ -109,7 +115,8 @@ export function matchCanonFacts(claim: ExtractedClaim, canonFacts: CanonFact[], 
     if (normalize(fact.subject) !== subject) return false;
     if (!objectMatches(object, normalize(fact.object))) return false;
     const canonRelation = normalizeText(fact.relation);
-    if (CLOSED_RELATIONS.has(canonRelation)) return canonRelation === normalizeText(claim.relation);
+    if (CLOSED_RELATIONS.has(canonRelation))
+      return canonRelation === normalizeText(claim.relation);
     return true;
   });
 }
@@ -119,10 +126,15 @@ export function matchCanonFacts(claim: ExtractedClaim, canonFacts: CanonFact[], 
  * しなければ fabricated。ここがコード側で決まっていることが、嘘が必ず
  * FabricatedFact として残ることの担保になっている。
  */
-export function groundClaims(claims: ExtractedClaim[], canonFacts: CanonFact[], normalize: Normalizer): Claim[] {
+export function groundClaims(
+  claims: ExtractedClaim[],
+  canonFacts: CanonFact[],
+  normalize: Normalizer,
+): Claim[] {
   const grounded: Claim[] = [];
   for (const claim of claims) {
-    if (claim.subject.trim().length === 0 || claim.object.trim().length === 0) continue;
+    if (claim.subject.trim().length === 0 || claim.object.trim().length === 0)
+      continue;
     const matched = matchCanonFacts(claim, canonFacts, normalize);
     const sentence = (claim.claim ?? "").trim() || (claim.quote ?? "").trim();
     grounded.push({
@@ -130,7 +142,8 @@ export function groundClaims(claims: ExtractedClaim[], canonFacts: CanonFact[], 
       relation: claim.relation,
       object: claim.object.trim(),
       negated: claim.negated,
-      claim: sentence || `${claim.subject} / ${claim.relation} / ${claim.object}`,
+      claim:
+        sentence || `${claim.subject} / ${claim.relation} / ${claim.object}`,
       grounding: matched.length > 0 ? "canon" : "fabricated",
       sourceCanonFactIds: matched.map((f) => f.id),
       quote: claim.quote?.trim() || undefined,
@@ -163,7 +176,9 @@ export function ollamaConfig(): { host: string; model: string } | null {
   const model = process.env.EXTRACT_OLLAMA_MODEL?.trim();
   if (!model) return null;
   const rawHost = process.env.OLLAMA_HOST?.trim() || "http://localhost:11434";
-  const host = (/^https?:\/\//.test(rawHost) ? rawHost : `http://${rawHost}`).replace(/\/+$/, "");
+  const host = (
+    /^https?:\/\//.test(rawHost) ? rawHost : `http://${rawHost}`
+  ).replace(/\/+$/, "");
   return { host, model };
 }
 
@@ -191,8 +206,14 @@ export const EXTRACT_PROMPT = `あなたはアニメ考察チャットの返答�
 出力は {"claims": [...]} の JSON のみ。説明文や \`\`\`json のような囲みは付けない。`;
 
 /** ml/common.py の build_user_prompt と同じ組み立て。 */
-export function buildExtractUserPrompt({ text, workTitle, userMessage }: ExtractInput): string {
-  const context = userMessage ? `\n# 直前のユーザーの発言（文脈。ここからは主張を取り出さない）\n${userMessage}\n` : "";
+export function buildExtractUserPrompt({
+  text,
+  workTitle,
+  userMessage,
+}: ExtractInput): string {
+  const context = userMessage
+    ? `\n# 直前のユーザーの発言（文脈。ここからは主張を取り出さない）\n${userMessage}\n`
+    : "";
   return `# 作品\n${workTitle}\n${context}\n# 返答文\n${text}`;
 }
 
@@ -212,7 +233,14 @@ const OLLAMA_CLAIMS_SCHEMA = {
           claim: { type: "string" },
           quote: { type: "string" },
         },
-        required: ["subject", "relation", "object", "negated", "claim", "quote"],
+        required: [
+          "subject",
+          "relation",
+          "object",
+          "negated",
+          "claim",
+          "quote",
+        ],
       },
     },
   },
@@ -235,7 +263,14 @@ const GEMINI_CLAIMS_SCHEMA = {
           claim: { type: Type.STRING },
           quote: { type: Type.STRING },
         },
-        required: ["subject", "relation", "object", "negated", "claim", "quote"],
+        required: [
+          "subject",
+          "relation",
+          "object",
+          "negated",
+          "claim",
+          "quote",
+        ],
       },
     },
   },
@@ -263,14 +298,21 @@ export function parseClaimsText(raw: string): unknown {
  * 三つ組が返る（ml/serve.py）。grounding は返らないので、この後 `groundClaims` で付ける。
  * 繋がらない・遅い・形が違うときは例外にして、呼び出し側が claims 空に落とす。
  */
-async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }: ExtractInput): Promise<ExtractedClaim[]> {
+async function extractViaHttp(
+  endpoint: string,
+  { text, workTitle, userMessage }: ExtractInput,
+): Promise<ExtractedClaim[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
   try {
     const response = await fetch(`${endpoint}/extract`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ text, workTitle, userMessage: userMessage ?? null }),
+      body: JSON.stringify({
+        text,
+        workTitle,
+        userMessage: userMessage ?? null,
+      }),
       signal: controller.signal,
     });
     if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -285,7 +327,10 @@ async function extractViaHttp(endpoint: string, { text, workTitle, userMessage }
  * qwen3 系の思考は `think: false` で切る（思考込みだと数十秒かかる）。
  * temperature 0 で決定的に。返答は `message.content` に JSON 文字列で入る。
  */
-async function extractViaOllama({ host, model }: { host: string; model: string }, input: ExtractInput): Promise<ExtractedClaim[]> {
+async function extractViaOllama(
+  { host, model }: { host: string; model: string },
+  input: ExtractInput,
+): Promise<ExtractedClaim[]> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), OLLAMA_TIMEOUT_MS);
   try {
@@ -320,18 +365,54 @@ async function extractViaOllama({ host, model }: { host: string; model: string }
  * 構造化出力で投げる。キーが無い・上限に達した・形が違うときは例外にして、
  * 呼び出し側が claims 空に落とす。
  */
-async function extractViaGemini(input: ExtractInput): Promise<ExtractedClaim[]> {
-  const response = await ai.models.generateContent({
-    model: EXTRACTION_MODEL,
-    contents: [{ role: "user", parts: [{ text: buildExtractUserPrompt(input) }] }],
-    config: {
-      systemInstruction: EXTRACT_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: GEMINI_CLAIMS_SCHEMA,
-      maxOutputTokens: 2048,
-    },
-  });
+async function extractViaGemini(
+  input: ExtractInput,
+): Promise<ExtractedClaim[]> {
+  const response = await withUnavailableRetry(() =>
+    ai.models.generateContent({
+      model: EXTRACTION_MODEL,
+      contents: [
+        { role: "user", parts: [{ text: buildExtractUserPrompt(input) }] },
+      ],
+      config: {
+        systemInstruction: EXTRACT_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: GEMINI_CLAIMS_SCHEMA,
+        maxOutputTokens: 2048,
+      },
+    }),
+  );
   return parseExtractedClaims(parseClaimsText(response.text || "{}"));
+}
+
+/**
+ * 混雑（503 UNAVAILABLE）のときだけ、短く待って同じリクエストを送り直す回数と間隔。
+ * 取り出しはシオリの返答を流し切った後に走るので、数秒待っても表示は遅れない。
+ * これが無いと、混雑のたびにその発話の claims が空になり、ついた嘘が1件も記録されない
+ * （答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。
+ * 429 や無効なキーはキーの切り替え（key-pool）の領分なので、ここでは触らない。
+ */
+export const GEMINI_UNAVAILABLE_RETRY_DELAYS_MS = [1_000, 2_000, 4_000];
+
+function isUnavailable(error: unknown): boolean {
+  return (error as { status?: unknown } | null)?.status === 503;
+}
+
+const sleep = (ms: number) =>
+  new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+async function withUnavailableRetry<T>(
+  send: () => Promise<T>,
+  delays: readonly number[] = GEMINI_UNAVAILABLE_RETRY_DELAYS_MS,
+): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await send();
+    } catch (error) {
+      if (!isUnavailable(error) || attempt >= delays.length) throw error;
+      await sleep(delays[attempt]);
+    }
+  }
 }
 
 type ExtractRoute =
@@ -359,7 +440,10 @@ function describeRoute(route: ExtractRoute): string {
   }
 }
 
-function extractVia(route: ExtractRoute, input: ExtractInput): Promise<ExtractedClaim[]> {
+function extractVia(
+  route: ExtractRoute,
+  input: ExtractInput,
+): Promise<ExtractedClaim[]> {
   switch (route.backend) {
     case "ollama":
       return extractViaOllama(route.ollama, input);
@@ -405,7 +489,9 @@ export async function extractClaims(params: {
     const extracted = await extractVia(route, { text, workTitle, userMessage });
     return { claims: groundClaims(extracted, canonFacts, normalize), backend };
   } catch (error) {
-    console.warn(`claims を取り出せませんでした（${describeRoute(route)}）: ${String(error)}`);
+    console.warn(
+      `claims を取り出せませんでした（${describeRoute(route)}）: ${String(error)}`,
+    );
     return { claims: [], backend, failed: true };
   }
 }
