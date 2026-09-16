@@ -4,6 +4,19 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: Gemini が使えないときに Groq へ逃がす（`feat/groq-fallback`、dev `5bfa4cb` から切った。未コミット・PR 未作成）
+
+下の調査メモの見立てのうち、逃げ先の実装。**`client.ts` の `ai.models.generateContent` の中だけで切り替える**ので、generate / としお / 資料係 / extract / 判定役の呼び出し側は1行も変えていない。
+
+- `lib/server/llm/groq.ts`: Gemini の形（`systemInstruction` / `contents` / `responseSchema` / `maxOutputTokens`）を OpenAI 互換（messages / `response_format.json_schema` の strict / `max_completion_tokens`）に訳して `https://api.groq.com/openai/v1/chat/completions` に投げ、`{ text }` で返す。30秒で諦める。`toJsonSchema` は Gemini の `Type.OBJECT` などを小文字にし、strict に要る `required`（全プロパティ）と `additionalProperties: false` を補う（この app のスキーマはもともと全項目 required）
+- 切り替える条件は `isGeminiUnusable`: `AllKeysRestingError`（2本とも休み中）・`classifyKeyFailure` が拾う 429/401/403・503/500（混雑）。**それ以外は投げ直す**（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）
+- `GEMINI_API_KEY` が1本も無ければ、はじめから Groq に送る。`GROQ_API_KEY` が無ければ今までどおり（Gemini の失敗がそのまま出て、パイプラインが定型文に落とす）
+- **埋め込みは逃がさない**（Groq に無い）。失敗すると段落の検索が bigram だけになる
+- モデルは `GROQ_MODEL`（既定 `openai/gpt-oss-120b`）の1つだけ。Groq の無料枠は組織ごと・モデルごと（30 req/分・14,400 req/日）で、キーを増やしても増えない
+- 検証: `npm test` 429件（`groq.test.ts` 15件・`client.test.ts` 7件を追加）・`tsc --noEmit`・eslint 通過。**実際の Groq のキーではまだ試していない**（`GROQ_API_KEY` を取って `.env.local` に入れ、Gemini のキーを空にすれば通しで確かめられる）
+- 未確認: シオリの口調が `openai/gpt-oss-120b` で保てるか（日本語の質は要検証。メモでは Kimi K2 系・Qwen3 系が候補）
+- 調査メモのコミットはこのブランチに cherry-pick 済み。`docs/llm-fallback-options` ブランチは要らない
+
 ## 2026-09-16: Gemini の枠が尽きたときの逃げ先を調べた（`docs/llm-fallback-options`。調査だけ・コードは変えていない）
 
 `docs/notes/llm-fallback-options.md` にまとめた。無料枠のある提供元（Groq / Cerebras / Cloudflare Workers AI / Mistral / GitHub Models / OpenRouter / NVIDIA build / Cohere）の枠・構造化出力・日本語の質と、埋め込みの逃げ先（Jina / Voyage / Cohere / 手元の Ollama）。見立ては「extract は手元の Ollama（実装済み・枠を使わない）、router と資料係は Groq（JSON schema の strict モード・日14,400回・文脈131K）、シオリの generate は口調の検証をしてからでないと替えられない、GitHub Models は規約が試作のみなのでデモに使わない」。実装するときの見積もり（`client.ts` の `ai` と同じ形の口を OpenAI 互換で足す・スキーマの変換層が要る）も書いた。**数字はブログ経由が多いので、採用前に各コンソールで確認すること。**

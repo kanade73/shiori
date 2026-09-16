@@ -1,5 +1,6 @@
 import { GoogleGenAI } from "@google/genai";
 import { createKeyRotation, fingerprint, newKeyRotationState, type KeyRotationState } from "./key-pool";
+import { groqEnabled, groqGenerateContent, groqModel, isGeminiUnusable, type GeminiLikeParams, type TextResponse } from "./groq";
 
 // The SDK is given ONLY keys from the environment - never an ambient
 // credential - so nothing is sent unless someone has deliberately put
@@ -32,11 +33,31 @@ const withApiKey = createKeyRotation(keys, { state: (shared.__geminiKeyRotation 
 
 type Models = GoogleGenAI["models"];
 
+/**
+ * Gemini が使えないときは Groq に逃がす（`GROQ_API_KEY` があるときだけ）。
+ * 逃がすのは「キーが1本も入っていない」「枠切れ・無効なキーで2本とも休み中」「混雑（503）」のときで、
+ * それ以外の失敗は投げ直す（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）。
+ * 逃げ先には埋め込みが無いので、embedContent は Gemini のままにしてある。
+ */
+async function generateWithFallback(params: Parameters<Models["generateContent"]>[0]): Promise<TextResponse> {
+  if (!llmEnabled) {
+    if (!groqEnabled()) return withApiKey(params.model, (client) => client.models.generateContent(params));
+    console.warn(`[groq] GEMINI_API_KEY が無いので ${groqModel()} に送る`);
+    return groqGenerateContent(params as GeminiLikeParams);
+  }
+  try {
+    return await withApiKey(params.model, (client) => client.models.generateContent(params));
+  } catch (error) {
+    if (!groqEnabled() || !isGeminiUnusable(error)) throw error;
+    console.warn(`[groq] Gemini（${params.model}）が使えないので ${groqModel()} に切り替える: ${String(error).slice(0, 200)}`);
+    return groqGenerateContent(params as GeminiLikeParams);
+  }
+}
+
 // 呼び出し側は SDK と同じ形（ai.models.generateContent / embedContent）で使う。中でキーを選んで送る
 export const ai = {
   models: {
-    generateContent: (params: Parameters<Models["generateContent"]>[0]) =>
-      withApiKey(params.model, (client) => client.models.generateContent(params)),
+    generateContent: generateWithFallback,
     embedContent: (params: Parameters<Models["embedContent"]>[0]) =>
       withApiKey(params.model, (client) => client.models.embedContent(params)),
   },
