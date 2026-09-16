@@ -29,7 +29,7 @@ Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://devel
 - `npm test` 405件・`tsc --noEmit`・`npm run lint`・`npm run build` すべて通過
 - `npm run embed` は env の読み込み（`@next/env`）→ Wikipedia の取得まで動き、Supabase の env が無い旨のエラーで止まることを確認
 - **実 Supabase に対しては未検証**（プロジェクトがまだ無い）。下の「次にやること」の1〜3を済ませてから、会話 → 答え合わせ → 削除を通すこと
-- 手元の `.env.local` は **`GEMINI_API_KEY` が空**（`GROQ_API_KEY` だけ入っている）。ビルド時に出る `API key should be set when using the Gemini API.` はそれが理由で、今回の変更とは関係ない
+- `npm run build` / スクリプトの起動時に出る `API key should be set when using the Gemini API.` は、env を読み込む前にモジュールを評価した経路があるときの警告で、今回の変更とは関係ない（`.env.local` に Gemini のキーは入っている）
 
 ### 次にやること
 
