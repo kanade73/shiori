@@ -23,11 +23,23 @@ const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 30_000;
 
 /**
- * 出力トークンの上限。**Groq の無料枠は「1分あたりの出力トークン（OTPM）が 1,000」**で、
- * `max_completion_tokens` にそれより大きい数を書くだけで `429 Request too large` になる
- * （Gemini 側は 1024〜2048 を要求している）。ここで丸めて、その事故を防ぐ。
+ * 出力トークンの上限は**呼び出し口ごとに実態に合わせる**。
+ *
+ * Groq の無料枠は「1分あたりの出力トークン（OTPM）が 1,000」で、しかも
+ * **「すでに使った分 + 今回要求する分」が枠を超えると弾かれる**。つまり
+ * `max_completion_tokens` に大きい数を書くと、その数を丸ごと予約したことになり、
+ * 同じモデルには1分に1回しか投げられない（実際、900 を予約していたせいで
+ * 資料係の後の取り出しが毎回 429 になり、嘘が1件も記録されなかった）。
+ *
+ * 1モデル1分あたり 1,000 に収まるよう、同じモデルに乗る口の合計で決めてある。
  */
-const GROQ_MAX_OUTPUT_TOKENS = 900;
+const GROQ_MAX_OUTPUT_TOKENS: Record<GroqKind, number> = {
+  chat: 400, // シオリの返答（実測 150〜250 トークン）
+  toshio: 350, // としおの考察
+  topic: 550, // 資料係（事実6〜8件の JSON）
+  extract: 400, // 主張の取り出し（1発話あたり数件の三つ組）
+  router: 80, // 判定役（切り替えの有無と検索語だけ）
+};
 /** 1分の枠に当たったとき、これ以内の待ちなら1回だけ待って送り直す（長い待ちは会話が止まるので諦める） */
 const GROQ_RETRY_AFTER_MAX_MS = 6_000;
 
@@ -41,13 +53,15 @@ const GROQ_RETRY_AFTER_MAX_MS = 6_000;
  * このキーで使えて strict に応えられたのは `openai/gpt-oss-120b` / `openai/gpt-oss-20b` /
  * `qwen/qwen3.8-27b` の3つ（llama 系と minimax は 404、safeguard-20b は strict で 400）。
  *
+ * 出力の枠（OTPM 1,000）はモデルごとなので、**同じモデルに乗る口の出力の合計が 1,000 を超えないように**割る。
+ *
  * | kind | 呼び出し口 | 既定 | 理由 |
  * |---|---|---|---|
  * | `chat` | シオリの返答 | `openai/gpt-oss-120b` | 口調と日本語の質がそのまま体験になる |
- * | `toshio` | としおの割り込み | `openai/gpt-oss-120b` | 同上。シオリと同じ枠だが、毎発話は呼ばない |
- * | `topic` | 資料係・作り手 | `qwen/qwen3.8-27b` | 入力が大きい（段落8件）ので枠を分ける |
- * | `extract` | 主張の取り出し | `qwen/qwen3.8-27b` | **20b では `400 Failed to validate JSON` になった** |
- * | `router` | 切り替わりの判定役 | `openai/gpt-oss-20b` | スキーマも文脈も小さい |
+ * | `topic` | 資料係・作り手 | `openai/gpt-oss-120b` | 話題を決めるときだけなので、シオリと同じ枠でよい |
+ * | `router` | 切り替わりの判定役 | `openai/gpt-oss-20b` | スキーマも文脈も小さいので 20b で足りる |
+ * | `extract` | 主張の取り出し | `qwen/qwen3.8-27b` | 毎発話呼ぶので専有させる。**20b は strict を外しても `400 Failed to validate JSON`** |
+ * | `toshio` | としおの割り込み | `openai/gpt-oss-20b` | 出力が短く、スキーマも2項目だけ |
  *
  * **小さいモデルに資料係や取り出しを回さないこと**（大きいスキーマに応えられず 400 になる）。
  */
@@ -55,8 +69,8 @@ export type GroqKind = "chat" | "toshio" | "topic" | "extract" | "router";
 
 const GROQ_MODEL_ENV: Record<GroqKind, { env: string; fallback: string }> = {
   chat: { env: "GROQ_MODEL", fallback: "openai/gpt-oss-120b" },
-  toshio: { env: "GROQ_TOSHIO_MODEL", fallback: "openai/gpt-oss-120b" },
-  topic: { env: "GROQ_TOPIC_MODEL", fallback: "qwen/qwen3.8-27b" },
+  toshio: { env: "GROQ_TOSHIO_MODEL", fallback: "openai/gpt-oss-20b" },
+  topic: { env: "GROQ_TOPIC_MODEL", fallback: "openai/gpt-oss-120b" },
   extract: { env: "GROQ_EXTRACT_MODEL", fallback: "qwen/qwen3.8-27b" },
   router: { env: "GROQ_ROUTER_MODEL", fallback: "openai/gpt-oss-20b" },
 };
@@ -163,7 +177,8 @@ export function toGroqRequest(params: GeminiLikeParams, kind: GroqKind = "chat")
     model: groqModel(kind),
     messages: toMessages(params),
   };
-  body.max_completion_tokens = Math.min(params.config?.maxOutputTokens ?? GROQ_MAX_OUTPUT_TOKENS, GROQ_MAX_OUTPUT_TOKENS);
+  const cap = GROQ_MAX_OUTPUT_TOKENS[kind] ?? GROQ_MAX_OUTPUT_TOKENS.chat;
+  body.max_completion_tokens = Math.min(params.config?.maxOutputTokens ?? cap, cap);
   if (typeof params.config?.temperature === "number") body.temperature = params.config.temperature;
   if (params.config?.responseSchema) {
     body.response_format = {

@@ -12,7 +12,7 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - 切り替える条件は `isGeminiUnusable`: `AllKeysRestingError`（2本とも休み中）・`classifyKeyFailure` が拾う 429/401/403・503/500（混雑）。**それ以外は投げ直す**（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）
 - `GEMINI_API_KEY` が1本も無ければ、はじめから Groq に送る。`GROQ_API_KEY` が無ければ今までどおり（Gemini の失敗がそのまま出て、パイプラインが定型文に落とす）
 - **埋め込みは逃がさない**（Groq に無い）。失敗すると段落の検索が bigram だけになる
-- **逃げ先のモデルは呼び出し口ごとに分ける**。呼び出し側が `ai.models.generateContent(params, kind)` の第2引数で口を言う（Gemini 側は会話と資料係が同じモデル名なので、名前では分けられない）。既定は chat / toshio = `openai/gpt-oss-120b`、topic（資料係・作り手）/ extract = `qwen/qwen3.8-27b`、router = `openai/gpt-oss-20b`。`GROQ_MODEL` / `GROQ_TOSHIO_MODEL` / `GROQ_TOPIC_MODEL` / `GROQ_EXTRACT_MODEL` / `GROQ_ROUTER_MODEL` で差し替え
+- **逃げ先のモデルは呼び出し口ごとに分ける**。呼び出し側が `ai.models.generateContent(params, kind)` の第2引数で口を言う（Gemini 側は会話と資料係が同じモデル名なので、名前では分けられない）。既定は chat（シオリ）/ topic（資料係・作り手）= `openai/gpt-oss-120b`、extract = `qwen/qwen3.8-27b`、toshio / router = `openai/gpt-oss-20b`。**出力の枠（OTPM 1,000）は「使った分 + 要求した分」で判定されるので、`max_completion_tokens` は口ごとに実態へ丸める**（シオリ400 / 資料係550 / 取り出し400 / としお350 / 判定役80。同じモデルに乗る口の合計 ≤ 1,000）。900 を一律に予約していたときは、資料係と取り出しが同じモデルに乗っていたこともあって取り出しが毎回 429 になり、**嘘が1件も記録されない**状態だった（ユーザーが「嘘の判別ができない」と報告した現象）。`GROQ_MODEL` / `GROQ_TOSHIO_MODEL` / `GROQ_TOPIC_MODEL` / `GROQ_EXTRACT_MODEL` / `GROQ_ROUTER_MODEL` で差し替え
 
 ### 実測した Groq の無料枠（このキーで、応答ヘッダと 429 の本文から）
 

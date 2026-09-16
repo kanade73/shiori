@@ -76,7 +76,7 @@ describe("toGroqRequest", () => {
       config: { responseMimeType: "application/json", responseSchema: schema, maxOutputTokens: 1024 },
     });
     expect(body.model).toBe("openai/gpt-oss-20b");
-    expect(body.max_completion_tokens).toBe(900);
+    expect(body.max_completion_tokens).toBe(400);
     expect(body.response_format).toMatchObject({ type: "json_schema", json_schema: { strict: true } });
   });
 
@@ -96,10 +96,10 @@ describe("toGroqRequest", () => {
     }
     // 会話は大きいモデル、資料係と取り出しは大きいスキーマに応えられるモデル、判定役は小さいモデル
     expect(groqModel("chat")).toBe("openai/gpt-oss-120b");
-    expect(groqModel("toshio")).toBe("openai/gpt-oss-120b");
-    expect(groqModel("topic")).toBe("qwen/qwen3.8-27b");
-    expect(groqModel("extract")).toBe("qwen/qwen3.8-27b");
+    expect(groqModel("topic")).toBe("openai/gpt-oss-120b");
     expect(groqModel("router")).toBe("openai/gpt-oss-20b");
+    expect(groqModel("extract")).toBe("qwen/qwen3.8-27b");
+    expect(groqModel("toshio")).toBe("openai/gpt-oss-20b");
   });
 
   it("呼び出し口ごとに環境変数で差し替えられる", () => {
@@ -186,9 +186,24 @@ describe("groqGenerateContent", () => {
 });
 
 describe("出力トークンの上限（Groq の OTPM は1分1,000）", () => {
-  it("Gemini 側が 2048 を求めても 900 に丸める（超えるだけで 429 Request too large になる）", () => {
-    const body = toGroqRequest({ model: "m", contents: "本文", config: { maxOutputTokens: 2048 } });
-    expect(body.max_completion_tokens).toBe(900);
+  it("呼び出し口ごとの上限に丸める（要求した分だけ枠を予約されるため、大きく書くと1分に1回しか通らない）", () => {
+    const ask = { model: "m", contents: "本文", config: { maxOutputTokens: 2048 } };
+    expect(toGroqRequest(ask, "chat").max_completion_tokens).toBe(400);
+    expect(toGroqRequest(ask, "toshio").max_completion_tokens).toBe(350);
+    expect(toGroqRequest(ask, "topic").max_completion_tokens).toBe(550);
+    expect(toGroqRequest(ask, "extract").max_completion_tokens).toBe(400);
+    expect(toGroqRequest(ask, "router").max_completion_tokens).toBe(80);
+  });
+
+  it("同じモデルに乗る口の出力の合計が、1分の枠（1,000）に収まっている", () => {
+    const cap = (kind: "chat" | "toshio" | "topic" | "extract" | "router") =>
+      Number(toGroqRequest({ model: "m", contents: "本文" }, kind).max_completion_tokens);
+    const perModel = new Map<string, number>();
+    for (const kind of ["chat", "toshio", "topic", "extract", "router"] as const) {
+      const model = groqModel(kind);
+      perModel.set(model, (perModel.get(model) ?? 0) + cap(kind));
+    }
+    for (const [, total] of perModel) expect(total).toBeLessThanOrEqual(1000);
   });
 
   it("retry-after は秒。読めれば ms にする", () => {

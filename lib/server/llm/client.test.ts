@@ -118,7 +118,7 @@ describe("ai.models.generateContent: Gemini が使えないときは Groq に逃
     await ai.models.generateContent({ ...params, contents: "判定役" }, "router");
 
     const models = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).model);
-    expect(models).toEqual(["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]);
+    expect(models).toEqual(["openai/gpt-oss-120b", "openai/gpt-oss-120b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]);
   });
 
   it("kind を渡さなければ会話の枠に送る", async () => {
