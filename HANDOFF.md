@@ -25,21 +25,36 @@ Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://devel
 - 開発者モードの events SSE: `start` が async になったので、**購読を init より先に張って、init を送るまでの段を溜める**ようにした（DB を待っている間のイベントを取りこぼさないため）
 - `origin/dev`（PR #46 表情・#47 口調・#48 README）を取り込み済み。衝突は `store.ts` / messages の Route Handler / HANDOFF の3つで、**相方が足した `Message.expression` を Supabase 側にも通した**（`messages.expression` 列、`store-supabase.ts` の写し替え、`appendMessage` の第5引数）。README の構成表と「動かす」も Supabase / Vercel に直した
 
-### 検証の状況
+### 検証の状況（実 Supabase で通し確認まで完了）
 
-- `npm test` 405件・`tsc --noEmit`・`npm run lint`・`npm run build` すべて通過
-- `npm run embed` は env の読み込み（`@next/env`）→ Wikipedia の取得まで動き、Supabase の env が無い旨のエラーで止まることを確認
-- **実 Supabase に対しては未検証**（プロジェクトがまだ無い）。下の「次にやること」の1〜3を済ませてから、会話 → 答え合わせ → 削除を通すこと
+- `npm test` 411件・`tsc --noEmit`・`npm run lint`・`npm run build` すべて通過
+- **実 Supabase（無料プロジェクト、東京）で通した**: `npm run db:push` → `npm run db:check`（8項目 OK）→ `npm run embed -- chiikawa`（168段落 / 約2分）→ dev サーバーで
+  - セッション作成 → 話題特定（『草むしり検定』編・arc 一致・`currentEpisode` 63）→ シオリの返答 → としおの割り込み → 嘘8件の保存
+  - 答え合わせ（主張9件、quote の位置で本文が区切られ、`expression` も往復）
+  - 答え合わせ済みへの送信 = 409、削除 = 200 →（messages / message_claims / fabricated_facts が連鎖削除で 0 件）、削除後の取得 = 404
+  - **pgvector 経路の確認**: 固有名詞を使わない「牢屋みたいなとこに閉じ込められる話あったよね」で『プリズン』編を特定（bigram では当たらない言い回し）。としおも `creator_profiles` の作風（不条理を描く）に乗って考察した
+- **踏んだ落とし穴（重要）**: 最初 `schema.sql` に GRANT を書いておらず Supabase の既定権限に頼っていたため、`service_role` に `REFERENCES/TRIGGER/TRUNCATE` しか付かず全テーブルが `permission denied` になった。**ダッシュボードの SQL Editor で作った表と `db:push` で作った表で既定権限が食い違う。** 権限は `schema.sql` で明示すること（修正済み。`c7fa7fa`）
+- `npm run build` 時に出る `API key should be set when using the Gemini API.` は、env を読み込む前にモジュールを評価した経路があるときの警告で、今回の変更とは関係ない
 - `npm run build` / スクリプトの起動時に出る `API key should be set when using the Gemini API.` は、env を読み込む前にモジュールを評価した経路があるときの警告で、今回の変更とは関係ない（`.env.local` に Gemini のキーは入っている）
+
+### 手元をこの構成で動かす手順
+
+`.env.local` に `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`（サーバー用の secret キー）と、スキーマを流すときだけ使う
+`SUPABASE_DB_URL`（Connect → pooler の URI。**PostgREST の service_role キーでは DDL を流せない**）を入れて:
+
+```
+npm run db:push    # supabase/schema.sql を流す（何度流してもよい）
+npm run db:check   # テーブルと match_source_chunks が見えるか
+npm run embed      # 段落の埋め込み（1分80件。省略すると段落検索が bigram だけになる）
+npm run dev
+```
 
 ### 次にやること
 
-1. supabase.com で無料プロジェクトを作る（region: Tokyo）→ Settings → API の `Project URL` と `service_role` を `.env.local` へ
-2. SQL Editor に `supabase/schema.sql` を貼って流す
-3. `npm run embed`（Gemini のキーが要る）→ `npm run dev` で会話〜答え合わせ〜削除を通し、Table Editor に行が入るのを確認
-4. Vercel にリポジトリを繋ぎ、`GEMINI_API_KEY` / `GEMINI_API_KEY_2` / `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を登録してデプロイ
-5. **Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら週2回 ping する GitHub Actions を足す
-6. `feat/groq-fallback`（未マージ）とこのブランチは、`AGENTS.md` / `.env.example` / `lib/server/llm/` あたりで衝突する見込み。マージの順番を決めること
+1. **Vercel にデプロイ**。リポジトリを繋ぎ、`GEMINI_API_KEY` / `GEMINI_API_KEY_2` / `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を登録する（`SUPABASE_DB_URL` は本番に要らない）
+2. `dev` へ PR を出す（このブランチはまだ PR 未作成）
+3. **Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら週2回 ping する GitHub Actions を足す
+4. `feat/groq-fallback`（未マージ）とこのブランチは、`AGENTS.md` / `.env.example` / `lib/server/llm/` あたりで衝突する見込み。マージの順番を決めること
 
 ## 2026-09-16: シオリの口調を「サバサバ・感情の起伏なし」に寄せ、三点リーダーをやめた（`fix/shiori-tone`、PR #47 → dev）
 
