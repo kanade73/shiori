@@ -113,6 +113,156 @@ describe("matchCanonFacts: 三つ組が本物の設定を述べたものかを�
   });
 });
 
+describe("matchCanonFacts: 本物の設定の一文をなぞっただけの主張は canon にする", () => {
+  // 実際のセッション（『プリズン』編）で、一文が did / has / secret の3つに割れて
+  // has と secret だけが嘘として塗られた
+  const spoon = canon({
+    id: "topic-1-4",
+    subject: "うさぎ",
+    relation: "did",
+    object: "穴を掘る",
+    description: "提供された食事のスプーンを使って、こっそりと脱出用の穴を掘っていた。",
+  });
+
+  it("object が説明文にそのまま出てくる has は言い直し", () => {
+    const matched = matchCanonFacts(
+      triple({ subject: "うさぎ", relation: "has", object: "スプーン", quote: "うさぎがそのスプーンを使って" }),
+      [spoon],
+      normalize,
+    );
+    expect(matched.map((f) => f.id)).toEqual(["topic-1-4"]);
+  });
+
+  it("抜き出しが説明文の一部なら relation が違っても言い直し", () => {
+    const matched = matchCanonFacts(
+      triple({
+        subject: "うさぎ",
+        relation: "secret",
+        object: "脱出用の穴を掘る行為",
+        quote: "こっそりと脱出用の穴を掘っていた。",
+      }),
+      [spoon],
+      normalize,
+    );
+    expect(matched.map((f) => f.id)).toEqual(["topic-1-4"]);
+  });
+
+  it("説明文に無い細部（スプーンの材質）は嘘のまま", () => {
+    const matched = matchCanonFacts(
+      triple({ subject: "うさぎ", relation: "has", object: "銀色のスプーン", quote: "銀色のスプーンを持っていた" }),
+      [spoon],
+      normalize,
+    );
+    expect(matched).toEqual([]);
+  });
+
+  it("値を持つ関係（is / likes / lives_in など）は説明文に語があるだけでは一致しない", () => {
+    const goblin = canon({
+      id: "topic-1-2",
+      subject: "ちいかわ達",
+      relation: "did",
+      object: "ゴブリンに捕らえられる",
+      description: "キノコを食べている最中に突如現れたゴブリンに捕らえられた。",
+    });
+    expect(
+      matchCanonFacts(triple({ subject: "ちいかわ達", relation: "is", object: "ゴブリン", quote: "ちいかわ達はゴブリンだ" }), [goblin], normalize),
+    ).toEqual([]);
+    expect(
+      matchCanonFacts(triple({ subject: "ちいかわ達", relation: "likes", object: "キノコ", quote: "ちいかわ達はキノコが好き" }), [goblin], normalize),
+    ).toEqual([]);
+  });
+
+  it("活用の違い（しがみつき / しがみつく）は bigram の重なりで吸収する", () => {
+    const star = canon({
+      id: "topic-1-1",
+      subject: "黒い流れ星",
+      relation: "did",
+      object: "時間を巻き戻す",
+      description: "目覚まし時計の長針にしがみつき、時間を巻き戻してデジャブ期間初日の朝に戻した。",
+    });
+    expect(
+      matchCanonFacts(
+        triple({ subject: "黒い流れ星", relation: "did", object: "時計の長針にしがみつく", quote: "黒い流れ星が時計の長針にしがみついているとき" }),
+        [star],
+        normalize,
+      ).map((f) => f.id),
+    ).toEqual(["topic-1-1"]);
+    // 言い換え（再登場 → 再会）までは通さない
+    expect(
+      matchCanonFacts(
+        triple({ subject: "黒い流れ星", relation: "did", object: "長針の逆回し", quote: "長針を逆回しにしていた" }),
+        [star],
+        normalize,
+      ),
+    ).toEqual([]);
+  });
+
+  it("抜き出しが説明文にそのまま出てくるなら can / is のような関係でも言い直し", () => {
+    const beetle = canon({
+      id: "topic-1-7",
+      subject: "カブトムシ",
+      relation: "did",
+      object: "お茶菓子を出す",
+      description: "角を伸ばして能力でお茶菓子を出し、追ってきた労働の鎧さんたちにおもてなしをした。",
+    });
+    expect(
+      matchCanonFacts(
+        triple({ subject: "カブトムシ", relation: "can", object: "角を伸ばして能力でお茶菓子を出す", quote: "角を伸ばして能力でお茶菓子を出し" }),
+        [beetle],
+        normalize,
+      ).map((f) => f.id),
+    ).toEqual(["topic-1-7"]);
+  });
+
+  it("「〜達」を主語にした本物の設定は、その一員を主語にした言い直しにも一致する", () => {
+    const group = canon({
+      id: "topic-1-4",
+      subject: "ちいかわ達",
+      relation: "did",
+      object: "代理メンバーを務める",
+      description: "残されたメンバーの依頼により、ちいかわ達が代理メンバーとしてパジャマパーティーズに参加した。",
+    });
+    expect(
+      matchCanonFacts(
+        triple({ subject: "ちいかわ", relation: "did", object: "代理メンバーとして参加", quote: "代理メンバーとして参加したちいかわたち" }),
+        [group],
+        normalize,
+      ).map((f) => f.id),
+    ).toEqual(["topic-1-4"]);
+  });
+
+  it("主語が本物の設定の説明文に名前で出ていて、述べていることも説明文にあれば、subject が違っても言い直し", () => {
+    const card = canon({
+      id: "topic-1-1",
+      subject: "カブトムシ",
+      relation: "first_appeared",
+      object: "カードダス",
+      description: "ハチワレがカードダスで引き当てたキラカードにカブト王という名前で登場した",
+    });
+    expect(
+      matchCanonFacts(
+        triple({ subject: "ハチワレ", relation: "did", object: "カードダスでキラカードを引き当てる", quote: "ハチワレはカードダスでキラカードを引き当てた。" }),
+        [card],
+        normalize,
+      ).map((f) => f.id),
+    ).toEqual(["topic-1-1"]);
+    // 主語が説明文に無ければ、述べていることが似ていても別の主張
+    expect(
+      matchCanonFacts(
+        triple({ subject: "うさぎ", relation: "did", object: "カードダスでキラカードを引き当てる", quote: "うさぎはカードダスでキラカードを引き当てた。" }),
+        [card],
+        normalize,
+      ),
+    ).toEqual([]);
+  });
+
+  it("短い抜き出し（「うさぎが」程度）では照らさない", () => {
+    expect(
+      matchCanonFacts(triple({ subject: "うさぎ", relation: "did", object: "逃げた", quote: "うさぎが" }), [spoon], normalize),
+    ).toEqual([]);
+  });
+});
+
 describe("groundClaims: grounding はモデルではなくコードが付ける", () => {
   it("canonFacts に一致すれば canon で、根拠の id を持つ", () => {
     const [claim] = groundClaims(

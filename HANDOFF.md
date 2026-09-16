@@ -1,3 +1,25 @@
+## 嘘判定の修正: 本物の一文をなぞった主張が嘘に塗られていた（2026-09-16、`fix/canon-restatement`、PR → dev）
+
+- 実機セッション（『プリズン』編）で「うさぎがそのスプーンを使って、こっそりと脱出用の穴を掘っていた」が嘘扱いになった。記録係が一文を did / has / secret の3つに割り、did だけが topic-1-4 に一致、has と secret は object / relation が違って fabricated → 答え合わせは重なる抜き出しで嘘を優先するので文全体が嘘に見えた。
+- `lib/server/llm/extract.ts` の `matchCanonFacts` に第2経路 `restatesDescription` を足した（API は増やさない）。(a) quote（6字以上）が本物の設定の `description` に含まれる、または文字 bigram の 75% 以上が description にあれば relation を問わず canon。(b) relation が has / did / secret / related_to / other なら object についても同じ検査（is / likes / lives_in などの値を持つ関係は object では照らさない。「ちいかわ達 is ゴブリン」が canon になるため）。主語は「〜達」「〜たち」を落として比べ、主語が違っても説明文の中に主語の名前が出ていて (a)(b) を満たせば言い直し（資料係が「ハチワレが引き当てた」を subject=カブトムシ の事実として出すため）。閾値 75% は活用（しがみつき / しがみつく）と「〜がする」を通し、言い換え（身体がもちもちしている = 0.70）は通さない値。テストは `extract.test.ts` に9件。
+- `llm/topic.ts` のプロンプトに「集団でまとめず人物ごとに主語を立てる」「呼び名を揃える」を足した。効果は弱い（1回試して主語は変わらず）。`MAX_FACTS` を 12 に上げると場面より後の展開（本来の姿に戻って襲う）が事実に混ざったので 8 のまま。
+- 検証: dev サーバーに5セッション（草むしり検定・パジャマパーティーズ・カブトムシ×2・黒い流れ星）を流し、保存された主張 60 件を再判定。嘘が本当に転んだものは 0 件。本当の言い直しが嘘に塗られたものは修正前 16 件 → 修正後 8 件。残りは資料係が出す事実の粒度（「黒い星」と「黒い流れ星」に割れる、「パジャマパーティーのメンバー」が entities に寄らない）、言い換え（再登場 → 再会）、記録係が否定を negated=false で出す（「ちいかわは合格できなかった」）。
+
+## 最新 dev で実機テスト用サーバー起動（2026-09-16）
+
+- `origin/dev` を取得し、ローカル `dev` を `0836e68` に合わせて切り替え済み。
+- 本ディレクトリの既存3000番サーバーを再起動。`npm run dev -- --hostname 0.0.0.0 --port 3000`、`.env.local` と既存 `.data` を使用。
+- 実機アクセス: http://10.60.60.104:3000 （同じLAN）。ローカル: http://localhost:3000 。
+- 未コミット変更を保持。`next.config.mjs` のLAN用 `allowedDevOrigins` もそのまま有効。
+
+## PR #49 マージ（2026-09-16）
+
+- ユーザー依頼により `feat/knuckle-bench` → `dev` を GitHub 上でマージ済み。
+- PR: https://github.com/kanade73/hackathon/pull/49
+- マージコミット: `0836e680d62fee67f70f33d8215e54ee60910276`。
+- GitHub の競合なしを確認。CI チェックなし。PR 本文にテスト472件・Lint・standalone ビルド確認の記録あり。この作業ではテストを再実行していない。
+- ローカルのブランチ切り替え・pull は行っていない。既存の未コミット変更（`next.config.mjs`、`tsconfig.json`、`docs/submission/`）は保持。
+
 # HANDOFF
 
 AIがセッションを開始する際はまずこれを読むこと（AGENTS.md参照）。作業を終えるAIは、次のAIが初見で状況を把握できるようここを更新してから終わること。
