@@ -4,6 +4,13 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: Gemini の枠が尽きたときの逃げ先を調べた（`docs/llm-fallback-options`。調査だけ・コードは変えていない）
+
+`docs/notes/llm-fallback-options.md` にまとめた。無料枠のある提供元（Groq / Cerebras / Cloudflare Workers AI / Mistral / GitHub Models / OpenRouter / NVIDIA build / Cohere）の枠・構造化出力・日本語の質と、埋め込みの逃げ先（Jina / Voyage / Cohere / 手元の Ollama）。見立ては「extract は手元の Ollama（実装済み・枠を使わない）、router と資料係は Groq（JSON schema の strict モード・日14,400回・文脈131K）、シオリの generate は口調の検証をしてからでないと替えられない、GitHub Models は規約が試作のみなのでデモに使わない」。実装するときの見積もり（`client.ts` の `ai` と同じ形の口を OpenAI 互換で足す・スキーマの変換層が要る）も書いた。**数字はブログ経由が多いので、採用前に各コンソールで確認すること。**
+
+- 調査のきっかけ: 手元で `gemini-3.1-flash-lite`（extract の既定）が混雑の 503 を返し続け、嘘が1件も記録されない状態になっていた。その後 503 は収まり、いまは両方のキー・両方のモデルとも通る。恒久対策は未決
+- 関連: Issue #42（言い換えが嘘と判定される件、`fix/grounding-paraphrase` に実装済み・PR 未作成）
+
 ## 2026-09-16: hotfix — Gemini 経路の claims 抽出が 503 で落ちて嘘が記録されない（`hotfix/extract-gemini-503`）
 
 手元の推論を設定していない環境（本番・`.env.local` に EXTRACT_* が無い手元）では extract が Gemini `gemini-3.1-flash-lite` に投げるが、混雑（503 UNAVAILABLE）のたびに再試行なしで claims 空になり、ついた嘘が1件も記録されなかった（答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。`extract.ts` の Gemini 経路にだけ 503 の再試行（1s / 2s / 4s の3回、`GEMINI_UNAVAILABLE_RETRY_DELAYS_MS`）を入れた。429 と無効なキーは key-pool の領分なので触らない。経路をまたぐフォールバックも入れていない。dev と main の両方に PR を出した。手元での実 API の確認は generate 側が 429（無料枠）で止まり未検証。ユニットテストは通っている。
