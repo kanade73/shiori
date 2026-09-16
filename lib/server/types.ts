@@ -147,6 +147,13 @@ export type ChatSession = {
  */
 export type Speaker = "shiori" | "toshio";
 
+/**
+ * シオリの表情。基本は無表情で、感想を語り合う回だけウインクする（lib/server/llm/expression.ts。
+ * ユーザーの聞き方からコードが決める）。嘘をついたかどうかには連動させない。連動させると
+ * 表情が答え合わせのヒントになり、嘘の説得力が落ちる。
+ */
+export type ShioriExpression = "neutral" | "wink";
+
 export type Message = {
   id: string;
   sessionId: string;
@@ -154,6 +161,8 @@ export type Message = {
   content: string;
   createdAt: string;
   speaker?: Speaker;
+  /** シオリの発話のみ: 表示する表情。無ければ neutral（旧データ・としお） */
+  expression?: ShioriExpression;
 };
 
 /**

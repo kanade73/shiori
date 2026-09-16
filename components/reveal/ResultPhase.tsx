@@ -118,6 +118,7 @@ function Transcript({ data }: { data: Revealed }) {
               size={32}
               animated={false}
               character={m.speaker}
+              expression={m.expression}
               name={speakerName(m.speaker)}
             />
             <div className="min-w-0 flex-1">

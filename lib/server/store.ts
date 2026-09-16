@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import type { ChatSession, Claim, FabricatedFact, FabricatedRelation, Message, SessionTopic, Speaker, StoredClaim } from "./types";
+import type { ChatSession, Claim, FabricatedFact, FabricatedRelation, Message, SessionTopic, ShioriExpression, Speaker, StoredClaim } from "./types";
 import type { Verdict } from "./reveal/types";
 
 type Db = {
@@ -133,7 +133,13 @@ export function getMessages(sessionId: string): Message[] {
   return readDb().messages[sessionId] ?? [];
 }
 
-export function appendMessage(sessionId: string, role: Message["role"], content: string, speaker?: Speaker): Message {
+export function appendMessage(
+  sessionId: string,
+  role: Message["role"],
+  content: string,
+  speaker?: Speaker,
+  expression?: ShioriExpression,
+): Message {
   const db = readDb();
   const message: Message = {
     id: newId("msg"),
@@ -142,6 +148,7 @@ export function appendMessage(sessionId: string, role: Message["role"], content:
     content,
     createdAt: new Date().toISOString(),
     ...(speaker ? { speaker } : {}),
+    ...(expression ? { expression } : {}),
   };
   if (!db.messages[sessionId]) db.messages[sessionId] = [];
   db.messages[sessionId].push(message);

@@ -9,6 +9,7 @@ import {
 } from "@/lib/server/store";
 import { getWork } from "@/lib/server/works";
 import { runConversationPipeline, runToshioInterjection, fallbackMessage } from "@/lib/server/llm/pipeline";
+import { FALLBACK_EXPRESSION } from "@/lib/server/llm/expression";
 import { isRateLimited } from "@/lib/server/rate-limit";
 import { createSseWriter, SSE_HEADERS, type SseWriter } from "@/lib/server/sse";
 import { emitPipelineEvent } from "@/lib/server/events";
@@ -75,6 +76,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           generation,
           evaluation,
           phase,
+          expression,
           regenerated,
           newFabricatedClaims,
           reusedFabricatedFactIds,
@@ -101,10 +103,11 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
         }
         if (newTopic) send("topic", newTopic);
 
-        send("message-start", { speaker: "shiori" });
+        // 表情は本文より先に送る（本文を待つ間の入力中表示から顔が変わる）
+        send("message-start", { speaker: "shiori", expression });
         await streamText(generation.message);
 
-        const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori");
+        const assistantMessage = appendMessage(sessionId, "assistant", generation.message, "shiori", expression);
         // 答え合わせ用に、この返答の主張を真偽（grounding）と抜き出し位置（quote）ごと残す
         saveMessageClaims(sessionId, assistantMessage.id, generation.claims);
 
@@ -170,9 +173,9 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
       } catch (error) {
         console.error(`[sessions/${sessionId}/messages] pipeline failed:`, error);
         const fallback = fallbackMessage();
-        send("message-start", { speaker: "shiori" });
+        send("message-start", { speaker: "shiori", expression: FALLBACK_EXPRESSION });
         await streamText(fallback);
-        const fallbackMessageRecord = appendMessage(sessionId, "assistant", fallback, "shiori");
+        const fallbackMessageRecord = appendMessage(sessionId, "assistant", fallback, "shiori", FALLBACK_EXPRESSION);
         saveMessageClaims(sessionId, fallbackMessageRecord.id, []);
         send("metadata", { fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
         send("message-end", {});

@@ -106,6 +106,12 @@
 
 矛盾判定のルールは `lib/server/claims.ts` にある。`identity / origin / lives_in / first_appeared` は1主語につき1値、`likes/dislikes` と `can/cannot` は対、同じ三つ組の肯定と否定は矛盾。それ以外は共存を許す。本物の設定との照合にも同じルールを使う（`contradictionReason`）。「モモンガ did A」という本物の設定の横に「モモンガ did B」という嘘を足すのは上書きではない（issue #26。以前は主語と関係が同じだけで弾いていて、人物の話題で嘘が毎回差し戻されていた）。関係が自由記述の work.json の canonFacts とは照合しない。テストは `npm test`（vitest。テストは対象の隣に `*.test.ts` として置く）。
 
+### シオリの表情
+
+`pictures/` の差分から `public/character/avatar-<expression>-{64,128,256}.png` と `display-<expression>-512.png` を作ってある。**使うのはウインク（wink）だけ**。おこり・どやがお・おちこみも描いたが、ずっと無表情でいる方が「何を考えているか分からない」不思議さが出るとの判断で外した（元絵は `pictures/` に残っている）（neutral は無印の既存ファイル。切り出しは元絵の (152,50) から 890px 角、立ち絵は (30,48) から 1132px 角、いずれも最近傍で縮小）。表情は `lib/server/llm/expression.ts` の `decideExpression` が**コードで**決め（LLM には選ばせない）、`Message.expression` に保存し、SSE の `message-start` に載せて本文より先に届く。吹き出しのアバター（`Mascot` の `AVATAR_SIZE` = 72px、128px の画像を使う）と本文を待つ間の入力中表示に出る。44px では眉と口の差が読めなかったので大きくした。会話の横に立ち絵を置く案は試して外した（ユーザー判断。会話の主導権はチャットに置く）。
+
+**表情は嘘をついたかどうかに連動させない**（感想を語り合う回（`questionType` = impression で、指示が `introduce` / `plain`）= wink、それ以外 = neutral）。嘘の回だけ顔が変わると答え合わせのヒントになり、本当らしい嘘が成り立たなくなる。
+
 ### 答え合わせ（会話の終わりに真偽を明かす）
 
 `/reveal/[sessionId]`（`components/reveal/`）+ `app/api/sessions/[sessionId]/reveal`。キャラの口からではなく、アプリの外側から種明かしする（キャラが嘘を認めない原則とは両立する）。
@@ -195,7 +201,7 @@ data/
   chiikawa/work.json                ← コードはこの中身を知らない
   momotaro/cards.jsonl              次段構想用（未使用）
 ml/                                 claims 抽出の LoRA（合成・学習・評価・推論サーバ serve.py）。アプリとは別プロセス
-public/character/                   シオリのドット絵（アバター各サイズ）
+public/character/                   シオリ・としおのドット絵（アバター各サイズ）。シオリは表情差分つき（下の「表情」）
 docs/specs/                         仕様書
 pictures/                           デザイン素材・スケッチ
 ```
