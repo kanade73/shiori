@@ -240,6 +240,10 @@ export type TurnDirective =
   | { kind: "support_theory"; phase: SessionPhase; theory: string }
   /** どの場面の話かまだ分からない（話題が決まらず、見た範囲も分からない）。場面を語らず聞き返す（issue #32） */
   | { kind: "ask_scene"; phase: SessionPhase }
+  /** 登場人物の名前と1文字違いの語がある（「ハコワレ」）。誰のことか短く聞き返し、この回は設定を語らない（issue #1 ナックルベンチ） */
+  | { kind: "confirm_name"; phase: SessionPhase; corrections: NameCorrection[] }
+  /** 発話の固有名詞が別の作品のもの（「ナックル」「ユピー」→ HUNTER×HUNTER）。別の作品の話ではないかと指摘し、本作の設定も相手の作品の中身も語らない */
+  | { kind: "other_work"; phase: SessionPhase; otherWork: string; names: string[] }
   | { kind: "plain"; phase: SessionPhase };
 
 export type FabricatedFactStatus = "active" | "contradicted" | "retired";
@@ -272,11 +276,18 @@ export type FabricatedRelation = {
 
 export type QuestionType = "impression" | "memory_check" | "theory" | "fact_question" | "doubt" | "other";
 
+/** 登場人物の名前の誤字（「ハコワレ」）と、それが指すとみられる正式名（「ハチワレ」）。lib/server/names.ts */
+export type NameCorrection = { written: string; entity: string };
+
 export type UserMessageAnalysis = {
   mentionedCharacters: string[];
   mentionedEvents: string[];
   sentiment: string;
   questionType: QuestionType;
+  /** 名前の誤字。`mentionedCharacters` には正式名の側が入る。無ければ空か省略 */
+  nameCorrections?: NameCorrection[];
+  /** 作品の名前のどれでもない見知らぬカタカナの語（別の作品の手がかりの候補） */
+  unknownNames?: string[];
 };
 
 export type ResponseStrategy =

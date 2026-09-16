@@ -1,4 +1,4 @@
-import { analyzeUserMessage } from "./analyze";
+import { analyzeUserMessage, correctUserMessage } from "./analyze";
 import { generateReply } from "./generate";
 import { extractClaims } from "./extract";
 import { countUserMessages, decideDirective, decideSessionPhase, isSceneKnown, toshioCooldownTurns } from "./directive";
@@ -8,7 +8,10 @@ import { decideExpression } from "./expression";
 import { getActiveFabricatedFacts, retrieveCanonFacts, retrieveFabricatedFacts } from "../retrieval";
 import { episodeBoundaryFor, isSameTopic, lookupSessionTopic } from "../topic";
 import { detectTopicShift } from "../topic-shift";
-import { getCanonFactsUpTo, getEntities } from "../works";
+import { detectOtherWork, type OtherWorkDetection } from "../other-work";
+import { unknownKatakanaWords } from "../names";
+import { properNounCandidates } from "../morph";
+import { getArcs, getCanonFactsUpTo, getEntities } from "../works";
 import { getCreatorProfiles } from "../creator";
 import { buildNormalizer, findDuplicate, isFabricated, normalizeTriple } from "../claims";
 import { createTurnEmitter, type TraceClaim } from "../events";
@@ -140,21 +143,46 @@ export async function runConversationPipeline(params: {
   const { workId, workTitle, sessionId, history, userMessage } = params;
   const pastTopics = params.pastTopics ?? [];
 
+  // issue #1 ナックルベンチ。登場人物の名前の誤字（「ハコワレ」）は正式名に直した文で資料を探し、
+  // 本作の名前でも資料の語でもない固有名詞（「ナックル」「ユピー」）は別の作品の話かを先に判定する。
+  // 別の作品の話なら、話題の特定・切り替わりの判定（資料の検索・埋め込み）は走らせない
+  const corrected = correctUserMessage(workId, userMessage);
+  // 漢字・かな混じりの名前（炭治郎・五条悟）は形態素解析で切り出す。辞書が読めなくても会話は止めない
+  const properNouns = await properNounCandidates(userMessage).catch((error) => {
+    console.warn("形態素解析に失敗（カタカナの語だけで続ける）:", error);
+    return [] as string[];
+  });
+  const otherWork: OtherWorkDetection | null = await detectOtherWork({
+    workId,
+    workTitle,
+    userMessage,
+    unknownNames: unknownKatakanaWords({
+      userMessage,
+      entities: getEntities(workId),
+      arcs: getArcs(workId),
+      workTitle,
+      corrections: corrected.corrections,
+      extraWords: properNouns,
+    }),
+  });
+
   // 話題が決まるまでは発話のたびに外部の知識源で調べる。決まった後は、話題が切り替わったと
   // 判定したとき（ゲート → 判定役）だけ、判定役が組み直した検索語で引き直す
   let topic = params.topic ?? null;
   let newTopic: SessionTopic | null = null;
   let previousTopic: SessionTopic | null = null;
-  if (!topic) {
-    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage, ordinal: pastTopics.length + 1 });
+  if (otherWork) {
+    // 別の作品の話。本作の場面としては調べない
+  } else if (!topic) {
+    newTopic = await lookupSessionTopic({ workId, workTitle, userMessage: corrected.text, ordinal: pastTopics.length + 1 });
     topic = newTopic;
   } else {
-    const shift = await detectTopicShift({ workId, workTitle, topic, history, userMessage });
+    const shift = await detectTopicShift({ workId, workTitle, topic, history, userMessage: corrected.text });
     if (shift) {
       const found = await lookupSessionTopic({
         workId,
         workTitle,
-        userMessage,
+        userMessage: corrected.text,
         query: shift.query,
         ordinal: pastTopics.length + 2,
       });
@@ -174,7 +202,7 @@ export async function runConversationPipeline(params: {
   const emit = createTurnEmitter(sessionId, turnId);
   emit({ stage: "user", text: userMessage });
 
-  const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage });
+  const analysis = analyzeUserMessage({ workId, currentEpisode, userMessage, workTitle, properNouns });
   emit({
     stage: "analyze",
     mentionedCharacters: analysis.mentionedCharacters,
@@ -202,6 +230,7 @@ export async function runConversationPipeline(params: {
     relevantFacts: promptFabricatedFacts,
     phase,
     sceneKnown: isSceneKnown(topic, currentEpisode),
+    otherWork,
   });
   emit({
     stage: "directive",
@@ -209,6 +238,12 @@ export async function runConversationPipeline(params: {
     phase,
     doubted: directive.kind === "layer" ? directive.doubted.map((f) => f.claim) : [],
     detailCount: directive.kind === "layer" ? directive.detailCount : undefined,
+    note:
+      directive.kind === "other_work"
+        ? directive.otherWork
+        : directive.kind === "confirm_name"
+          ? directive.corrections.map((c) => `${c.written}→${c.entity}`).join("・")
+          : undefined,
   });
 
   const genArgs = {
@@ -245,11 +280,14 @@ export async function runConversationPipeline(params: {
     }
   };
 
+  // 別の作品を指摘する回・名前を聞き返す回は、本作の設定を語らせていない。返答から主張を取り出すと
+  // 相手の作品の登場人物についての文が「本作の嘘」として保存されるので、取り出しをしない
+  const recordsClaims = directive.kind !== "other_work" && directive.kind !== "confirm_name";
   const respond = async (feedback?: string): Promise<GenerationResult> => {
     attempt += 1;
     const message = await generateReply({ ...genArgs, feedback });
     emit({ stage: "generate", attempt, message });
-    return { message, claims: await extract(message), strategy: "no_new_lie" };
+    return { message, claims: recordsClaims ? await extract(message) : [], strategy: "no_new_lie" };
   };
 
   const evaluate = (claims: Claim[]) => {
@@ -343,11 +381,19 @@ export async function runToshioInterjection(params: {
   generation: GenerationResult;
   /** 終盤はクールダウンを外して毎ターン割り込めるようにする */
   phase: SessionPhase;
+  /** シオリへの「今回の指示」。別の作品の指摘・名前の聞き返しの回には割り込まない */
+  directive?: TurnDirective;
   /** シオリと同じターンとしてパネルに並べるための id */
   turnId?: string;
 }): Promise<string | null> {
-  const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation, phase } = params;
+  const { workId, workTitle, sessionId, currentEpisode, topic, history, userMessage, analysis, generation, phase, directive } = params;
   const emit = createTurnEmitter(sessionId, params.turnId ?? crypto.randomUUID());
+
+  // 別の作品の話・名前の誤字の回は、シオリが聞き返し・指摘だけをしている。本作の場面の考察を重ねる材料が無い
+  if (directive && (directive.kind === "other_work" || directive.kind === "confirm_name")) {
+    emit({ stage: "toshio", interjected: false, skipped: "material" });
+    return null;
+  }
 
   // どの場面か分からないうちは、シオリは場面を聞き返している。としおは evaluate を通らないので、
   // 本物の設定が1件も無いまま場面の考察を語らせない（issue #32）
