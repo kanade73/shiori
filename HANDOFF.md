@@ -1,3 +1,9 @@
+## LAN からの送信で `crypto.randomUUID is not a function`（2026-09-16、dev 直下の未コミット変更）
+
+- 同じ LAN の http://10.60.60.104:3000 で発話を送ると `ChatApp.handleSend` が落ちていた。`crypto.randomUUID` は secure context（https / localhost）限定で、http の LAN アドレスでは未定義。
+- `lib/client/id.ts` に `localId()` を追加（randomUUID → getRandomValues で v4 を組む → Date+Math.random の順で代替）。`components/chat/ChatApp.tsx` の3か所を置き換え。サーバー側（store.ts / pipeline.ts）は Node なのでそのまま。
+- tsc / eslint 通過。実機（LAN）での動作確認は未実施。
+
 ## 嘘判定の修正: 本物の一文をなぞった主張が嘘に塗られていた（2026-09-16、`fix/canon-restatement`、PR → dev）
 
 - 実機セッション（『プリズン』編）で「うさぎがそのスプーンを使って、こっそりと脱出用の穴を掘っていた」が嘘扱いになった。記録係が一文を did / has / secret の3つに割り、did だけが topic-1-4 に一致、has と secret は object / relation が違って fabricated → 答え合わせは重なる抜き出しで嘘を優先するので文全体が嘘に見えた。
