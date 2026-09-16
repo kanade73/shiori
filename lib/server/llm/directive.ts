@@ -179,8 +179,16 @@ export function decideDirective(params: {
   phase: SessionPhase;
   /** どの場面の話か分かっているか（isSceneKnown）。分からなければ場面を聞き返させる */
   sceneKnown?: boolean;
+  /** 発話の固有名詞が別の作品のものだった（other-work.ts）。指摘だけして本作の設定は語らせない */
+  otherWork?: { otherWork: string; names: string[] } | null;
 }): TurnDirective {
-  const { analysis, history, fabricatedFacts, relevantFacts, phase, userMessage = "", sceneKnown = true } = params;
+  const { analysis, history, fabricatedFacts, relevantFacts, phase, userMessage = "", sceneKnown = true, otherWork = null } = params;
+  // issue #1 ナックルベンチ。別の作品の話・名前の誤字は、場面が分かっていても先に受け止める
+  // （「ナックルとユピーの戦い」に本作の場面の細部を混ぜたり、「ハコワレ」を黙ってハチワレとして語ったりしない）
+  if (otherWork) return { kind: "other_work", phase, otherWork: otherWork.otherWork, names: otherWork.names };
+  if (analysis.nameCorrections && analysis.nameCorrections.length > 0) {
+    return { kind: "confirm_name", phase, corrections: analysis.nameCorrections };
+  }
   if (!sceneKnown) return { kind: "ask_scene", phase };
 
   const theory = theoryInQuestion({ userMessage, history });

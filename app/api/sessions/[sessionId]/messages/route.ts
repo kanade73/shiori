@@ -75,6 +75,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           analysis,
           generation,
           evaluation,
+          directive,
           phase,
           expression,
           regenerated,
@@ -157,6 +158,7 @@ export async function POST(req: Request, context: { params: Promise<{ sessionId:
           analysis,
           generation,
           phase,
+          directive,
           turnId,
         });
         if (toshioMessage) {

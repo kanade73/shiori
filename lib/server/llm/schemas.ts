@@ -52,6 +52,13 @@ export const TopicRouteSchema = z.object({
 
 export type TopicRoute = z.infer<typeof TopicRouteSchema>;
 
+/** 別の作品の判定役の出力（issue #1 ナックルベンチ）。本作の話なら otherWork は空文字 */
+export const OtherWorkJudgementSchema = z.object({
+  otherWork: z.string(),
+});
+
+export type OtherWorkJudgement = z.infer<typeof OtherWorkJudgementSchema>;
+
 // generate.ts はプレーンテキストを返すだけなのでスキーマを持たない
 // （返答文以外を出させないことが分離の狙い）。
 

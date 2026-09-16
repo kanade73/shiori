@@ -4,6 +4,20 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: issue #1 の「ナックルベンチ」を通す（`feat/knuckle-bench`、dev `53acca0` から切った。PR → `dev`）
+
+issue #1 のコメントにある想定会話（ユーザー指示で「ナックルベンチ」と呼んでいる）。ルート1: 「草むしり検定はハコワレが頑張っていてとても良かった。」→「ハコワレ？ ハチワレのこと？」→「ナックルとユピーの戦いは感動したよね。」→「さっきからハンターハンターの話じゃない？」。ルート2: 訂正を受け入れた「そうだった。間違えた。」の後はハチワレの話として続く。仕組みは AGENTS.md の「名前の誤字と別の作品」節が正。
+
+- 新規: `lib/server/names.ts`（カタカナ語の抽出・Levenshtein 距離 1 の名前の誤字・見知らぬカタカナ語）、`lib/server/other-work.ts`（ゲート: 外部資料のカタカナ語彙で落とす → 判定役）、`lib/server/llm/other-work.ts`（判定役。`GEMINI_ROUTER_MODEL`、出力 `{ otherWork }`）
+- 変更: `analyze.ts`（`correctUserMessage`、`nameCorrections` / `unknownNames`）、`directive.ts`（`other_work` → `confirm_name` → `ask_scene` → 従来の順）、`generate.ts`（2つの指示文 + ペルソナに「名前の間違い・別の作品」節）、`pipeline.ts`（names → other-work → topic の順。別の作品なら topic を飛ばす。資料の検索には正式名に直した文。両 directive では extract を呼ばず、としおも割り込まない）、`route.ts`（としおに `directive` を渡す）、`events.ts` / devpanel `trace.ts`（directive の `note`。パネルに「名前を聞き返す（ハコワレ→ハチワレ）」「別の作品だと指摘（HUNTER×HUNTER）」）
+- 検証: `npm test` 452件（`names.test.ts`・`other-work.test.ts`・`pipeline.knuckle.test.ts`・directive の4件を追加）、`tsc`、eslint 通過。実 API（3006 番・スクラッチの `DATA_DIR`）で通し: ルート1は「ハコワレ? ハチワレのこと?」→「それ、HUNTER×HUNTERの話じゃない?」、ルート2は2発話目で草むしり検定のハチワレの細部（嘘2件）+ としおの割り込み。判定役の単体は「ゴン・キルア」→ HUNTER×HUNTER、「サトシ・ピカチュウ」→ ポケットモンスター、「ポシェットがボロボロ」→ 本作
+- 残り: ルート2の2発話目は issue の文面「確かにハチワレは草むしり検定で頑張っていたよね」ではなく、訂正に触れずいつもの流れ（細部の嘘）に入る。訂正を受け入れたことに一言触れさせるなら、直前の directive（confirm_name）を履歴から辿る仕組みが要る（directive は保存していない）。ゲートの一般語のリスト（`COMMON_KATAKANA`）は手書きなので、実会話で判定役が無駄に呼ばれる語が出たら足す（`[other-work]` のログで分かる）。ひらがな・漢字の誤字（「はこわれ」「宇佐木」）は見ない
+- このブランチには、ユーザーが `chore/public-ready` で未コミットだった HANDOFF.md の Topa'z 節も入っている（`next.config.mjs` の `allowedDevOrigins`・`tsconfig.json`・`docs/submission/` は未コミットのまま作業ツリーに残してある。stash `public-ready wip` にも同じものがある）
+
+## 2026-09-16: Topa'z 投稿の下書きに LoRA 節を追記（`chore/public-ready` 上、未コミット）
+- `docs/submission/topaz-post.md` は `feat/shiori-conversation-room` の `fd02521` にコミット済みだったが、このブランチには無かったので復元し、claims 抽出の LoRA（origin/dev の `ml/README.md` の数値: Qwen3-1.7B + LoRA 厳密F1 0.267・1〜2秒、4B は 0.392・6秒、教師データ 3062件）の解説節を追記。10項目の4番を「抽出の分離（生成とは別呼び出し、grounding はコードが決める）」に直した
+- Topa'z の言語タグは TypeScript + Python（`ml/` が実体）を推奨
+- ブラウザ拡張は未接続のままで、Topa'z のフォームへの入力はユーザーが手で行う
 ## 2026-09-16: シオリの口調を「サバサバ・感情の起伏なし」に寄せ、三点リーダーをやめた（`fix/shiori-tone`、PR #47 → dev）
 
 ユーザーの指摘「三点リーダーを使いすぎ。もっとサバサバして感情の起伏が少ない方がいい」。出どころは、モデルへの直接の指示ではなく **開始の定型文 `……今日は何について話したい?`（履歴の最初の model 発話として毎回渡る）と、ペルソナ内の同じ引用、および「ダウナー」という性格付け** で、モデルがそれを真似ていた。

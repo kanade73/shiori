@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import type { PhaseLimits } from "./llm/directive";
 import type { ExtractBackend } from "./llm/extract";
 import type { RevealGraph } from "./reveal/types";
-import type { ClaimGrounding, ClaimRelation, QuestionType, ResponseStrategy, SessionPhase } from "./types";
+import type { ClaimGrounding, ClaimRelation, QuestionType, ResponseStrategy, SessionPhase, TurnDirective } from "./types";
 
 /**
  * 開発者モードのパネル（チャットの右側）に、パイプラインの各段の結果をそのまま
@@ -27,7 +27,15 @@ export type TraceClaim = {
 export type PipelineEvent = { turnId: string; at: string } & (
   | { stage: "user"; text: string }
   | { stage: "analyze"; mentionedCharacters: string[]; mentionedEvents: string[]; questionType: QuestionType }
-  | { stage: "directive"; kind: "introduce" | "layer" | "support_theory" | "ask_scene" | "plain"; phase: SessionPhase; doubted: string[]; detailCount?: number }
+  | {
+      stage: "directive";
+      kind: TurnDirective["kind"];
+      phase: SessionPhase;
+      doubted: string[];
+      detailCount?: number;
+      /** confirm_name: 誤字→正式名、other_work: 作品名。パネルの1行サマリに添える */
+      note?: string;
+    }
   | { stage: "generate"; attempt: number; message: string }
   | { stage: "extract"; attempt: number; claims: TraceClaim[]; backend?: ExtractBackend; failed?: boolean }
   | { stage: "evaluate"; attempt: number; flagged: boolean; reason?: string; details: string[] }
