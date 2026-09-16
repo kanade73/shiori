@@ -209,7 +209,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id
-              ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
+              ? { ...m, isStreaming: false, content: m.content || "ちょっと分からなくなった。もう一度言って。" }
               : m,
           ),
         );

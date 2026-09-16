@@ -19,7 +19,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/lib/server/llm/pipeline", () => ({
   runConversationPipeline: mocks.runConversationPipeline,
   runToshioInterjection: mocks.runToshioInterjection,
-  fallbackMessage: () => "……ちょっと分からなくなった。もう一度言って。",
+  fallbackMessage: () => "ちょっと分からなくなった。もう一度言って。",
 }));
 vi.mock("@/lib/server/store", () => ({
   appendMessage: mocks.appendMessage,
@@ -208,9 +208,9 @@ describe("POST /api/sessions/[id]/messages: 1回の送信でシオリ→とし�
     const events = await collect(await post());
     spy.mockRestore();
     expect(mocks.runToshioInterjection).not.toHaveBeenCalled();
-    expect(bubbles(events)).toEqual([["shiori", "……ちょっと分からなくなった。もう一度言って。"]]);
+    expect(bubbles(events)).toEqual([["shiori", "ちょっと分からなくなった。もう一度言って。"]]);
     expect(events.map((e) => e.event).filter((e) => e !== "token")).toEqual(["message-start", "metadata", "message-end", "done"]);
-    expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "……ちょっと分からなくなった。もう一度言って。", "shiori", "neutral");
+    expect(mocks.appendMessage).toHaveBeenLastCalledWith("s1", "assistant", "ちょっと分からなくなった。もう一度言って。", "shiori", "neutral");
     // 落ちた回も message-start に表情（素の顔）が付く
     expect(events[0].data).toEqual({ speaker: "shiori", expression: "neutral" });
   });

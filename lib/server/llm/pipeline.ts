@@ -105,8 +105,8 @@ export function historyForTopic(history: Message[], topic: SessionTopic | null):
   return history.filter((m) => m.createdAt >= topic.since!);
 }
 
-const FALLBACK_MESSAGE = "……ちょっと分からなくなった。もう一度言って。";
-const SAFE_UNCERTAIN_MESSAGE = "……そこはちょっとうまく思い出せない。別のところの話、聞かせて。";
+const FALLBACK_MESSAGE = "ちょっと分からなくなった。もう一度言って。";
+const SAFE_UNCERTAIN_MESSAGE = "そこはうまく思い出せない。別のところの話、聞かせて。";
 
 /**
  * (topic lookup until the session has one, topic-shift check after) ->
