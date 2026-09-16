@@ -112,6 +112,10 @@ const config: Config = {
           "0%": { opacity: "0", transform: "translateY(4px)" },
           "100%": { opacity: "1", transform: "translateY(0)" },
         },
+        "delete-dialog-exit": {
+          "0%, 30%": { opacity: "1", transform: "translateY(0) scale(1)" },
+          "100%": { opacity: "0", transform: "translateY(-12px) scale(0.96)" },
+        },
         "typing-dot": {
           "0%, 80%, 100%": { opacity: "0.25", transform: "translateY(0)" },
           "40%": { opacity: "1", transform: "translateY(-2px)" },
@@ -124,6 +128,7 @@ const config: Config = {
       animation: {
         tilt: "tilt 9s ease-in-out infinite",
         "fade-up": "fade-up 0.3s steps(4, end)",
+        "delete-dialog-exit": "delete-dialog-exit 0.9s steps(9, end) forwards",
         "typing-dot": "typing-dot 1.2s steps(2, end) infinite",
         blink: "blink 1s steps(2, end) infinite",
       },

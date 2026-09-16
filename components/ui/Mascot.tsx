@@ -10,8 +10,8 @@ interface MascotProps {
   variant?: MascotVariant;
   /** 話者。画像の出し分けに使う。既定はシオリ。 */
   character?: Speaker;
-  /** シオリの表情（pictures/ の差分から作った画像。今はウインクだけ）。としおには無い。既定は neutral */
-  expression?: ShioriExpression;
+  /** シオリの表情（pictures/ の差分から作った画像）。sad は削除確認専用。としおには無い。既定は neutral */
+  expression?: ShioriExpression | "sad";
   animated?: boolean;
   delay?: number;
   className?: string;
@@ -52,7 +52,7 @@ function pickAvatarSource(size: number, character: Speaker) {
  * 表情つきの画像は `/character/avatar-<expression>-<size>.png` / `display-<expression>-512.png`。
  * neutral は元からある無印のファイル。としおには表情差分が無いので常に無印
  */
-function withExpression(src: string, character: Speaker, expression: ShioriExpression): string {
+function withExpression(src: string, character: Speaker, expression: ShioriExpression | "sad"): string {
   if (character !== "shiori" || expression === "neutral") return src;
   return src.replace(/\/(avatar|display)-/, `/$1-${expression}-`);
 }

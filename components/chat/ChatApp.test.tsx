@@ -282,17 +282,27 @@ describe("ChatApp: 過去のセッションの削除", () => {
     const dialog = await openDialog("前の会話");
     fireEvent.click(within(dialog).getByRole("button", { name: "はい" }));
 
+    expect(within(dialog).getByAltText("シオリ").getAttribute("src")).toBe("/character/display-sad-512.png");
+    expect(dialog.className).toContain("animate-delete-dialog-exit");
+    expect(mocks.deleteSession).not.toHaveBeenCalled();
     await waitFor(() => expect(screen.queryByRole("button", { name: "「前の会話」のセッションを削除" })).toBeNull());
     expect(mocks.deleteSession).toHaveBeenCalledWith("s2");
     expect(screen.queryByRole("alertdialog")).toBeNull();
     expect(mocks.push).not.toHaveBeenCalled();
   });
 
-  it("「いいえ」・Esc・背景のクリックでは消さずに閉じる", async () => {
-    fireEvent.click(within(await openDialog("前の会話")).getByRole("button", { name: "いいえ" }));
-    expect(screen.queryByRole("alertdialog")).toBeNull();
+  it("「いいえ」でシオリがウィンクして退場してから、消さずに閉じる", async () => {
+    const dialog = await openDialog("前の会話");
+    fireEvent.click(within(dialog).getByRole("button", { name: "いいえ" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "「前の会話」のセッションを削除" }));
+    expect(within(dialog).getByAltText("シオリ").getAttribute("src")).toBe("/character/display-wink-512.png");
+    expect(dialog.className).toContain("animate-delete-dialog-exit");
+    expect(mocks.deleteSession).not.toHaveBeenCalled();
+    await waitFor(() => expect(screen.queryByRole("alertdialog")).toBeNull());
+  });
+
+  it("Esc・背景のクリックでは消さずに閉じる", async () => {
+    await openDialog("前の会話");
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByRole("alertdialog")).toBeNull();
 
