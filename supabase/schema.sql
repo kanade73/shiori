@@ -132,6 +132,10 @@ as $$
   limit p_k;
 $$;
 
+-- PostgREST は関数の一覧をキャッシュしているので、作り直したら読み直させる
+-- （これを忘れると `Could not find the function ... in the schema cache` になる）
+notify pgrst, 'reload schema';
+
 -- --- 作り手の作風 ---------------------------------------------------------
 
 -- 記事から1回だけ抜いた CreatorProfile。作品ごとに再取得しないためのキャッシュ

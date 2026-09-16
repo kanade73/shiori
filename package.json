@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "eslint .",
     "test": "vitest run",
-    "embed": "tsx scripts/embed-chunks.ts"
+    "embed": "tsx scripts/embed-chunks.ts",
+    "db:check": "tsx scripts/check-db.ts"
   },
   "dependencies": {
     "@google/genai": "^2.22.0",
