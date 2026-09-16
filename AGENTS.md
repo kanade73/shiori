@@ -142,7 +142,7 @@
 
 **キーの切り替え（issue #11）**: `GEMINI_API_KEY_2`（先輩のキー）もあれば、無料枠の上限（429）に達したキーからもう1本に切り替え、同じリクエストをすぐ送り直す。以後はそちらを使い続け、そちらも尽きたら元のキーに戻る（`lib/server/llm/key-pool.ts`）。休ませるのは (キー, モデル) の組で、1日の上限なら太平洋時間の0時まで、1分の上限ならエラーに書かれた待ち時間だけ。両方休み中なら送らずに投げ、今の fallback に任せる。混雑（503）では切り替えない。無効なキーはプロセスの間ずっと外す。`client.ts` の `ai` がこれを包んでいるので、呼び出し側は SDK と同じ `ai.models.generateContent` / `embedContent` のまま使う（`ai` に他のメソッドを足すときは包みにも足すこと）。SDK の `retryOptions` は付けない（429 を待ってから投げるので切り替えが遅れる）。無料枠はプロジェクトごとなので、2本のキーは別アカウントで作ったものでないと意味がない。ログにはキーの文字列ではなく環境変数名を出す
 
-**Gemini が使えないときの逃げ先（Groq）**: `GROQ_API_KEY` があれば、Gemini の生成（`ai.models.generateContent`）が**キーの問題で使えないときだけ** Groq に切り替えて同じリクエストを送り直す（`lib/server/llm/groq.ts`）。切り替える条件は「`GEMINI_API_KEY` が1本も無い」「枠切れ（429）・無効なキー（401/403）で全部休み中」「混雑（503）」の3つで、それ以外の失敗（プロンプトやスキーマの誤りなど）は投げ直す（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）。Groq は OpenAI 互換なので、`systemInstruction` / `responseSchema` / `maxOutputTokens` を messages・`response_format.json_schema`（strict）・`max_completion_tokens` に訳す。呼び出し側は `ai` を使うだけで、どちらに向いたかを知らない。モデルは `GROQ_MODEL`（既定 `openai/gpt-oss-120b`。JSON schema の strict に対応し、文脈 131K）で、Gemini 側のようにモデルを使い分けない（Groq の無料枠は組織ごと・モデルごとで、キーを増やしても増えない）。**埋め込み（`embedContent`）は Groq に無いので逃がさない**（失敗すると段落の検索が文字 bigram だけになる）。候補の比較は `docs/notes/llm-fallback-options.md`
+**Gemini が使えないときの逃げ先（Groq）**: `GROQ_API_KEY` があれば、Gemini の生成（`ai.models.generateContent`）が**キーの問題で使えないときだけ** Groq に切り替えて同じリクエストを送り直す（`lib/server/llm/groq.ts`）。切り替える条件は「`GEMINI_API_KEY` が1本も無い」「枠切れ（429）・無効なキー（401/403）で全部休み中」「混雑（503）」の3つで、それ以外の失敗（プロンプトやスキーマの誤りなど）は投げ直す（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）。Groq は OpenAI 互換なので、`systemInstruction` / `responseSchema` / `maxOutputTokens` を messages・`response_format.json_schema`（strict）・`max_completion_tokens` に訳す。呼び出し側は `ai` を使うだけで、どちらに向いたかを知らない。モデルは呼び出し口ごとに分ける。呼び出し側が `ai.models.generateContent(params, kind)` の第2引数で口を言う（Gemini 側は会話と資料係が同じモデル名なので、名前では分けられない）。既定はシオリ（`GROQ_MODEL`）と としお（`GROQ_TOSHIO_MODEL`）が `openai/gpt-oss-120b`、資料係・作り手（`GROQ_TOPIC_MODEL`）と 取り出し（`GROQ_EXTRACT_MODEL`）が `qwen/qwen3.8-27b`、判定役（`GROQ_ROUTER_MODEL`）が `openai/gpt-oss-20b`。実測した無料枠は**1分あたり 8,000トークン・出力だけなら 1,000トークン（どちらもモデルごとに別の枠）**、**1日あたり 1,000リクエスト（モデル共通）**で、散らすと1分の余裕は増えるが1日の回数は増えない（1発話3〜4回 = 1日およそ250発話）。使えるモデルは `openai/gpt-oss-120b` / `openai/gpt-oss-20b` / `qwen/qwen3.8-27b` の3つ（llama 系と minimax はこのキーでは 404）。`max_completion_tokens` は出力の枠を超えるだけで `429 Request too large` になるので `groq.ts` が 900 に丸める。**小さいモデル（20b）に資料係や取り出しを回さないこと**（大きいスキーマに応えられず `400 Failed to validate JSON` になる）。429 は `retry-after` が6秒以内なら1回だけ待って送り直す。**埋め込み（`embedContent`）は Groq に無いので逃がさない**（失敗すると段落の検索が文字 bigram だけになる）。候補の比較は `docs/notes/llm-fallback-options.md`
 
 モデルは `GEMINI_MODEL` で差し替え可能。既定は `gemini-3.5-flash-lite`（Google AI Studio の無料枠で使える。`gemini-3.6-flash` は無料枠が1日20リクエストほどで尽きる。`gemini-2.5-flash` は新規ユーザー向けに廃止済み）。API 呼び出しは1発話あたり generate の1回（差し戻し時は2回）、手元の推論を設定していなければ主張の取り出しで同じ回数（別モデル）、としおが割り込むときに+1回、話題の場面が決まるまでの発話と話題が切り替わった発話で資料係の+1回、切り替わりのゲートを通った発話で判定役の+1回（別モデル）、話題を調べる発話（話題が決まるまでは挨拶も含む）で検索語の埋め込み+1件（別モデル）、作品の段落を初めて埋め込むときに段落の件数分（裏で1分80件ずつ）。
 
@@ -231,7 +231,11 @@ OLLAMA_HOST=             # 省略可。Ollama の URL。既定 http://localhost:
 EXTRACT_ENDPOINT=        # 省略可。主張の取り出しを自前の LoRA 推論サーバで行う（例 http://localhost:8123）
 GEMINI_EXTRACT_MODEL=    # 省略可。上の2つがどちらも無いときに取り出しに使う Gemini のモデル。既定 gemini-3.1-flash-lite
 GROQ_API_KEY=            # 省略可。Gemini が使えない（キー無し・枠切れ・混雑）ときの逃げ先
-GROQ_MODEL=              # 省略可。逃げ先のモデル。既定 openai/gpt-oss-120b
+GROQ_MODEL=              # 省略可。シオリの返答の逃げ先。既定 openai/gpt-oss-120b
+GROQ_TOSHIO_MODEL=       # 省略可。としおの逃げ先。既定 openai/gpt-oss-120b
+GROQ_TOPIC_MODEL=        # 省略可。資料係・作り手の逃げ先。既定 qwen/qwen3.8-27b
+GROQ_EXTRACT_MODEL=      # 省略可。主張の取り出しの逃げ先。既定 qwen/qwen3.8-27b
+GROQ_ROUTER_MODEL=       # 省略可。判定役の逃げ先。既定 openai/gpt-oss-20b
 GEMINI_ROUTER_MODEL=     # 省略可。話題の切り替わりの判定役。既定 gemini-3.1-flash-lite
 GEMINI_EMBEDDING_MODEL=  # 省略可。外部資料のベクトル検索。既定 gemini-embedding-001
 DATA_DIR=                # 省略可。db.json とベクトルDB（vectors/）の置き場所。本番はボリュームのマウント先（/app/.data）

@@ -1,6 +1,14 @@
 import { GoogleGenAI } from "@google/genai";
 import { createKeyRotation, fingerprint, newKeyRotationState, type KeyRotationState } from "./key-pool";
-import { groqEnabled, groqGenerateContent, groqModel, isGeminiUnusable, type GeminiLikeParams, type TextResponse } from "./groq";
+import {
+  groqEnabled,
+  groqGenerateContent,
+  groqModel,
+  isGeminiUnusable,
+  type GeminiLikeParams,
+  type GroqKind,
+  type TextResponse,
+} from "./groq";
 
 // The SDK is given ONLY keys from the environment - never an ambient
 // credential - so nothing is sent unless someone has deliberately put
@@ -33,24 +41,29 @@ const withApiKey = createKeyRotation(keys, { state: (shared.__geminiKeyRotation 
 
 type Models = GoogleGenAI["models"];
 
+
 /**
  * Gemini が使えないときは Groq に逃がす（`GROQ_API_KEY` があるときだけ）。
  * 逃がすのは「キーが1本も入っていない」「枠切れ・無効なキーで2本とも休み中」「混雑（503）」のときで、
  * それ以外の失敗は投げ直す（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）。
  * 逃げ先には埋め込みが無いので、embedContent は Gemini のままにしてある。
  */
-async function generateWithFallback(params: Parameters<Models["generateContent"]>[0]): Promise<TextResponse> {
+async function generateWithFallback(
+  params: Parameters<Models["generateContent"]>[0],
+  /** どの呼び出し口か。逃げ先のモデルを分けるためだけに使い、Gemini に送るときは見ない */
+  kind: GroqKind = "chat",
+): Promise<TextResponse> {
   if (!llmEnabled) {
     if (!groqEnabled()) return withApiKey(params.model, (client) => client.models.generateContent(params));
-    console.warn(`[groq] GEMINI_API_KEY が無いので ${groqModel()} に送る`);
-    return groqGenerateContent(params as GeminiLikeParams);
+    console.warn(`[groq] GEMINI_API_KEY が無いので ${groqModel(kind)} に送る（${kind}）`);
+    return groqGenerateContent(params as GeminiLikeParams, kind);
   }
   try {
     return await withApiKey(params.model, (client) => client.models.generateContent(params));
   } catch (error) {
     if (!groqEnabled() || !isGeminiUnusable(error)) throw error;
-    console.warn(`[groq] Gemini（${params.model}）が使えないので ${groqModel()} に切り替える: ${String(error).slice(0, 200)}`);
-    return groqGenerateContent(params as GeminiLikeParams);
+    console.warn(`[groq] Gemini（${params.model}）が使えないので ${groqModel(kind)} に切り替える: ${String(error).slice(0, 200)}`);
+    return groqGenerateContent(params as GeminiLikeParams, kind);
   }
 }
 

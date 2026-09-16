@@ -204,14 +204,18 @@ ${formatDirective(directive)}`;
     ? `${PERSONA_PROMPT}\n\n${contextBlock}\n\n# 直前の返答の差し戻し理由\n${feedback}\n上記の問題を避けて、もう一度返答してください。`
     : `${PERSONA_PROMPT}\n\n${contextBlock}`;
 
-  const response = await ai.models.generateContent({
-    model: GENERATION_MODEL,
-    contents: toGeminiContents(history, userMessage),
-    config: {
-      systemInstruction: system,
-      maxOutputTokens: 1024,
+  const response = await ai.models.generateContent(
+    {
+      model: GENERATION_MODEL,
+      contents: toGeminiContents(history, userMessage),
+      config: {
+        systemInstruction: system,
+        maxOutputTokens: 1024,
+      },
     },
-  });
+    // 逃げ先（Groq）でどのモデルに送るか。Gemini に送るときは見ない
+    "chat",
+  );
 
   const text = (response.text ?? "").trim();
   if (!text) throw new Error("Empty generation output");

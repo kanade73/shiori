@@ -12,9 +12,23 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 - 切り替える条件は `isGeminiUnusable`: `AllKeysRestingError`（2本とも休み中）・`classifyKeyFailure` が拾う 429/401/403・503/500（混雑）。**それ以外は投げ直す**（逃げ先でも同じように失敗するので、隠すと原因が分からなくなる）
 - `GEMINI_API_KEY` が1本も無ければ、はじめから Groq に送る。`GROQ_API_KEY` が無ければ今までどおり（Gemini の失敗がそのまま出て、パイプラインが定型文に落とす）
 - **埋め込みは逃がさない**（Groq に無い）。失敗すると段落の検索が bigram だけになる
-- モデルは `GROQ_MODEL`（既定 `openai/gpt-oss-120b`）の1つだけ。Groq の無料枠は組織ごと・モデルごと（30 req/分・14,400 req/日）で、キーを増やしても増えない
-- 検証: `npm test` 429件（`groq.test.ts` 15件・`client.test.ts` 7件を追加）・`tsc --noEmit`・eslint 通過。**実際の Groq のキーではまだ試していない**（`GROQ_API_KEY` を取って `.env.local` に入れ、Gemini のキーを空にすれば通しで確かめられる）
-- 未確認: シオリの口調が `openai/gpt-oss-120b` で保てるか（日本語の質は要検証。メモでは Kimi K2 系・Qwen3 系が候補）
+- **逃げ先のモデルは呼び出し口ごとに分ける**。呼び出し側が `ai.models.generateContent(params, kind)` の第2引数で口を言う（Gemini 側は会話と資料係が同じモデル名なので、名前では分けられない）。既定は chat / toshio = `openai/gpt-oss-120b`、topic（資料係・作り手）/ extract = `qwen/qwen3.8-27b`、router = `openai/gpt-oss-20b`。`GROQ_MODEL` / `GROQ_TOSHIO_MODEL` / `GROQ_TOPIC_MODEL` / `GROQ_EXTRACT_MODEL` / `GROQ_ROUTER_MODEL` で差し替え
+
+### 実測した Groq の無料枠（このキーで、応答ヘッダと 429 の本文から）
+
+- **1分あたりの入出力トークン（TPM）は 8,000、出力だけ（OTPM）は 1,000。どちらもモデルごとに別の枠**（120b を使い切っても 20b の残りは減らない）
+- **1日あたりのリクエスト（1,000回）はモデル共通**。1発話3〜4回なので1日およそ250発話
+- 使えたモデルは `openai/gpt-oss-120b` / `openai/gpt-oss-20b` / `qwen/qwen3.8-27b` の3つだけ（llama 3.3-70b・3.1-8b と minimax は 404、safeguard-20b は strict で 400）
+- **`max_completion_tokens` は OTPM(1,000) を超えるだけで `429 Request too large`**。Gemini 側が 1024〜2048 を求めるので、`groq.ts` が 900 に丸める
+- **`openai/gpt-oss-20b` は claims のスキーマに応えられない**（`400 Failed to validate JSON`）。資料係も同じく落ちた。小さいモデルに大きいスキーマを渡さないこと
+- 429 は `retry-after` が 6秒以内なら1回だけ待って送り直す
+
+### 3000番での通し（Gemini のキーを空にして起動）
+
+4発話のうち3発話が通った。話題の特定（『古本屋』編・事実6件）→ シオリの返答 → としおの割り込み → 主張8件の記録（すべて嘘として保存）まで動く。**4発話目は 120b の TPM 8,000 に当たって定型文に落ちた**（6秒間隔で送ったため）。シオリととしおが同じ 120b を共有しているのが効いている。人の会話速度なら通る見込みだが、詰めて送ると落ちる
+- 埋め込みは設計どおり逃がさないので、Gemini のキーが無いと段落の検索は bigram だけになる（それでも話題は特定できた）
+- 検証: `npm test` 436件・`tsc --noEmit`・eslint 通過
+- 未解決: 速く続けたときの TPM、シオリの口調（120b の日本語は Gemini よりやや硬い）、`qwen/qwen3.8-27b` は preview 扱い
 - 調査メモのコミットはこのブランチに cherry-pick 済み。`docs/llm-fallback-options` ブランチは要らない
 
 ## 2026-09-16: Gemini の枠が尽きたときの逃げ先を調べた（`docs/llm-fallback-options`。調査だけ・コードは変えていない）

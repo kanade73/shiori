@@ -90,16 +90,19 @@ ${query ? `\n# ユーザーが話したい話題（会話の流れから補っ�
 # 資料
 ${formatChunks(chunks)}`;
 
-  const response = await ai.models.generateContent({
-    model: GENERATION_MODEL,
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: topicResponseSchema,
-      maxOutputTokens: 2048,
+  const response = await ai.models.generateContent(
+    {
+      model: GENERATION_MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: topicResponseSchema,
+        maxOutputTokens: 2048,
+      },
     },
-  });
+    "topic",
+  );
 
   const parsed = TopicExtractionSchema.parse(JSON.parse(response.text || "{}"));
   // 資料に無い段落を根拠にした事実は捨てる（資料の外から持ち込んだものかもしれない）

@@ -23,14 +23,47 @@ const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_TIMEOUT_MS = 30_000;
 
 /**
- * 逃げ先のモデル。既定は `openai/gpt-oss-120b`（production 扱い・文脈 131K・
- * JSON schema の strict モードに対応）。`GROQ_MODEL` で差し替えられる。
- * Gemini 側はモデルを3つ（会話 / 取り出し / 判定役）使い分けているが、Groq の無料枠は
- * 組織ごと・モデルごと（30 req/分・14,400 req/日）で、キーを増やしても枠は増えないため、
- * ここでは分けずに1つにしている。
+ * 出力トークンの上限。**Groq の無料枠は「1分あたりの出力トークン（OTPM）が 1,000」**で、
+ * `max_completion_tokens` にそれより大きい数を書くだけで `429 Request too large` になる
+ * （Gemini 側は 1024〜2048 を要求している）。ここで丸めて、その事故を防ぐ。
  */
-export function groqModel(): string {
-  return process.env.GROQ_MODEL?.trim() || "openai/gpt-oss-120b";
+const GROQ_MAX_OUTPUT_TOKENS = 900;
+/** 1分の枠に当たったとき、これ以内の待ちなら1回だけ待って送り直す（長い待ちは会話が止まるので諦める） */
+const GROQ_RETRY_AFTER_MAX_MS = 6_000;
+
+/**
+ * 逃げ先のモデルは呼び出し口ごとに分ける。**Groq の1分あたりのトークン（TPM 8,000）は
+ * モデルごとに別の枠**なので、散らすほど1分の余裕が増える（実測: 120b を使い切っても 20b の
+ * 残りは減らない）。ただし**1日あたりのリクエスト数（1,000回）はモデル共通**なので、
+ * 散らしても1日の回数は増えない（1発話あたり3〜4回 = 1日およそ250発話）。
+ *
+ * 呼び出し側が `kind` で行き先を言う（Gemini 側のモデル名では、会話と資料係が同じモデルなので分けられない）。
+ * このキーで使えて strict に応えられたのは `openai/gpt-oss-120b` / `openai/gpt-oss-20b` /
+ * `qwen/qwen3.8-27b` の3つ（llama 系と minimax は 404、safeguard-20b は strict で 400）。
+ *
+ * | kind | 呼び出し口 | 既定 | 理由 |
+ * |---|---|---|---|
+ * | `chat` | シオリの返答 | `openai/gpt-oss-120b` | 口調と日本語の質がそのまま体験になる |
+ * | `toshio` | としおの割り込み | `openai/gpt-oss-120b` | 同上。シオリと同じ枠だが、毎発話は呼ばない |
+ * | `topic` | 資料係・作り手 | `qwen/qwen3.8-27b` | 入力が大きい（段落8件）ので枠を分ける |
+ * | `extract` | 主張の取り出し | `qwen/qwen3.8-27b` | **20b では `400 Failed to validate JSON` になった** |
+ * | `router` | 切り替わりの判定役 | `openai/gpt-oss-20b` | スキーマも文脈も小さい |
+ *
+ * **小さいモデルに資料係や取り出しを回さないこと**（大きいスキーマに応えられず 400 になる）。
+ */
+export type GroqKind = "chat" | "toshio" | "topic" | "extract" | "router";
+
+const GROQ_MODEL_ENV: Record<GroqKind, { env: string; fallback: string }> = {
+  chat: { env: "GROQ_MODEL", fallback: "openai/gpt-oss-120b" },
+  toshio: { env: "GROQ_TOSHIO_MODEL", fallback: "openai/gpt-oss-120b" },
+  topic: { env: "GROQ_TOPIC_MODEL", fallback: "qwen/qwen3.8-27b" },
+  extract: { env: "GROQ_EXTRACT_MODEL", fallback: "qwen/qwen3.8-27b" },
+  router: { env: "GROQ_ROUTER_MODEL", fallback: "openai/gpt-oss-20b" },
+};
+
+export function groqModel(kind: GroqKind = "chat"): string {
+  const { env, fallback } = GROQ_MODEL_ENV[kind] ?? GROQ_MODEL_ENV.chat;
+  return process.env[env]?.trim() || fallback;
 }
 
 /** Groq のキーがあるか。無ければ逃げ先は無い（今までどおり Gemini の失敗がそのまま出る）。 */
@@ -125,12 +158,12 @@ export type GeminiLikeParams = {
 export type TextResponse = { text?: string };
 
 /** Groq に投げる本体（テストしやすいように、組み立てだけを純粋に切り出す）。 */
-export function toGroqRequest(params: GeminiLikeParams): Record<string, unknown> {
+export function toGroqRequest(params: GeminiLikeParams, kind: GroqKind = "chat"): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    model: groqModel(),
+    model: groqModel(kind),
     messages: toMessages(params),
   };
-  if (params.config?.maxOutputTokens) body.max_completion_tokens = params.config.maxOutputTokens;
+  body.max_completion_tokens = Math.min(params.config?.maxOutputTokens ?? GROQ_MAX_OUTPUT_TOKENS, GROQ_MAX_OUTPUT_TOKENS);
   if (typeof params.config?.temperature === "number") body.temperature = params.config.temperature;
   if (params.config?.responseSchema) {
     body.response_format = {
@@ -147,24 +180,44 @@ export function toGroqRequest(params: GeminiLikeParams): Record<string, unknown>
  * Groq の chat completions を Gemini と同じ形（`{ text }`）で返す。
  * 失敗はそのまま投げる（呼び出し側は今までの Gemini の失敗と同じように扱う）。
  */
-export async function groqGenerateContent(params: GeminiLikeParams): Promise<TextResponse> {
+export async function groqGenerateContent(params: GeminiLikeParams, kind: GroqKind = "chat"): Promise<TextResponse> {
   const key = process.env.GROQ_API_KEY?.trim();
   if (!key) throw new Error("GROQ_API_KEY が未設定です");
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
-  try {
-    const response = await fetch(GROQ_ENDPOINT, {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify(toGroqRequest(params)),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`[groq] HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
-    const body = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
-    const content = body?.choices?.[0]?.message?.content;
-    return { text: typeof content === "string" ? content : undefined };
-  } finally {
-    clearTimeout(timer);
+  const payload = JSON.stringify(toGroqRequest(params, kind));
+  const send = async (): Promise<Response> => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), GROQ_TIMEOUT_MS);
+    try {
+      return await fetch(GROQ_ENDPOINT, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: payload,
+        signal: controller.signal,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  };
+
+  let response = await send();
+  // 1分の枠（TPM / OTPM）に当たったときは、短い待ちなら1回だけ送り直す
+  if (response.status === 429) {
+    const wait = retryAfterMs(response.headers.get("retry-after"));
+    if (wait !== null && wait <= GROQ_RETRY_AFTER_MAX_MS) {
+      await new Promise((resolve) => setTimeout(resolve, wait));
+      response = await send();
+    }
   }
+  if (!response.ok) throw new Error(`[groq] HTTP ${response.status} ${(await response.text()).slice(0, 200)}`);
+  const body = (await response.json()) as { choices?: { message?: { content?: unknown } }[] };
+  const content = body?.choices?.[0]?.message?.content;
+  return { text: typeof content === "string" ? content : undefined };
+}
+
+/** `retry-after`（秒。小数もある）を ms にする。読めなければ null */
+export function retryAfterMs(header: string | null): number | null {
+  if (!header) return null;
+  const seconds = Number(header.trim());
+  return Number.isFinite(seconds) && seconds >= 0 ? Math.ceil(seconds * 1000) : null;
 }

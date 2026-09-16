@@ -175,16 +175,19 @@ ${formatCreators(params.creators ?? [])}
 # 今回の切り口（この角度で考察を組み立てること）
 ${angle}`;
 
-  const response = await ai.models.generateContent({
-    model: GENERATION_MODEL,
-    contents: [{ role: "user", parts: [{ text: contextBlock }] }],
-    config: {
-      systemInstruction: PERSONA_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: toshioResponseSchema,
-      maxOutputTokens: 1024,
+  const response = await ai.models.generateContent(
+    {
+      model: GENERATION_MODEL,
+      contents: [{ role: "user", parts: [{ text: contextBlock }] }],
+      config: {
+        systemInstruction: PERSONA_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: toshioResponseSchema,
+        maxOutputTokens: 1024,
+      },
     },
-  });
+    "toshio",
+  );
 
   const text = response.text || "{}";
   const json = JSON.parse(text);

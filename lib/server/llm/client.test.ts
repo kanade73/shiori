@@ -104,6 +104,34 @@ describe("ai.models.generateContent: Gemini が使えないときは Groq に逃
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it("呼び出し口ごとに逃げ先のモデルを分ける（取り出しは小さいモデル、会話は大きいモデル）", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY_2", "");
+    vi.stubEnv("GROQ_API_KEY", "gsk_test");
+    const { ai } = await loadClient();
+
+    fetchMock.mockResolvedValue(groqReply("{}"));
+    // 呼び出し側が「どの口か」を渡す（Gemini 側は会話と資料係が同じモデルなので名前では分けられない）
+    await ai.models.generateContent({ ...params, contents: "会話" }, "chat");
+    await ai.models.generateContent({ ...params, contents: "資料係" }, "topic");
+    await ai.models.generateContent({ ...params, contents: "取り出し" }, "extract");
+    await ai.models.generateContent({ ...params, contents: "判定役" }, "router");
+
+    const models = fetchMock.mock.calls.map(([, init]) => JSON.parse(String((init as RequestInit).body)).model);
+    expect(models).toEqual(["openai/gpt-oss-120b", "qwen/qwen3.8-27b", "qwen/qwen3.8-27b", "openai/gpt-oss-20b"]);
+  });
+
+  it("kind を渡さなければ会話の枠に送る", async () => {
+    vi.stubEnv("GEMINI_API_KEY", "");
+    vi.stubEnv("GEMINI_API_KEY_2", "");
+    vi.stubEnv("GROQ_API_KEY", "gsk_test");
+    const { ai } = await loadClient();
+
+    fetchMock.mockResolvedValue(groqReply("{}"));
+    await ai.models.generateContent(params);
+    expect(JSON.parse(String((fetchMock.mock.calls[0][1] as RequestInit).body)).model).toBe("openai/gpt-oss-120b");
+  });
+
   it("Gemini が返るときは Groq を呼ばない", async () => {
     vi.stubEnv("GEMINI_API_KEY", "AIza-test");
     vi.stubEnv("GROQ_API_KEY", "gsk_test");

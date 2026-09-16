@@ -369,18 +369,21 @@ async function extractViaGemini(
   input: ExtractInput,
 ): Promise<ExtractedClaim[]> {
   const response = await withUnavailableRetry(() =>
-    ai.models.generateContent({
-      model: EXTRACTION_MODEL,
-      contents: [
-        { role: "user", parts: [{ text: buildExtractUserPrompt(input) }] },
-      ],
-      config: {
-        systemInstruction: EXTRACT_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: GEMINI_CLAIMS_SCHEMA,
-        maxOutputTokens: 2048,
+    ai.models.generateContent(
+      {
+        model: EXTRACTION_MODEL,
+        contents: [
+          { role: "user", parts: [{ text: buildExtractUserPrompt(input) }] },
+        ],
+        config: {
+          systemInstruction: EXTRACT_PROMPT,
+          responseMimeType: "application/json",
+          responseSchema: GEMINI_CLAIMS_SCHEMA,
+          maxOutputTokens: 2048,
+        },
       },
-    }),
+      "extract",
+    ),
   );
   return parseExtractedClaims(parseClaimsText(response.text || "{}"));
 }

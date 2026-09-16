@@ -66,16 +66,19 @@ ${userMessage}
 # 資料で発言に近かった項目
 ${candidateLabels.length > 0 ? candidateLabels.map((l) => `- ${l}`).join("\n") : "（なし）"}`;
 
-  const response = await ai.models.generateContent({
-    model: ROUTER_MODEL,
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema: routeResponseSchema,
-      maxOutputTokens: 256,
+  const response = await ai.models.generateContent(
+    {
+      model: ROUTER_MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: routeResponseSchema,
+        maxOutputTokens: 256,
+      },
     },
-  });
+    "router",
+  );
 
   const parsed = TopicRouteSchema.parse(JSON.parse(response.text || "{}"));
   return { shift: parsed.shift, query: parsed.shift ? parsed.query.trim() : "" };

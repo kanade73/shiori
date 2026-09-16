@@ -59,16 +59,19 @@ ${name}（${role}）
 # 資料
 ${formatCreatorChunks(chunks)}`;
 
-  const response = await ai.models.generateContent({
-    model: GENERATION_MODEL,
-    contents: [{ role: "user", parts: [{ text: prompt }] }],
-    config: {
-      systemInstruction: SYSTEM_PROMPT,
-      responseMimeType: "application/json",
-      responseSchema,
-      maxOutputTokens: 1024,
+  const response = await ai.models.generateContent(
+    {
+      model: GENERATION_MODEL,
+      contents: [{ role: "user", parts: [{ text: prompt }] }],
+      config: {
+        systemInstruction: SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema,
+        maxOutputTokens: 1024,
+      },
     },
-  });
+    "topic",
+  );
   const parsed = CreatorStyleSchema.parse(JSON.parse(response.text || "{}"));
   return parsed.style.map((s) => s.trim()).filter(Boolean).slice(0, 6);
 }
