@@ -11,7 +11,6 @@ const mocks = vi.hoisted(() => ({
   loadSourceChunks: vi.fn(),
   extractTopic: vi.fn(),
   rankChunksByVector: vi.fn(),
-  ensureChunkEmbeddings: vi.fn(),
 }));
 vi.mock("./works", () => ({
   getSources: mocks.getSources,
@@ -24,11 +23,8 @@ vi.mock("./sources", async (importOriginal) => ({
   loadSourceChunks: mocks.loadSourceChunks,
 }));
 vi.mock("./llm/topic", () => ({ extractTopic: mocks.extractTopic }));
-// ベクトル検索（埋め込み API）は差し替える。既定では「まだ埋め込みが揃っていない」（null）
-vi.mock("./embeddings", () => ({
-  rankChunksByVector: mocks.rankChunksByVector,
-  ensureChunkEmbeddings: mocks.ensureChunkEmbeddings,
-}));
+// ベクトル検索（埋め込み API + pgvector）は差し替える。既定では「まだ埋め込みが揃っていない」（null）
+vi.mock("./embeddings", () => ({ rankChunksByVector: mocks.rankChunksByVector }));
 
 import { arcNameCore, episodeBoundaryFor, lookupSessionTopic, matchArc, prepareTopicSearch, selectCandidates } from "./topic";
 
@@ -296,9 +292,9 @@ describe("lookupSessionTopic: ユーザーの答えから話題の場面を特�
 });
 
 describe("prepareTopicSearch: セッションを作ったときに検索の準備をする", () => {
-  it("資料を取ってきて、段落の埋め込みを裏で作り始める", async () => {
+  it("資料を先に取ってきて温めておく（段落の埋め込みは scripts/embed-chunks.ts の仕事）", async () => {
     prepareTopicSearch("w");
-    await vi.waitFor(() => expect(mocks.ensureChunkEmbeddings).toHaveBeenCalledWith("w", chunks));
+    await vi.waitFor(() => expect(mocks.loadSourceChunks).toHaveBeenCalledWith("w"));
   });
 
   it("外部の知識源が無い作品では何もしない", () => {

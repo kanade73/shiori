@@ -1,18 +1,32 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
+import type { CreatorProfile } from "./types";
 
 const mocks = vi.hoisted(() => ({
   getCreators: vi.fn(),
   loadChunksOfSource: vi.fn(),
   extractCreatorStyle: vi.fn(),
-  dir: "",
+  /** creator_profiles テーブルの代わり（work_id ごと name → profile） */
+  rows: new Map<string, CreatorProfile>(),
 }));
 vi.mock("./works", () => ({ getCreators: mocks.getCreators, getWork: () => ({ id: "w", title: "テスト作品" }) }));
 vi.mock("./sources", () => ({ loadChunksOfSource: mocks.loadChunksOfSource }));
 vi.mock("./llm/creator", () => ({ extractCreatorStyle: mocks.extractCreatorStyle }));
-vi.mock("./store", () => ({ dataDir: () => mocks.dir }));
+vi.mock("./supabase", () => ({
+  supabase: () => ({
+    from: () => ({
+      select: () => ({
+        eq: async () => ({
+          data: [...mocks.rows.entries()].map(([name, profile]) => ({ name, profile })),
+          error: null,
+        }),
+      }),
+      upsert: async (row: { name: string; profile: CreatorProfile }) => {
+        mocks.rows.set(row.name, row.profile);
+        return { error: null };
+      },
+    }),
+  }),
+}));
 
 import { clearCreatorCache, getCreatorProfiles } from "./creator";
 
@@ -21,7 +35,7 @@ const chunk = { id: "creator-1", sourceTitle: "作者", url: "https://x/wiki/作
 
 describe("getCreatorProfiles", () => {
   beforeEach(() => {
-    mocks.dir = fs.mkdtempSync(path.join(os.tmpdir(), "creator-"));
+    mocks.rows.clear();
     clearCreatorCache();
     vi.clearAllMocks();
   });
@@ -39,7 +53,7 @@ describe("getCreatorProfiles", () => {
     expect(mocks.extractCreatorStyle).not.toHaveBeenCalled();
   });
 
-  it("source から作風を抜き、DATA_DIR に残して2回目は API を呼ばない", async () => {
+  it("source から作風を抜き、Supabase に残して2回目は API を呼ばない", async () => {
     mocks.getCreators.mockReturnValue([{ role: "原作", name: "A", source }]);
     mocks.loadChunksOfSource.mockResolvedValue([chunk]);
     mocks.extractCreatorStyle.mockResolvedValue(["小物で語る"]);
@@ -47,7 +61,7 @@ describe("getCreatorProfiles", () => {
     const first = await getCreatorProfiles("w");
     expect(first).toEqual([{ role: "原作", name: "A", style: ["小物で語る"], source: { title: "作者", url: "https://x/wiki/作者" } }]);
     expect(mocks.extractCreatorStyle).toHaveBeenCalledWith({ workTitle: "テスト作品", role: "原作", name: "A", chunks: [chunk] });
-    expect(fs.existsSync(path.join(mocks.dir, "creators", "w.json"))).toBe(true);
+    expect(mocks.rows.get("A")?.style).toEqual(["小物で語る"]);
 
     clearCreatorCache();
     const second = await getCreatorProfiles("w");

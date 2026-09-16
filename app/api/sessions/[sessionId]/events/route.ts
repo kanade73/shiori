@@ -20,16 +20,17 @@ import { createSseWriter, SSE_HEADERS, type SseWriter } from "@/lib/server/sse";
 
 const HEARTBEAT_MS = 25_000;
 
-function snapshot(sessionId: string, workId: string) {
-  const facts = getFabricatedFacts(sessionId).filter((f) => f.status === "active");
-  const userMessageCount = getMessages(sessionId).filter((m) => m.role === "user").length;
+async function snapshot(sessionId: string, workId: string) {
+  const facts = (await getFabricatedFacts(sessionId)).filter((f) => f.status === "active");
+  const userMessageCount = (await getMessages(sessionId)).filter((m) => m.role === "user").length;
   const phase = decideSessionPhase({ fabricatedFactCount: facts.length, userMessageCount });
-  return { phase, limits: phaseLimits(phase), fabricatedFactCount: facts.length, userMessageCount, graph: buildLieGraph(sessionId, workId) };
+  const graph = await buildLieGraph(sessionId, workId);
+  return { phase, limits: phaseLimits(phase), fabricatedFactCount: facts.length, userMessageCount, graph };
 }
 
 export async function GET(_req: Request, context: { params: Promise<{ sessionId: string }> }) {
   const { sessionId } = await context.params;
-  const session = getSession(sessionId);
+  const session = await getSession(sessionId);
   if (!session) {
     return NextResponse.json({ error: "session not found" }, { status: 404 });
   }
@@ -39,26 +40,41 @@ export async function GET(_req: Request, context: { params: Promise<{ sessionId:
   let heartbeat: ReturnType<typeof setInterval> | null = null;
 
   const stream = new ReadableStream<Uint8Array>({
-    start(controller) {
+    async start(controller) {
       writer = createSseWriter(controller);
       const { send } = writer;
 
-      const init: DevEventsInit = snapshot(sessionId, session.workId);
-      send("init", init);
-
-      unsubscribe = subscribePipelineEvents(sessionId, (event: PipelineEvent) => {
+      const relay = (event: PipelineEvent) => {
         send("stage", event);
         if (event.stage !== "saved") return;
-        const now = snapshot(sessionId, session.workId);
-        const graph: DevEventsGraph = {
-          graph: now.graph,
-          newFactIds: event.newFactIds,
-          phase: now.phase,
-          limits: now.limits,
-          fabricatedFactCount: now.fabricatedFactCount,
-        };
-        send("graph", graph);
+        // 保存された嘘を読み直してから描き直す（DB を引くので、届いてすぐには送れない）
+        void snapshot(sessionId, session.workId)
+          .then((now) => {
+            const graph: DevEventsGraph = {
+              graph: now.graph,
+              newFactIds: event.newFactIds,
+              phase: now.phase,
+              limits: now.limits,
+              fabricatedFactCount: now.fabricatedFactCount,
+            };
+            send("graph", graph);
+          })
+          .catch((error) => console.error("開発者モードのグラフの更新に失敗:", error));
+      };
+
+      // 購読は init を組み立てる前に張る（DB を待っている間の段を取りこぼさないため）。
+      // init より先に段を送らないよう、それまでは溜めておく
+      let pending: PipelineEvent[] | null = [];
+      unsubscribe = subscribePipelineEvents(sessionId, (event: PipelineEvent) => {
+        if (pending) pending.push(event);
+        else relay(event);
       });
+
+      const init: DevEventsInit = await snapshot(sessionId, session.workId);
+      send("init", init);
+      const buffered = pending;
+      pending = null;
+      for (const event of buffered) relay(event);
 
       // プロキシに切られないための空打ち。データは無い
       heartbeat = setInterval(() => send("ping", {}), HEARTBEAT_MS);

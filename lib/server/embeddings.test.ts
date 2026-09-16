@@ -1,145 +1,102 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { SourceChunk } from "./types";
 
-// 段落のベクトル検索（issue #22: ベクトルDB = sqlite-vec）。埋め込み API は差し替え、DB は一時ディレクトリに作る
+// 段落のベクトル検索。埋め込み API と Supabase（pgvector）を差し替えて、
+// 「検索語を1件埋め込む → 近傍を引く → いまの段落だけに絞る」を確かめる。
+// 段落そのものの埋め込みは実行時には作らない（scripts/embed-chunks.ts の仕事）。
 const { embedContent } = vi.hoisted(() => ({ embedContent: vi.fn() }));
 vi.mock("./llm/client", () => ({ ai: { models: { embedContent } }, EMBEDDING_MODEL: "test-embedding" }));
 
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "embeddings-"));
-let mod: typeof import("./embeddings");
+const { state } = vi.hoisted(() => ({
+  state: { count: 0, rows: [] as { chunk_key: string; similarity: number }[], rpc: vi.fn(), failCount: false },
+}));
 
-beforeAll(async () => {
-  process.env.DATA_DIR = dir;
-  mod = await import("./embeddings");
-  vi.spyOn(console, "info").mockImplementation(() => {});
+vi.mock("./supabase", async () => {
+  const actual = await vi.importActual<typeof import("./supabase")>("./supabase");
+  return {
+    ...actual,
+    supabase: () => ({
+      from: () => ({
+        select: () => ({
+          eq: () => ({
+            eq: async () => (state.failCount ? { count: null, error: { message: "boom" } } : { count: state.count, error: null }),
+          }),
+        }),
+      }),
+      rpc: state.rpc,
+    }),
+  };
 });
 
-afterAll(() => {
-  mod.clearEmbeddingCache();
-  fs.rmSync(dir, { recursive: true, force: true });
-});
+import { chunkKey, rankChunksByVector } from "./embeddings";
 
 function chunk(id: string, text: string): SourceChunk {
   return { id, sourceTitle: "記事", url: "u", heading: "", label: "", text };
 }
 
-// 768次元のうち先頭の2次元だけ使う: 「ラーメン」を含めば x 軸、「検定」なら y 軸、ほかは斜め
-function vectorOf(text: string): number[] {
-  const v = new Array(768).fill(0);
-  if (text.includes("ラーメン")) v[0] = 1;
-  else if (text.includes("検定")) v[1] = 1;
-  else [v[0], v[1]] = [0.5, 0.5];
-  return v;
-}
+const chunks = [chunk("a", "ラーメン店に入れない"), chunk("b", "草むしり検定を受ける"), chunk("c", "リボン")];
+const key = (id: string) => chunkKey(chunks.find((c) => c.id === id)!);
 
 beforeEach(() => {
-  mod.clearEmbeddingCache();
-  fs.rmSync(path.join(dir, "vectors"), { recursive: true, force: true });
   embedContent.mockReset();
   embedContent.mockImplementation(async ({ contents }: { contents: string[] }) => ({
-    embeddings: contents.map((text) => ({ values: vectorOf(text) })),
+    embeddings: contents.map(() => ({ values: new Array(768).fill(0.1) })),
   }));
+  state.count = chunks.length;
+  state.failCount = false;
+  state.rpc = vi.fn(async () => ({ data: state.rows, error: null }));
 });
 
-const chunks = [chunk("a", "ラーメン店に入れない"), chunk("b", "草むしり検定を受ける"), chunk("c", "リボン")];
-
 describe("rankChunksByVector", () => {
-  it("段落がまだ1件も埋め込まれていなければ、裏で作り始めて null（会話は待たせず bigram だけで続ける）", async () => {
-    expect(await mod.rankChunksByVector("w", "ラーメン屋", chunks)).toBeNull();
-    // 裏の埋め込みは段落のために1回（検索語の分はまだ呼んでいない）
-    expect(embedContent).toHaveBeenCalledTimes(1);
-    expect(embedContent.mock.calls[0][0].config.taskType).toBe("RETRIEVAL_DOCUMENT");
+  it("段落が1件も埋め込まれていなければ null（検索語の埋め込みも使わず、bigram だけで続ける）", async () => {
+    state.count = 0;
+    expect(await rankChunksByVector("w", "ラーメン屋", chunks)).toBeNull();
+    expect(embedContent).not.toHaveBeenCalled();
+    expect(state.rpc).not.toHaveBeenCalled();
   });
 
-  it("揃ったら検索語を埋め込み、DB の中で近い順（コサイン類似度の高い順）に並べる", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
-    const ranked = await mod.rankChunksByVector("w", "ラーメン屋さん", chunks);
-    expect(ranked?.map((r) => r.chunk.id)).toEqual(["a", "c", "b"]);
-    expect(ranked?.[0].score).toBeCloseTo(1);
-    expect(ranked?.[2].score).toBeCloseTo(0);
-    expect(embedContent.mock.lastCall![0].config.taskType).toBe("RETRIEVAL_QUERY");
+  it("検索語を1件だけ埋め込み、pgvector の近い順（コサイン類似度）をそのまま返す", async () => {
+    state.rows = [
+      { chunk_key: key("a"), similarity: 0.91 },
+      { chunk_key: key("c"), similarity: 0.42 },
+    ];
+    const ranked = await rankChunksByVector("w", "ラーメン屋さん", chunks);
+
+    expect(ranked?.map((r) => r.chunk.id)).toEqual(["a", "c"]);
+    expect(ranked?.[0].score).toBeCloseTo(0.91);
+    expect(embedContent).toHaveBeenCalledTimes(1);
+    expect(embedContent.mock.calls[0][0].config.taskType).toBe("RETRIEVAL_QUERY");
+    expect(state.rpc.mock.calls[0][0]).toBe("match_source_chunks");
+    expect(state.rpc.mock.calls[0][1]).toMatchObject({ p_work_id: "w", p_model: "test-embedding" });
   });
 
   it("limit で上位だけ返す", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
-    expect((await mod.rankChunksByVector("w", "検定", chunks, 1))?.map((r) => r.chunk.id)).toEqual(["b"]);
+    state.rows = [
+      { chunk_key: key("b"), similarity: 0.8 },
+      { chunk_key: key("a"), similarity: 0.7 },
+    ];
+    expect((await rankChunksByVector("w", "検定", chunks, 1))?.map((r) => r.chunk.id)).toEqual(["b"]);
   });
 
-  it("埋め込みは DATA_DIR のベクトルDBに残り、再起動後も埋め込み直さない", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
-    expect(fs.existsSync(path.join(dir, "vectors", "test-embedding-768.sqlite"))).toBe(true);
-    mod.clearEmbeddingCache();
-    embedContent.mockClear();
-    await mod.rankChunksByVector("w", "検定", chunks);
-    // 検索語の1回だけ
-    expect(embedContent).toHaveBeenCalledTimes(1);
-  });
-
-  it("一部しか埋め込まれていなくても、埋め込み済みの段落の中で探し、残りは裏で作る", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks.slice(0, 2));
-    embedContent.mockClear();
-    // 裏の埋め込みは検索が終わるまで返らないことにする
-    let finishBackground = () => {};
-    const background = new Promise<void>((resolve) => (finishBackground = resolve));
-    const respond = embedContent.getMockImplementation()!;
-    embedContent.mockImplementation(async (args: { config: { taskType: string } }) => {
-      if (args.config.taskType === "RETRIEVAL_DOCUMENT") await background;
-      return respond(args);
-    });
-
-    const ranked = await mod.rankChunksByVector("w", "ラーメン", chunks);
-    expect(ranked?.map((r) => r.chunk.id)).toEqual(["a", "b"]);
-    finishBackground();
-    await mod.ensureChunkEmbeddings("w", chunks); // 動いている裏の仕事を待つ
-    // 残りの段落の埋め込み（1件）と検索語
-    const tasks = embedContent.mock.calls.map((c) => [c[0].config.taskType, c[0].contents.length]);
-    expect(tasks).toContainEqual(["RETRIEVAL_DOCUMENT", 1]);
-    expect(tasks).toContainEqual(["RETRIEVAL_QUERY", 1]);
-  });
-
-  it("記事が書き換わってもう無い段落は DB から消し、検索結果にも出さない", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
-    const rewritten = [chunk("a", "ラーメン店に入れない"), chunk("d", "ラーメンの鎧さん")];
-    await mod.ensureChunkEmbeddings("w", rewritten);
-    const ranked = await mod.rankChunksByVector("w", "リボン", rewritten);
-    expect(ranked?.map((r) => r.chunk.id).sort()).toEqual(["a", "d"]);
-  });
-
-  it("作品ごとに区画を分ける（別の作品の段落は出さない）", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
-    const other = [chunk("x", "検定の話")];
-    await mod.ensureChunkEmbeddings("other", other);
-    expect((await mod.rankChunksByVector("other", "検定", other))?.map((r) => r.chunk.id)).toEqual(["x"]);
-    // 別の作品の段落を入れても、この作品の段落は消えない
-    expect((await mod.rankChunksByVector("w", "検定", chunks))?.map((r) => r.chunk.id)).toEqual(["b", "c", "a"]);
-  });
-
-  it("無料枠（1分100件）を超えないよう、段落は80件ずつ1分おきに埋め込む", async () => {
-    vi.useFakeTimers();
-    try {
-      const many = Array.from({ length: 170 }, (_, i) => chunk(`m${i}`, `段落${i}`));
-      const job = mod.ensureChunkEmbeddings("w", many);
-      await vi.advanceTimersByTimeAsync(0);
-      expect(embedContent).toHaveBeenCalledTimes(1);
-      expect(embedContent.mock.calls[0][0].contents).toHaveLength(80);
-      await vi.advanceTimersByTimeAsync(61_000);
-      expect(embedContent).toHaveBeenCalledTimes(2);
-      await vi.advanceTimersByTimeAsync(61_000);
-      await job;
-      expect(embedContent.mock.calls.map((c) => c[0].contents.length)).toEqual([80, 80, 10]);
-    } finally {
-      vi.useRealTimers();
-    }
+  it("記事が書き換わって DB にだけ残っている段落は落とす", async () => {
+    state.rows = [
+      { chunk_key: "もう記事に無い段落のキー", similarity: 0.99 },
+      { chunk_key: key("b"), similarity: 0.5 },
+    ];
+    expect((await rankChunksByVector("w", "検定", chunks))?.map((r) => r.chunk.id)).toEqual(["b"]);
   });
 
   it("検索語の埋め込みに失敗したら null", async () => {
-    await mod.ensureChunkEmbeddings("w", chunks);
     embedContent.mockRejectedValue(new Error("429"));
     const spy = vi.spyOn(console, "error").mockImplementation(() => {});
-    expect(await mod.rankChunksByVector("w", "検定", chunks)).toBeNull();
+    expect(await rankChunksByVector("w", "検定", chunks)).toBeNull();
+    spy.mockRestore();
+  });
+
+  it("DB の検索に失敗したら null（bigram だけで続ける）", async () => {
+    state.rpc = vi.fn(async () => ({ data: null, error: { message: "boom" } }));
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    expect(await rankChunksByVector("w", "検定", chunks)).toBeNull();
     spy.mockRestore();
   });
 });

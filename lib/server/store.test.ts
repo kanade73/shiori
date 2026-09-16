@@ -1,20 +1,12 @@
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "vitest";
+import * as store from "./store";
+import { memoryBackend } from "./store-memory";
 import type { Claim } from "./types";
 
-// store は import 時に DATA_DIR を読むので、一時ディレクトリを指してから読み込む
-const dir = fs.mkdtempSync(path.join(os.tmpdir(), "store-reveal-"));
-let store: typeof import("./store");
-
-beforeAll(async () => {
-  process.env.DATA_DIR = dir;
-  store = await import("./store");
-});
-
-afterAll(() => {
-  fs.rmSync(dir, { recursive: true, force: true });
+// 本番の置き場所は Supabase だが、ここで確かめたいのは store.ts の意味論なので
+// インメモリの backend を差し込んで回す（store-memory.ts はテスト専用）
+beforeEach(() => {
+  store.setStoreBackend(memoryBackend());
 });
 
 const lie: Claim = {
@@ -29,36 +21,36 @@ const lie: Claim = {
 };
 
 describe("store: 答え合わせ", () => {
-  it("発話の claims を ID 付きで保存し、セッション単位で取り出せる", () => {
-    const session = store.createSession("w");
-    const [saved] = store.saveMessageClaims(session.id, "m1", [lie]);
+  it("発話の claims を ID 付きで保存し、セッション単位で取り出せる", async () => {
+    const session = await store.createSession("w");
+    const [saved] = await store.saveMessageClaims(session.id, "m1", [lie]);
     expect(saved.id).toMatch(/^claim_/);
-    expect(store.getMessageClaims(session.id)).toEqual({ m1: [saved] });
-    expect(store.getMessageClaims("other")).toEqual({});
+    expect(await store.getMessageClaims(session.id)).toEqual({ m1: [saved] });
+    expect(await store.getMessageClaims("other")).toEqual({});
   });
 
-  it("答え合わせは1回きり。2回目は最初の予想と時刻を残す", () => {
-    const session = store.createSession("w");
-    const first = store.revealSession(session.id, { c1: "lie" });
-    const second = store.revealSession(session.id, { c1: "true" });
+  it("答え合わせは1回きり。2回目は最初の予想と時刻を残す", async () => {
+    const session = await store.createSession("w");
+    const first = await store.revealSession(session.id, { c1: "lie" });
+    const second = await store.revealSession(session.id, { c1: "true" });
     expect(first?.reveal?.guesses).toEqual({ c1: "lie" });
     expect(second?.reveal).toEqual(first?.reveal);
-    expect(store.getSession(session.id)?.reveal?.guesses).toEqual({ c1: "lie" });
+    expect((await store.getSession(session.id))?.reveal?.guesses).toEqual({ c1: "lie" });
   });
 
-  it("無いセッションは null", () => {
-    expect(store.revealSession("missing", {})).toBeNull();
+  it("無いセッションは null", async () => {
+    expect(await store.revealSession("missing", {})).toBeNull();
   });
 });
 
 describe("store: セッションの削除", () => {
-  it("セッションと、そのメッセージ・嘘・主張の記録を消す。他のセッションは残す", () => {
-    const target = store.createSession("w");
-    const other = store.createSession("w");
+  it("セッションと、そのメッセージ・嘘・主張の記録を消す。他のセッションは残す", async () => {
+    const target = await store.createSession("w");
+    const other = await store.createSession("w");
     for (const s of [target, other]) {
-      const msg = store.appendMessage(s.id, "assistant", "裏にレシピがある", "shiori");
-      store.saveMessageClaims(s.id, msg.id, [lie]);
-      store.addFabricatedFact({
+      const msg = await store.appendMessage(s.id, "assistant", "裏にレシピがある", "shiori");
+      await store.saveMessageClaims(s.id, msg.id, [lie]);
+      await store.addFabricatedFact({
         sessionId: s.id,
         claim: lie.claim,
         subject: lie.subject,
@@ -71,19 +63,19 @@ describe("store: セッションの削除", () => {
       });
     }
 
-    expect(store.deleteSession(target.id)).toBe(true);
-    expect(store.getSession(target.id)).toBeNull();
-    expect(store.getMessages(target.id)).toEqual([]);
-    expect(store.getFabricatedFacts(target.id)).toEqual([]);
-    expect(store.getMessageClaims(target.id)).toEqual({});
-    expect(store.listSessions("w").map((s) => s.id)).not.toContain(target.id);
+    expect(await store.deleteSession(target.id)).toBe(true);
+    expect(await store.getSession(target.id)).toBeNull();
+    expect(await store.getMessages(target.id)).toEqual([]);
+    expect(await store.getFabricatedFacts(target.id)).toEqual([]);
+    expect(await store.getMessageClaims(target.id)).toEqual({});
+    expect((await store.listSessions("w")).map((s) => s.id)).not.toContain(target.id);
 
-    expect(store.getSession(other.id)).not.toBeNull();
-    expect(store.getMessages(other.id)).toHaveLength(1);
-    expect(store.getFabricatedFacts(other.id)).toHaveLength(1);
+    expect(await store.getSession(other.id)).not.toBeNull();
+    expect(await store.getMessages(other.id)).toHaveLength(1);
+    expect(await store.getFabricatedFacts(other.id)).toHaveLength(1);
   });
 
-  it("無いセッションは false", () => {
-    expect(store.deleteSession("missing")).toBe(false);
+  it("無いセッションは false", async () => {
+    expect(await store.deleteSession("missing")).toBe(false);
   });
 });

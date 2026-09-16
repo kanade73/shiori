@@ -16,11 +16,13 @@
 
 ## 動かす
 
-Node.js 22.13 以降と、Google AI Studio の Gemini API キーが要る。
+Node.js 22 以降、Google AI Studio の Gemini API キー、Supabase の無料プロジェクトが要る。
 
 ```bash
 npm install
-cp .env.example .env.local   # GEMINI_API_KEY を書く
+cp .env.example .env.local   # GEMINI_API_KEY と SUPABASE_* を書く
+# Supabase の SQL Editor で supabase/schema.sql を一度流す
+npm run embed                # 外部資料の段落の埋め込みを作る（省略可。無いと段落検索が文字一致だけになる）
 npm run dev
 ```
 
@@ -40,8 +42,8 @@ npm run build
 |---|---|
 | フロント / バックエンド | Next.js（App Router）+ TypeScript + Tailwind。Route Handlers から SSE で返す |
 | LLM | Gemini（`@google/genai`）。会話・主張の取り出し・話題の特定・切り替わりの判定でモデルを分ける |
-| 永続化 | JSON ファイル 1 本（`.data/db.json`）。外部資料の段落の埋め込みだけ sqlite-vec |
-| デプロイ | Fly.io（Docker 1 台 + 永続ボリューム） |
+| 永続化 | Supabase（Postgres）。外部資料の段落の埋め込みは同じ DB の pgvector |
+| デプロイ | Vercel（Hobby = 無料）。`Dockerfile` も残してあり Railway / Render でも動く |
 
 作品の知識はコードに書かず `data/<workId>/work.json` に置く。ディレクトリを足せば作品が増える。
 
@@ -57,6 +59,8 @@ components/   チャット・答え合わせ・開発者モードの UI
 lib/server/   会話パイプライン・データの読み込み・永続化・外部資料の検索
 lib/client/   fetch ラッパー・SSE パーサ
 data/         作品データ（コードはこの中身を知らない）
+supabase/     DB のスキーマ（SQL Editor に貼って流す）
+scripts/      段落の埋め込みを作るスクリプト（npm run embed）
 ml/           主張の取り出しの LoRA（学習・評価・推論サーバ）
 docs/specs/   仕様書
 pictures/     キャラクターの原画・スケッチ

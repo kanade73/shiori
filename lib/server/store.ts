@@ -1,43 +1,30 @@
-import fs from "node:fs";
-import path from "node:path";
-import type { ChatSession, Claim, FabricatedFact, FabricatedRelation, Message, SessionTopic, ShioriExpression, Speaker, StoredClaim } from "./types";
+import type { StoreBackend } from "./store-backend";
+import { supabaseBackend } from "./store-supabase";
+import type {
+  ChatSession,
+  Claim,
+  FabricatedFact,
+  FabricatedRelation,
+  Message,
+  SessionTopic,
+  ShioriExpression,
+  Speaker,
+  StoredClaim,
+} from "./types";
 import type { Verdict } from "./reveal/types";
 
-type Db = {
-  sessions: Record<string, ChatSession>;
-  messages: Record<string, Message[]>;
-  fabricatedFacts: Record<string, FabricatedFact[]>;
-  fabricatedRelations: Record<string, FabricatedRelation[]>;
-  /** sessionId → messageId → その発話の claims。答え合わせ用 */
-  messageClaims: Record<string, Record<string, StoredClaim[]>>;
-};
+/**
+ * セッション・発話・嘘・主張の永続化。置き場所は Supabase（supabase/schema.sql）で、
+ * 行の出し入れは store-backend.ts の StoreBackend が受け持つ。ここに書くのは
+ * 「セッションとしてどう振る舞うか」だけ: id の採番、話題が切り替わったときの退避、
+ * 答え合わせは1回きり、削除の連鎖。
+ */
 
-// DATA_DIR で永続化先を差し替えられる（コンテナではボリュームのマウント先を指す）
-const DB_DIR = process.env.DATA_DIR || path.join(process.cwd(), ".data");
+let backend: StoreBackend = supabaseBackend;
 
-/** 永続化先のディレクトリ。db.json 以外のキャッシュ（埋め込みなど）もここに置く */
-export function dataDir(): string {
-  return DB_DIR;
-}
-const DB_PATH = path.join(DB_DIR, "db.json");
-
-function emptyDb(): Db {
-  return { sessions: {}, messages: {}, fabricatedFacts: {}, fabricatedRelations: {}, messageClaims: {} };
-}
-
-function readDb(): Db {
-  if (!fs.existsSync(DB_PATH)) return emptyDb();
-  try {
-    const raw = fs.readFileSync(DB_PATH, "utf-8");
-    return { ...emptyDb(), ...JSON.parse(raw) };
-  } catch {
-    return emptyDb();
-  }
-}
-
-function writeDb(db: Db) {
-  fs.mkdirSync(DB_DIR, { recursive: true });
-  fs.writeFileSync(DB_PATH, JSON.stringify(db, null, 2), "utf-8");
+/** テスト用。store-memory.ts の memoryBackend() を差し込む */
+export function setStoreBackend(next: StoreBackend) {
+  backend = next;
 }
 
 function newId(prefix: string) {
@@ -47,8 +34,7 @@ function newId(prefix: string) {
 // --- Sessions ---
 
 /** 話題の場面が決まるまでは、ネタバレ境界は 0（話数では何も開けない） */
-export function createSession(workId: string): ChatSession {
-  const db = readDb();
+export async function createSession(workId: string): Promise<ChatSession> {
   const now = new Date().toISOString();
   const session: ChatSession = {
     id: newId("session"),
@@ -57,24 +43,24 @@ export function createSession(workId: string): ChatSession {
     createdAt: now,
     updatedAt: now,
   };
-  db.sessions[session.id] = session;
-  db.messages[session.id] = [];
-  db.fabricatedFacts[session.id] = [];
-  writeDb(db);
+  await backend.putSession(session);
   return session;
 }
 
-export function getSession(sessionId: string): ChatSession | null {
-  return readDb().sessions[sessionId] ?? null;
+export async function getSession(sessionId: string): Promise<ChatSession | null> {
+  return backend.getSession(sessionId);
 }
 
 /**
  * 話題の場面と、そこから分かったネタバレ境界を保存する（issue #14）。既に話題があれば、それは
  * pastTopics に移して新しい話題に切り替える（途中の話題の切り替わり）。境界は広げる方向にしか動かさない。
  */
-export function setSessionTopic(sessionId: string, topic: SessionTopic | null, currentEpisode: number): ChatSession | null {
-  const db = readDb();
-  const session = db.sessions[sessionId];
+export async function setSessionTopic(
+  sessionId: string,
+  topic: SessionTopic | null,
+  currentEpisode: number,
+): Promise<ChatSession | null> {
+  const session = await backend.getSession(sessionId);
   if (!session) return null;
   if (topic) {
     if (session.topic) session.pastTopics = [...(session.pastTopics ?? []), session.topic];
@@ -82,65 +68,51 @@ export function setSessionTopic(sessionId: string, topic: SessionTopic | null, c
   }
   session.currentEpisode = Math.max(session.currentEpisode, currentEpisode);
   session.updatedAt = new Date().toISOString();
-  writeDb(db);
+  await backend.putSession(session);
   return session;
 }
 
-export function touchSession(sessionId: string) {
-  const db = readDb();
-  const session = db.sessions[sessionId];
+export async function touchSession(sessionId: string): Promise<void> {
+  const session = await backend.getSession(sessionId);
   if (!session) return;
   session.updatedAt = new Date().toISOString();
-  writeDb(db);
+  await backend.putSession(session);
 }
 
 /** 答え合わせ済みにする。既に済んでいれば最初の予想を残してそのまま返す。 */
-export function revealSession(sessionId: string, guesses: Record<string, Verdict>): ChatSession | null {
-  const db = readDb();
-  const session = db.sessions[sessionId];
+export async function revealSession(sessionId: string, guesses: Record<string, Verdict>): Promise<ChatSession | null> {
+  const session = await backend.getSession(sessionId);
   if (!session) return null;
   if (session.reveal) return session;
   const now = new Date().toISOString();
   session.reveal = { revealedAt: now, guesses };
   session.updatedAt = now;
-  writeDb(db);
+  await backend.putSession(session);
   return session;
 }
 
 /** セッションと、それに属するメッセージ・嘘・主張の記録をまとめて消す。無ければ false */
-export function deleteSession(sessionId: string): boolean {
-  const db = readDb();
-  if (!db.sessions[sessionId]) return false;
-  delete db.sessions[sessionId];
-  delete db.messages[sessionId];
-  delete db.fabricatedFacts[sessionId];
-  delete db.fabricatedRelations[sessionId];
-  delete db.messageClaims[sessionId];
-  writeDb(db);
-  return true;
+export async function deleteSession(sessionId: string): Promise<boolean> {
+  return backend.deleteSession(sessionId);
 }
 
-export function listSessions(workId?: string): ChatSession[] {
-  const db = readDb();
-  const all = Object.values(db.sessions);
-  const filtered = workId ? all.filter((s) => s.workId === workId) : all;
-  return filtered.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+export async function listSessions(workId?: string): Promise<ChatSession[]> {
+  return backend.listSessions(workId);
 }
 
 // --- Messages ---
 
-export function getMessages(sessionId: string): Message[] {
-  return readDb().messages[sessionId] ?? [];
+export async function getMessages(sessionId: string): Promise<Message[]> {
+  return backend.listMessages(sessionId);
 }
 
-export function appendMessage(
+export async function appendMessage(
   sessionId: string,
   role: Message["role"],
   content: string,
   speaker?: Speaker,
   expression?: ShioriExpression,
-): Message {
-  const db = readDb();
+): Promise<Message> {
   const message: Message = {
     id: newId("msg"),
     sessionId,
@@ -150,66 +122,61 @@ export function appendMessage(
     ...(speaker ? { speaker } : {}),
     ...(expression ? { expression } : {}),
   };
-  if (!db.messages[sessionId]) db.messages[sessionId] = [];
-  db.messages[sessionId].push(message);
-  if (db.sessions[sessionId]) db.sessions[sessionId].updatedAt = message.createdAt;
-  writeDb(db);
+  await backend.addMessage(message);
+
+  const session = await backend.getSession(sessionId);
+  if (session) {
+    session.updatedAt = message.createdAt;
+    await backend.putSession(session);
+  }
   return message;
 }
 
 // --- Message claims ---
 
 /** シオリの発話が述べた主張を、真偽ごと保存する（答え合わせで使う）。主張が無い発話も空で記録する。 */
-export function saveMessageClaims(sessionId: string, messageId: string, claims: Claim[]): StoredClaim[] {
-  const db = readDb();
+export async function saveMessageClaims(sessionId: string, messageId: string, claims: Claim[]): Promise<StoredClaim[]> {
   const stored = claims.map((c) => ({ ...c, id: newId("claim") }));
-  if (!db.messageClaims[sessionId]) db.messageClaims[sessionId] = {};
-  db.messageClaims[sessionId][messageId] = stored;
-  writeDb(db);
+  await backend.putMessageClaims(sessionId, messageId, stored);
   return stored;
 }
 
-export function getMessageClaims(sessionId: string): Record<string, StoredClaim[]> {
-  return readDb().messageClaims[sessionId] ?? {};
+export async function getMessageClaims(sessionId: string): Promise<Record<string, StoredClaim[]>> {
+  return backend.listMessageClaims(sessionId);
 }
 
 // --- Fabricated facts ---
 
-export function getFabricatedFacts(sessionId: string): FabricatedFact[] {
-  return readDb().fabricatedFacts[sessionId] ?? [];
+export async function getFabricatedFacts(sessionId: string): Promise<FabricatedFact[]> {
+  return backend.listFabricatedFacts(sessionId);
 }
 
-export function addFabricatedFact(
+export async function addFabricatedFact(
   input: Omit<FabricatedFact, "id" | "createdAt" | "status"> & { status?: FabricatedFact["status"] },
-): FabricatedFact {
-  const db = readDb();
+): Promise<FabricatedFact> {
   const fact: FabricatedFact = {
     ...input,
     id: newId("fake"),
     status: input.status ?? "active",
     createdAt: new Date().toISOString(),
   };
-  if (!db.fabricatedFacts[input.sessionId]) db.fabricatedFacts[input.sessionId] = [];
-  db.fabricatedFacts[input.sessionId].push(fact);
-  writeDb(db);
+  await backend.addFabricatedFact(fact);
   return fact;
 }
 
 // --- Fabricated relations ---
 
-export function getFabricatedRelations(sessionId: string): FabricatedRelation[] {
-  const facts = new Set(getFabricatedFacts(sessionId).map((f) => f.id));
-  const db = readDb();
-  return (db.fabricatedRelations[sessionId] ?? []).filter(
-    (rel) => facts.has(rel.fromFactId) && facts.has(rel.toFactId),
-  );
+export async function getFabricatedRelations(sessionId: string): Promise<FabricatedRelation[]> {
+  const facts = new Set((await getFabricatedFacts(sessionId)).map((f) => f.id));
+  const relations = await backend.listFabricatedRelations(sessionId);
+  return relations.filter((rel) => facts.has(rel.fromFactId) && facts.has(rel.toFactId));
 }
 
-export function addFabricatedRelation(sessionId: string, input: Omit<FabricatedRelation, "id">): FabricatedRelation {
-  const db = readDb();
+export async function addFabricatedRelation(
+  sessionId: string,
+  input: Omit<FabricatedRelation, "id">,
+): Promise<FabricatedRelation> {
   const relation: FabricatedRelation = { ...input, id: newId("rel") };
-  if (!db.fabricatedRelations[sessionId]) db.fabricatedRelations[sessionId] = [];
-  db.fabricatedRelations[sessionId].push(relation);
-  writeDb(db);
+  await backend.addFabricatedRelation(sessionId, relation);
   return relation;
 }

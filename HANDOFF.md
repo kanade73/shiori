@@ -4,6 +4,58 @@ AIがセッションを開始する際はまずこれを読むこと（AGENTS.md
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: 完全無料デプロイへの移行 — Vercel + Supabase（`feat/vercel-supabase`、dev `5bfa4cb` から切り、`53acca0`（表情・口調・README）を取り込み済み。**PR 未作成**）
+
+永続化を `.data/db.json` + sqlite-vec のファイルから **Supabase（Postgres + pgvector）** に移し、ホストを Fly.io から **Vercel Hobby** に変えた。どちらも無料枠。会話パイプライン・話題特定・答え合わせのロジックには触っていない。
+
+### なぜ Cloudflare Pages ではないか（当初の指示から変えた点）
+
+Workers の無料枠は **CPU 10ms / 1リクエスト**（[公式](https://developers.cloudflare.com/workers/platform/limits/)）。`sources.rankChunks`（段落168件の bigram ランキング）を実測すると **1回 5.6ms**（M系 Mac）で、1発話で最大2回走る。載せるには段落検索を SQL 側に作り直す必要があり、検索の挙動が変わる。Vercel Hobby は CPU ms の上限が無く Next.js がネイティブに動くので、変更が「永続化の差し替え」だけで済む。
+
+### 変わったこと
+
+- **`supabase/schema.sql`（新規）** — sessions / messages / message_claims / fabricated_facts / fabricated_relations / source_chunks（vector(768)）/ creator_profiles + `match_source_chunks` の SQL 関数。全テーブル RLS 有効・ポリシー無し（service_role だけが触れる）。時刻の列は text（アプリの ISO 文字列がそのまま入る）、発話と嘘の並びは `bigserial` の `seq`
+- **`store.ts` が全関数 async** — 意味論（id 採番・話題の退避・答え合わせ1回きり・削除の連鎖）は `store.ts`、行の出し入れは `store-backend.ts` の `StoreBackend`。本番は `store-supabase.ts` の1本で、`store-memory.ts` は**テスト専用**（`setStoreBackend(memoryBackend())`）。`dataDir()` は削除
+- **`vector-db.ts` を削除**（sqlite-vec / `node:sqlite` ごと）。`embeddings.ts` は「段落が1件でもあるか確かめる → 検索語を1件埋め込む → `match_source_chunks`」だけになった
+- **段落そのものの埋め込みはオフライン**（`npm run embed [workId]` = `scripts/embed-chunks.ts`）。サーバーレスでは「応答後に1分おきに80件ずつ」の裏の仕事が成立しないため。流し忘れても bigram だけで会話は成立する
+- `creator.ts` の作風キャッシュを `creator_profiles` テーブルへ（`node:fs` が消えて、アプリに fs を読むのは `works.ts` だけになった）
+- `next.config.mjs`: `outputFileTracingIncludes` に `./data/**/*.json`（**これが無いと本番で作品が0件になる**）。`output: "standalone"` は `DOCKER_BUILD=1` のときだけ
+- messages の Route Handler に `export const maxDuration = 60`（Hobby の上限）
+- `fly.toml` を削除、`Dockerfile` からボリューム前提と sqlite-vec 対応（Debian ベース）を外して alpine に戻した
+- 開発者モードの events SSE: `start` が async になったので、**購読を init より先に張って、init を送るまでの段を溜める**ようにした（DB を待っている間のイベントを取りこぼさないため）
+- `origin/dev`（PR #46 表情・#47 口調・#48 README）を取り込み済み。衝突は `store.ts` / messages の Route Handler / HANDOFF の3つで、**相方が足した `Message.expression` を Supabase 側にも通した**（`messages.expression` 列、`store-supabase.ts` の写し替え、`appendMessage` の第5引数）。README の構成表と「動かす」も Supabase / Vercel に直した
+
+### 検証の状況（実 Supabase で通し確認まで完了）
+
+- `npm test` 411件・`tsc --noEmit`・`npm run lint`・`npm run build` すべて通過
+- **実 Supabase（無料プロジェクト、東京）で通した**: `npm run db:push` → `npm run db:check`（8項目 OK）→ `npm run embed -- chiikawa`（168段落 / 約2分）→ dev サーバーで
+  - セッション作成 → 話題特定（『草むしり検定』編・arc 一致・`currentEpisode` 63）→ シオリの返答 → としおの割り込み → 嘘8件の保存
+  - 答え合わせ（主張9件、quote の位置で本文が区切られ、`expression` も往復）
+  - 答え合わせ済みへの送信 = 409、削除 = 200 →（messages / message_claims / fabricated_facts が連鎖削除で 0 件）、削除後の取得 = 404
+  - **pgvector 経路の確認**: 固有名詞を使わない「牢屋みたいなとこに閉じ込められる話あったよね」で『プリズン』編を特定（bigram では当たらない言い回し）。としおも `creator_profiles` の作風（不条理を描く）に乗って考察した
+- **踏んだ落とし穴（重要）**: 最初 `schema.sql` に GRANT を書いておらず Supabase の既定権限に頼っていたため、`service_role` に `REFERENCES/TRIGGER/TRUNCATE` しか付かず全テーブルが `permission denied` になった。**ダッシュボードの SQL Editor で作った表と `db:push` で作った表で既定権限が食い違う。** 権限は `schema.sql` で明示すること（修正済み。`c7fa7fa`）
+- `npm run build` 時に出る `API key should be set when using the Gemini API.` は、env を読み込む前にモジュールを評価した経路があるときの警告で、今回の変更とは関係ない
+- `npm run build` / スクリプトの起動時に出る `API key should be set when using the Gemini API.` は、env を読み込む前にモジュールを評価した経路があるときの警告で、今回の変更とは関係ない（`.env.local` に Gemini のキーは入っている）
+
+### 手元をこの構成で動かす手順
+
+`.env.local` に `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY`（サーバー用の secret キー）と、スキーマを流すときだけ使う
+`SUPABASE_DB_URL`（Connect → pooler の URI。**PostgREST の service_role キーでは DDL を流せない**）を入れて:
+
+```
+npm run db:push    # supabase/schema.sql を流す（何度流してもよい）
+npm run db:check   # テーブルと match_source_chunks が見えるか
+npm run embed      # 段落の埋め込み（1分80件。省略すると段落検索が bigram だけになる）
+npm run dev
+```
+
+### 次にやること
+
+1. **Vercel にデプロイ**。リポジトリを繋ぎ、`GEMINI_API_KEY` / `GEMINI_API_KEY_2` / `SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` を登録する（`SUPABASE_DB_URL` は本番に要らない）
+2. `dev` へ PR を出す（このブランチはまだ PR 未作成）
+3. **Supabase の無料プロジェクトは7日間アクセスが無いと一時停止する**（再開は初回リクエストで10〜30秒）。提出後も開かれるなら週2回 ping する GitHub Actions を足す
+4. `feat/groq-fallback`（未マージ）とこのブランチは、`AGENTS.md` / `.env.example` / `lib/server/llm/` あたりで衝突する見込み。マージの順番を決めること
+
 ## 2026-09-16: シオリの口調を「サバサバ・感情の起伏なし」に寄せ、三点リーダーをやめた（`fix/shiori-tone`、PR #47 → dev）
 
 ユーザーの指摘「三点リーダーを使いすぎ。もっとサバサバして感情の起伏が少ない方がいい」。出どころは、モデルへの直接の指示ではなく **開始の定型文 `……今日は何について話したい?`（履歴の最初の model 発話として毎回渡る）と、ペルソナ内の同じ引用、および「ダウナー」という性格付け** で、モデルがそれを真似ていた。

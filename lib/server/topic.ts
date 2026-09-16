@@ -1,6 +1,6 @@
 import { getArcs, getSources, getWork } from "./works";
 import { fuseRankings, loadSourceChunks, mentionedNames, rankChunks, type RankedChunk } from "./sources";
-import { ensureChunkEmbeddings, rankChunksByVector } from "./embeddings";
+import { rankChunksByVector } from "./embeddings";
 import { extractTopic } from "./llm/topic";
 import { normalizeText } from "./claims";
 import type { Arc, CanonFact, SessionTopic, SourceChunk } from "./types";
@@ -114,9 +114,7 @@ export function selectCandidates(lexical: RankedChunk[], semantic: RankedChunk[]
  */
 export function prepareTopicSearch(workId: string): void {
   if (getSources(workId).length === 0) return;
-  void loadSourceChunks(workId)
-    .then((chunks) => ensureChunkEmbeddings(workId, chunks))
-    .catch((error) => console.error("話題の検索の準備に失敗:", error));
+  void loadSourceChunks(workId).catch((error) => console.error("話題の検索の準備に失敗:", error));
 }
 
 /** 同じ場面を指しているか（切り替えたつもりで同じ場面を引き直したときは、切り替えとみなさない） */
