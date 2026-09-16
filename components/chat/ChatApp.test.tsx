@@ -176,7 +176,7 @@ describe("ChatApp: 途中で切れたストリーム", () => {
 
     await screen.findByText("network");
     const [bubble] = assistantBubbles();
-    expect(within(bubble).getByText("……ちょっと分からなくなった。もう一度言って。")).toBeTruthy();
+    expect(within(bubble).getByText("ちょっと分からなくなった。もう一度言って。")).toBeTruthy();
     expect(screen.queryByText("入力中")).toBeNull();
   });
 });
@@ -345,7 +345,7 @@ describe("ChatApp: サイドバー", () => {
 
 describe("ChatApp: 新しいセッション", () => {
   beforeEach(() => {
-    mocks.createSession.mockResolvedValue({ sessionId: "s-new", openingMessage: "……今日は何について話したい?" });
+    mocks.createSession.mockResolvedValue({ sessionId: "s-new", openingMessage: "今日は何について話したい?" });
   });
 
   it("サイドバーの「新しいセッション」は、スタート画面に戻らず、今の作品で新しいセッションを作ってそのチャットに移る", async () => {
@@ -390,7 +390,7 @@ describe("ChatApp: シオリの表情", () => {
   it("message-start の表情が吹き出しのアバターに出る。としおには付かない", async () => {
     mocks.sendMessage.mockImplementation(async (_s: string, _c: string, h: SendMessageHandlers) => {
       h.onMessageStart("shiori", "wink");
-      h.onToken("……別に、嘘じゃない。");
+      h.onToken("別に、嘘じゃない。");
       h.onMetadata({ fabricatedFactIds: [], strategy: "no_new_lie", regenerated: false });
       h.onMessageEnd();
       h.onMessageStart("toshio");
@@ -414,7 +414,7 @@ describe("ChatApp: シオリの表情", () => {
       session,
       fabricatedFactCount: 0,
       messages: [
-        { id: "m1", sessionId: "s1", role: "assistant", content: "……今日は何について話したい?", createdAt: "2026-01-01T00:00:00Z", speaker: "shiori" },
+        { id: "m1", sessionId: "s1", role: "assistant", content: "今日は何について話したい?", createdAt: "2026-01-01T00:00:00Z", speaker: "shiori" },
         { id: "m2", sessionId: "s1", role: "user", content: "考察して", createdAt: "2026-01-01T00:00:01Z" },
         { id: "m3", sessionId: "s1", role: "assistant", content: "ふふ。", createdAt: "2026-01-01T00:00:02Z", speaker: "shiori", expression: "wink" },
       ],
