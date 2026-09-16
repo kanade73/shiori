@@ -1,9 +1,70 @@
+## LAN からの送信で `crypto.randomUUID is not a function`（2026-09-16、dev 直下の未コミット変更）
+
+- 同じ LAN の http://10.60.60.104:3000 で発話を送ると `ChatApp.handleSend` が落ちていた。`crypto.randomUUID` は secure context（https / localhost）限定で、http の LAN アドレスでは未定義。
+- `lib/client/id.ts` に `localId()` を追加（randomUUID → getRandomValues で v4 を組む → Date+Math.random の順で代替）。`components/chat/ChatApp.tsx` の3か所を置き換え。サーバー側（store.ts / pipeline.ts）は Node なのでそのまま。
+- tsc / eslint 通過。実機（LAN）での動作確認は未実施。
+
+## 嘘判定の修正: 本物の一文をなぞった主張が嘘に塗られていた（2026-09-16、`fix/canon-restatement`、PR → dev）
+
+- 実機セッション（『プリズン』編）で「うさぎがそのスプーンを使って、こっそりと脱出用の穴を掘っていた」が嘘扱いになった。記録係が一文を did / has / secret の3つに割り、did だけが topic-1-4 に一致、has と secret は object / relation が違って fabricated → 答え合わせは重なる抜き出しで嘘を優先するので文全体が嘘に見えた。
+- `lib/server/llm/extract.ts` の `matchCanonFacts` に第2経路 `restatesDescription` を足した（API は増やさない）。(a) quote（6字以上）が本物の設定の `description` に含まれる、または文字 bigram の 75% 以上が description にあれば relation を問わず canon。(b) relation が has / did / secret / related_to / other なら object についても同じ検査（is / likes / lives_in などの値を持つ関係は object では照らさない。「ちいかわ達 is ゴブリン」が canon になるため）。主語は「〜達」「〜たち」を落として比べ、主語が違っても説明文の中に主語の名前が出ていて (a)(b) を満たせば言い直し（資料係が「ハチワレが引き当てた」を subject=カブトムシ の事実として出すため）。閾値 75% は活用（しがみつき / しがみつく）と「〜がする」を通し、言い換え（身体がもちもちしている = 0.70）は通さない値。テストは `extract.test.ts` に9件。
+- `llm/topic.ts` のプロンプトに「集団でまとめず人物ごとに主語を立てる」「呼び名を揃える」を足した。効果は弱い（1回試して主語は変わらず）。`MAX_FACTS` を 12 に上げると場面より後の展開（本来の姿に戻って襲う）が事実に混ざったので 8 のまま。
+- 検証: dev サーバーに5セッション（草むしり検定・パジャマパーティーズ・カブトムシ×2・黒い流れ星）を流し、保存された主張 60 件を再判定。嘘が本当に転んだものは 0 件。本当の言い直しが嘘に塗られたものは修正前 16 件 → 修正後 8 件。残りは資料係が出す事実の粒度（「黒い星」と「黒い流れ星」に割れる、「パジャマパーティーのメンバー」が entities に寄らない）、言い換え（再登場 → 再会）、記録係が否定を negated=false で出す（「ちいかわは合格できなかった」）。
+
+## 最新 dev で実機テスト用サーバー起動（2026-09-16）
+
+- `origin/dev` を取得し、ローカル `dev` を `0836e68` に合わせて切り替え済み。
+- 本ディレクトリの既存3000番サーバーを再起動。`npm run dev -- --hostname 0.0.0.0 --port 3000`、`.env.local` と既存 `.data` を使用。
+- 実機アクセス: http://10.60.60.104:3000 （同じLAN）。ローカル: http://localhost:3000 。
+- 未コミット変更を保持。`next.config.mjs` のLAN用 `allowedDevOrigins` もそのまま有効。
+
+## PR #49 マージ（2026-09-16）
+
+- ユーザー依頼により `feat/knuckle-bench` → `dev` を GitHub 上でマージ済み。
+- PR: https://github.com/kanade73/hackathon/pull/49
+- マージコミット: `0836e680d62fee67f70f33d8215e54ee60910276`。
+- GitHub の競合なしを確認。CI チェックなし。PR 本文にテスト472件・Lint・standalone ビルド確認の記録あり。この作業ではテストを再実行していない。
+- ローカルのブランチ切り替え・pull は行っていない。既存の未コミット変更（`next.config.mjs`、`tsconfig.json`、`docs/submission/`）は保持。
+
 # HANDOFF
 
 AIがセッションを開始する際はまずこれを読むこと（AGENTS.md参照）。作業を終えるAIは、次のAIが初見で状況を把握できるようここを更新してから終わること。
 
 コードの構造・設計原則は AGENTS.md が正。ここには「いまどこまで進んでいて、何が決まっていて、何が未解決か」だけを書く。過去セッションの作業ログは残さず、必要なら git log を読む。
 
+## 2026-09-16: issue #1 の「ナックルベンチ」を通す（`feat/knuckle-bench`、dev `53acca0` から切った。PR → `dev`）
+
+issue #1 のコメントにある想定会話（ユーザー指示で「ナックルベンチ」と呼んでいる）。ルート1: 「草むしり検定はハコワレが頑張っていてとても良かった。」→「ハコワレ？ ハチワレのこと？」→「ナックルとユピーの戦いは感動したよね。」→「さっきからハンターハンターの話じゃない？」。ルート2: 訂正を受け入れた「そうだった。間違えた。」の後はハチワレの話として続く。仕組みは AGENTS.md の「名前の誤字と別の作品」節が正。
+
+- 新規: `lib/server/names.ts`（カタカナ語の抽出・Levenshtein 距離 1 の名前の誤字・見知らぬ語）、`lib/server/morph.ts`（kuromoji.js で固有名詞らしい語を切り出す。ユーザー指示「形態素解析をやるようにして」。漢字名: 炭治郎・禰豆子 → 鬼滅の刃、五条悟 → 呪術廻戦 を実 API で確認。`next.config.mjs` で external + 辞書の同梱。standalone ビルドに `node_modules/kuromoji/dict` が入ることを確認済み）、`lib/server/other-work.ts`（ゲート: 外部資料の語彙で落とす → Wikipedia）、`lib/server/wiki-lookup.ts`（Wikipedia の検索 API を語ごとに1回叩き、記事名・冒頭文の規則 A/B/C で作品名を決める。多数決 `pickWork`、語ごとのキャッシュ、1発話3語まで）。**判定役 LLM（`llm/other-work.ts`）は一度作ったが外した**（ユーザー判断: API 呼び出しを増やさない設計に反する。マイナー作品まで対応し切る気はなく、有名どころが拾えれば十分）
+- 変更: `analyze.ts`（`correctUserMessage`、`nameCorrections` / `unknownNames`）、`directive.ts`（`other_work` → `confirm_name` → `ask_scene` → 従来の順）、`generate.ts`（2つの指示文 + ペルソナに「名前の間違い・別の作品」節）、`pipeline.ts`（names → other-work → topic の順。別の作品なら topic を飛ばす。資料の検索には正式名に直した文。両 directive では extract を呼ばず、としおも割り込まない）、`route.ts`（としおに `directive` を渡す）、`events.ts` / devpanel `trace.ts`（directive の `note`。パネルに「名前を聞き返す（ハコワレ→ハチワレ）」「別の作品だと指摘（HUNTER×HUNTER）」）
+- 検証: `npm test` 472件（`names.test.ts`・`other-work.test.ts`・`morph.test.ts`（本物の辞書で切る）・`wiki-lookup.test.ts`（実際の検索結果の形で規則を固定）・`pipeline.knuckle.test.ts`・directive の4件を追加）、`tsc`、eslint 通過。実 API（3006 番・スクラッチの `DATA_DIR`）で通し: ルート1は「ハコワレ? ハチワレのこと?」→「それ、HUNTER×HUNTERの話じゃない?」、ルート2は2発話目で草むしり検定のハチワレの細部（嘘2件）+ としおの割り込み。Wikipedia 版の通し: ルート1（ナックル→ウルトラマン・ユピー→HUNTER×HUNTER の多数決で HUNTER×HUNTER）、炭治郎・禰豆子 → 鬼滅の刃、五条悟 → 呪術廻戦、エレン・ミカサ → 進撃の巨人、否定例（モモンガ・シーサー・ボロボロ）は通常の返答。1語の取り違え（ゾロ → ガンダム、エレン → 左ききのエレン）は AGENTS.md に記録
+- 残り: ルート2の2発話目は issue の文面「確かにハチワレは草むしり検定で頑張っていたよね」ではなく、訂正に触れずいつもの流れ（細部の嘘）に入る。訂正を受け入れたことに一言触れさせるなら、直前の directive（confirm_name）を履歴から辿る仕組みが要る（directive は保存していない）。ゲートの一般語のリスト（`COMMON_KATAKANA`）は手書きなので、実会話で判定役が無駄に呼ばれる語が出たら足す（`[other-work]` のログで分かる）。ひらがな・漢字の誤字（「はこわれ」「宇佐木」）は見ない。ひらがなだけの別作品の名前（「ごん」）も拾えない。Wikipedia の 429（連続で叩くと出る）はキャッシュと3語の上限で抑えているが、デモで別作品の名前を連発すると出るかもしれない（出たらその語は本作の話として続く）
+- このブランチには、ユーザーが `chore/public-ready` で未コミットだった HANDOFF.md の Topa'z 節も入っている（`next.config.mjs` の `allowedDevOrigins`・`tsconfig.json`・`docs/submission/` は未コミットのまま作業ツリーに残してある。stash `public-ready wip` にも同じものがある）
+
+## 2026-09-16: Topa'z 投稿の下書きに LoRA 節を追記（`chore/public-ready` 上、未コミット）
+- `docs/submission/topaz-post.md` は `feat/shiori-conversation-room` の `fd02521` にコミット済みだったが、このブランチには無かったので復元し、claims 抽出の LoRA（origin/dev の `ml/README.md` の数値: Qwen3-1.7B + LoRA 厳密F1 0.267・1〜2秒、4B は 0.392・6秒、教師データ 3062件）の解説節を追記。10項目の4番を「抽出の分離（生成とは別呼び出し、grounding はコードが決める）」に直した
+- Topa'z の言語タグは TypeScript + Python（`ml/` が実体）を推奨
+- ブラウザ拡張は未接続のままで、Topa'z のフォームへの入力はユーザーが手で行う
+## 2026-09-16: シオリの口調を「サバサバ・感情の起伏なし」に寄せ、三点リーダーをやめた（`fix/shiori-tone`、PR #47 → dev）
+
+ユーザーの指摘「三点リーダーを使いすぎ。もっとサバサバして感情の起伏が少ない方がいい」。出どころは、モデルへの直接の指示ではなく **開始の定型文 `……今日は何について話したい?`（履歴の最初の model 発話として毎回渡る）と、ペルソナ内の同じ引用、および「ダウナー」という性格付け** で、モデルがそれを真似ていた。
+
+- `app/api/sessions/route.ts` の `OPENING_MESSAGE`、`pipeline.ts` の `FALLBACK_MESSAGE` / `SAFE_UNCERTAIN_MESSAGE`、`ChatApp.tsx` の送信失敗時の定型文から `……` を外した
+- `generate.ts` のペルソナ: 「ダウナーで淡々」→「サバサバしていて感情の起伏が少ない。驚かない・はしゃがない・落ち込まない」「言い淀まず短く言い切る」。文体に「三点リーダーを使わない。文頭の間や語尾の余韻も付けない」「言い淀みの相づちを入れない」を追加。疑われたときの節に「むきにならず、声を荒げず、いつも通り言い切る」を追加
+- としおの「結論から言うとね……」はとしおの口調なので残した
+- テストの定型文を合わせて更新。実際の Gemini の出力で三点リーダーが消えたかは**まだ確認していない**（プロンプトの指示なので、残るなら差し戻し理由に三点リーダーの有無を足す手もある）
+
+## 2026-09-16: シオリの表情差分を組み込んだ（`feat/expressions`、PR #46 → dev）
+
+ユーザーが `pictures/` に描いた差分のうち**ウインクだけ**をアプリに入れた（おこり・どやがお・おちこみも描いて一度組み込んだが、「ずっと無表情の方が不思議感がある」との判断で外し、生成した画像も消した。元絵は `pictures/` に残っている。差分はベースと髪・服・輪郭が1px単位で同じで、目と口だけ違う）。設計は AGENTS.md の「シオリの表情」。
+
+- **画像**: `public/character/avatar-wink-{64,128,256}.png` と `display-{...}-512.png`。既存の avatar/display と同じ切り出し位置を総当たりで割り出して（`avatar-256` との差 2.1/255、`display-512` との差 1.4/255）、同じ手順で作った。作り直すときは PIL で `pictures/<表情>.png` を (152,50,1042,940) で切って NEAREST 縮小（立ち絵は (30,48,1162,1180) → 512）
+- **サーバー**: `ShioriExpression` 型（`types.ts`）、`Message.expression`、`store.appendMessage` の第5引数、`lib/server/llm/expression.ts`（`decideExpression` / `FALLBACK_EXPRESSION`）。`PipelineResult.expression` を Route Handler が `message-start` に `{ speaker: "shiori", expression }` で送り、保存時にも付ける。wink は感想を語り合う回だけで、それ以外（疑い・考察・場面の聞き返し・分からないふり・落ちた定型文）は neutral。としおには付けない。答え合わせの `RevealMessage.expression` にも通してある
+- **クライアント**: `Mascot` に `expression` prop（`data-expression` 属性。としおは無視）。`ViewMessage.expression`。`TypingIndicator` も表情を受けるので、本文を待つ間から顔が変わる
+- **ユーザーの指摘「アイコンが小さくて表情が分からない」**: 最初は会話の横に 208px の立ち絵（`ShioriStage`）を置いたが、ユーザーの判断で外し、**吹き出しのアバターを 44px → 72px にした**（`Mascot` の `AVATAR_SIZE`。画像の選択は 64px を超えたら 128px の画像を使うように閾値を 80 → 64 に変えた。シオリ・としお共通）
+- 検証: `npm test` 416件（`expression.test.ts`、`ChatApp.test.tsx` に表情2件、`route.test.ts` に message-start の表情1件を追加）・`tsc --noEmit`・eslint 通過。3001 の dev サーバー（このリポジトリ）に一時セッションを作って db.json に表情つきの発話を直接足し、headless Chrome で目視。セッションは削除済み
+- **未コミット**。ブランチも切っていない（dev の作業ツリーに `tsconfig.json` の変更と `pictures/` の新規 png と一緒に置いてある）。次は `feat/expressions` のようなブランチに載せて dev へ PR
 ## 2026-09-16: hotfix — Gemini 経路の claims 抽出が 503 で落ちて嘘が記録されない（`hotfix/extract-gemini-503`）
 
 手元の推論を設定していない環境（本番・`.env.local` に EXTRACT_* が無い手元）では extract が Gemini `gemini-3.1-flash-lite` に投げるが、混雑（503 UNAVAILABLE）のたびに再試行なしで claims 空になり、ついた嘘が1件も記録されなかった（答え合わせで嘘が消え、以後の矛盾検査からも抜ける）。`extract.ts` の Gemini 経路にだけ 503 の再試行（1s / 2s / 4s の3回、`GEMINI_UNAVAILABLE_RETRY_DELAYS_MS`）を入れた。429 と無効なキーは key-pool の領分なので触らない。経路をまたぐフォールバックも入れていない。dev と main の両方に PR を出した。手元での実 API の確認は generate 側が 429（無料枠）で止まり未検証。ユニットテストは通っている。
@@ -50,12 +111,12 @@ dev → main 昇格前のレビューで見つけた表示漏れ。`ResultPhase.
 
 ### 現在つながっている推論サーバ（手元）
 
-リモート gpu04 で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
+リモート GPU サーバ で 2 本立っていて（tmux セッション `serve17` / `serve4b`）、SSH トンネルで手元に同じポート番号で出ている。ドキュメントの既定と同じ配置。
 
 | ポート | モデル | リモートのパス |
 |---|---|---|
-| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/h2511188/chat-lora/out/lora/merged` |
-| 8124 | 4B マージ済み（比較用） | `/var/tmp/h2511188/chat-lora/out/lora-4b/merged` |
+| 8123 | **1.7B マージ済み（採用）** | `/var/tmp/<user>/chat-lora/out/lora/merged` |
+| 8124 | 4B マージ済み（比較用） | `/var/tmp/<user>/chat-lora/out/lora-4b/merged` |
 
 `../chat-local-extract/.env.local` は `EXTRACT_ENDPOINT=http://localhost:8123`（= 1.7B）にしてある。サーバは `setsid nohup` だと SSH 切断で落ちたことがあるので tmux で起動する。
 

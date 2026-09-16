@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import type { Speaker } from "@/lib/server/types";
+import type { ShioriExpression, Speaker } from "@/lib/server/types";
 
 type MascotVariant = "avatar" | "display";
 
@@ -10,6 +10,8 @@ interface MascotProps {
   variant?: MascotVariant;
   /** 話者。画像の出し分けに使う。既定はシオリ。 */
   character?: Speaker;
+  /** シオリの表情（pictures/ の差分から作った画像）。sad は削除確認専用。としおには無い。既定は neutral */
+  expression?: ShioriExpression | "sad";
   animated?: boolean;
   delay?: number;
   className?: string;
@@ -17,14 +19,20 @@ interface MascotProps {
   name?: string;
 }
 
+/**
+ * 吹き出しのアバターの大きさ。表情の差（眉と口の数ピクセル）が 44px では伝わらなかったので、
+ * 会話の中で顔として読める大きさにしている（128px の画像を使う）
+ */
+export const AVATAR_SIZE = 72;
+
 const AVATAR_SOURCES: Record<Speaker, { maxSize: number; src: string }[]> = {
   shiori: [
-    { maxSize: 80, src: "/character/avatar-64.png" },
+    { maxSize: 64, src: "/character/avatar-64.png" },
     { maxSize: 180, src: "/character/avatar-128.png" },
     { maxSize: Infinity, src: "/character/avatar-256.png" },
   ],
   toshio: [
-    { maxSize: 80, src: "/character/toshio-64.png" },
+    { maxSize: 64, src: "/character/toshio-64.png" },
     { maxSize: 180, src: "/character/toshio-128.png" },
     { maxSize: Infinity, src: "/character/toshio-256.png" },
   ],
@@ -41,6 +49,15 @@ function pickAvatarSource(size: number, character: Speaker) {
 }
 
 /**
+ * 表情つきの画像は `/character/avatar-<expression>-<size>.png` / `display-<expression>-512.png`。
+ * neutral は元からある無印のファイル。としおには表情差分が無いので常に無印
+ */
+function withExpression(src: string, character: Speaker, expression: ShioriExpression | "sad"): string {
+  if (character !== "shiori" || expression === "neutral") return src;
+  return src.replace(/\/(avatar|display)-/, `/$1-${expression}-`);
+}
+
+/**
  * The portrait mascot used for both the persistent chat avatar (square pixel
  * frame) and the larger empty-state display (full bust, natural silhouette).
  * The art is a single static frame, so "life" comes only from a slow,
@@ -51,6 +68,7 @@ export function Mascot({
   size = 36,
   variant = "avatar",
   character = "shiori",
+  expression = "neutral",
   animated = true,
   delay = 0,
   className = "",
@@ -58,14 +76,15 @@ export function Mascot({
 }: MascotProps) {
   const isAvatar = variant === "avatar";
   const src = useMemo(
-    () => (isAvatar ? pickAvatarSource(size, character) : DISPLAY_SOURCES[character]),
-    [isAvatar, size, character],
+    () => withExpression(isAvatar ? pickAvatarSource(size, character) : DISPLAY_SOURCES[character], character, expression),
+    [isAvatar, size, character, expression],
   );
 
   return (
     <div
       className={`shrink-0 ${isAvatar ? "pixel-frame overflow-hidden bg-surface-card" : ""} ${className}`}
       style={{ width: size, height: size }}
+      data-expression={character === "shiori" ? expression : undefined}
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img

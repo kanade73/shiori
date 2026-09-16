@@ -76,6 +76,7 @@ export function buildReveal(params: {
       id: message.id,
       role: message.role,
       ...(message.speaker ? { speaker: message.speaker } : {}),
+      ...(message.expression ? { expression: message.expression } : {}),
       content: message.content,
       createdAt: message.createdAt,
     };

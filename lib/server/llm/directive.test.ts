@@ -338,3 +338,56 @@ describe("としおの考察について聞かれたとき（support_theory）",
     expect(theoryInQuestion({ userMessage: "としおってだれ？", history })).toBeNull();
   });
 });
+
+describe("decideDirective: 名前の誤字と別の作品（issue #1 ナックルベンチ）", () => {
+  const history = [msg("u1", "user"), msg("a1", "assistant", "shiori")];
+  const corrections = [{ written: "ハコワレ", entity: "ハチワレ" }];
+
+  it("名前の誤字があれば、場面が分かっていても confirm_name（誰のことか聞き返す）", () => {
+    const directive = decideDirective({
+      analysis: { ...analysis("impression", ["ハチワレ"], ["草むしり検定編"]), nameCorrections: corrections },
+      history,
+      fabricatedFacts: [],
+      relevantFacts: [],
+      phase: "early",
+    });
+    expect(directive).toEqual({ kind: "confirm_name", phase: "early", corrections });
+  });
+
+  it("誤字の確認は、場面の聞き返し（ask_scene）より先", () => {
+    const directive = decideDirective({
+      analysis: { ...analysis("impression"), nameCorrections: corrections },
+      history,
+      fabricatedFacts: [],
+      relevantFacts: [],
+      phase: "early",
+      sceneKnown: false,
+    });
+    expect(directive.kind).toBe("confirm_name");
+  });
+
+  it("別の作品の話なら other_work。誤字や疑いより先", () => {
+    const otherWork = { otherWork: "HUNTER×HUNTER", names: ["ナックル", "ユピー"] };
+    const directive = decideDirective({
+      analysis: { ...analysis("doubt"), nameCorrections: corrections },
+      history,
+      fabricatedFacts: [fact("f1", "a1")],
+      relevantFacts: [],
+      phase: "late",
+      otherWork,
+    });
+    expect(directive).toEqual({ kind: "other_work", phase: "late", otherWork: "HUNTER×HUNTER", names: ["ナックル", "ユピー"] });
+  });
+
+  it("誤字も別の作品も無ければ従来どおり（訂正を受け入れた「そうだった。間違えた。」は plain）", () => {
+    const directive = decideDirective({
+      analysis: { ...analysis("other"), nameCorrections: [], unknownNames: [] },
+      history,
+      fabricatedFacts: [],
+      relevantFacts: [],
+      phase: "early",
+      otherWork: null,
+    });
+    expect(directive.kind).toBe("plain");
+  });
+});

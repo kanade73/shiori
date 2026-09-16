@@ -15,3 +15,9 @@ out/
 next-env.d.ts
 
 .data/
+
+# 命題カードの試作で使った libsql のファイル。コードは読まない
+data/.kb/
+
+# Claude Code のデザイン資料（このアプリと無関係）
+.claude/design/

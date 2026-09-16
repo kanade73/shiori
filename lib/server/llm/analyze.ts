@@ -1,6 +1,7 @@
 import { getArcs, getEntities, getEpisodesUpTo } from "../works";
 import { normalizeText } from "../claims";
-import type { QuestionType, UserMessageAnalysis } from "../types";
+import { applyNameCorrections, findNameCorrections, unknownKatakanaWords } from "../names";
+import type { NameCorrection, QuestionType, UserMessageAnalysis } from "../types";
 
 /**
  * Local, deterministic analysis of the user's message. This used to be an
@@ -39,13 +40,28 @@ function sentimentOf(text: string): string {
   return "neutral";
 }
 
+/**
+ * 登場人物の名前の誤字（「ハコワレ」→ ハチワレ）を見つけ、正式名に直した発話も返す。
+ * 資料の検索・本物の設定の取り出しには直した文を使い、シオリには元の文を渡す（誤字を聞き返せるように）。
+ * issue #1 ナックルベンチ。
+ */
+export function correctUserMessage(workId: string, userMessage: string): { text: string; corrections: NameCorrection[] } {
+  const corrections = findNameCorrections(getEntities(workId), userMessage);
+  return { text: applyNameCorrections(userMessage, corrections), corrections };
+}
+
 export function analyzeUserMessage(params: {
   workId: string;
   currentEpisode: number;
   userMessage: string;
+  /** 作品名。見知らぬ語の判定で作品名（とその一部）を除くため。省略可 */
+  workTitle?: string;
+  /** 形態素解析で切り出した固有名詞らしい語（morph.ts。非同期なので呼び出し側が渡す）。省略可 */
+  properNouns?: string[];
 }): UserMessageAnalysis {
-  const { workId, currentEpisode, userMessage } = params;
-  const text = normalizeText(userMessage);
+  const { workId, currentEpisode, userMessage, workTitle = "", properNouns = [] } = params;
+  const corrected = correctUserMessage(workId, userMessage);
+  const text = normalizeText(corrected.text);
 
   const mentionedCharacters: string[] = [];
   for (const entity of getEntities(workId)) {
@@ -64,10 +80,21 @@ export function analyzeUserMessage(params: {
     if (title.length >= 2 && text.includes(title)) mentionedEvents.push(episode.title!);
   }
 
+  const unknownNames = unknownKatakanaWords({
+    userMessage,
+    entities: getEntities(workId),
+    arcs: getArcs(workId),
+    workTitle,
+    corrections: corrected.corrections,
+    extraWords: properNouns,
+  });
+
   return {
     mentionedCharacters,
     mentionedEvents: Array.from(new Set(mentionedEvents)),
     sentiment: sentimentOf(userMessage),
     questionType: classify(userMessage),
+    nameCorrections: corrected.corrections,
+    unknownNames,
   };
 }

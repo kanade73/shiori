@@ -21,7 +21,13 @@ export type TraceTurn = {
   at: string;
   userText?: string;
   analyze?: { mentionedCharacters: string[]; mentionedEvents: string[]; questionType: string };
-  directive?: { kind: "introduce" | "layer" | "support_theory" | "ask_scene" | "plain"; phase: string; doubted: string[]; detailCount?: number };
+  directive?: {
+    kind: "introduce" | "layer" | "support_theory" | "ask_scene" | "confirm_name" | "other_work" | "plain";
+    phase: string;
+    doubted: string[];
+    detailCount?: number;
+    note?: string;
+  };
   attempts: TraceAttempt[];
   regenerateReason?: string;
   fallback?: boolean;
@@ -61,7 +67,7 @@ export function reduceTurns(turns: TraceTurn[], event: PipelineEvent): TraceTurn
       };
       break;
     case "directive":
-      turn.directive = { kind: event.kind, phase: event.phase, doubted: event.doubted, detailCount: event.detailCount };
+      turn.directive = { kind: event.kind, phase: event.phase, doubted: event.doubted, detailCount: event.detailCount, note: event.note };
       break;
     case "generate":
       attemptOf(turn, event.attempt).message = event.message;
@@ -121,6 +127,8 @@ export const DIRECTIVE_LABEL: Record<string, string> = {
   layer: "裏付けを重ねる",
   support_theory: "としおの考察を支える",
   ask_scene: "場面を聞き返す",
+  confirm_name: "名前を聞き返す",
+  other_work: "別の作品だと指摘",
   plain: "素の返答",
 };
 
@@ -166,7 +174,8 @@ export function stageSummary(turn: TraceTurn, stage: StageName): string | null {
     case "directive": {
       const d = turn.directive!;
       const base = DIRECTIVE_LABEL[d.kind] ?? d.kind;
-      return d.kind === "layer" && d.detailCount ? `${base}（${d.detailCount}つ）` : base;
+      if (d.kind === "layer" && d.detailCount) return `${base}（${d.detailCount}つ）`;
+      return d.note ? `${base}（${d.note}）` : base;
     }
     case "generate":
       return turn.attempts.length > 1 ? `${turn.attempts.length}回目 / ${last.message!.length}字` : `${last.message!.length}字`;

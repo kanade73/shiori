@@ -22,6 +22,7 @@ import {
 } from "@/lib/client/api";
 import type { ChatSession, Message, Work } from "@/lib/server/types";
 import { sessionLabel, type ViewMessage } from "@/lib/client/types";
+import { localId } from "@/lib/client/id";
 
 function toViewMessage(message: Message): ViewMessage {
   return {
@@ -30,6 +31,7 @@ function toViewMessage(message: Message): ViewMessage {
     content: message.content,
     createdAt: message.createdAt,
     speaker: message.speaker,
+    expression: message.expression,
   };
 }
 
@@ -143,7 +145,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     setIsSending(true);
 
     const userMessage: ViewMessage = {
-      id: `local-user-${crypto.randomUUID()}`,
+      id: `local-user-${localId()}`,
       role: "user",
       content: text,
       createdAt: new Date().toISOString(),
@@ -151,7 +153,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     // 返答を待つ間も入力中の表示を出すため、吹き出しは先に1つ積んでおき、
     // 最初の message-start はそれに充てる。1回の送信でシオリ→（ときどき）としお、
     // と複数の発話が届きうるので、2つ目以降の message-start は新しく積む。
-    const placeholderId = `local-assistant-${crypto.randomUUID()}`;
+    const placeholderId = `local-assistant-${localId()}`;
     setMessages((prev) => [
       ...prev,
       userMessage,
@@ -163,18 +165,18 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
 
     try {
       await sendMessage(sessionId, text, {
-        onMessageStart: (speaker) => {
+        onMessageStart: (speaker, expression) => {
           if (!placeholderUsed) {
             placeholderUsed = true;
             currentId = placeholderId;
-            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker } : m)));
+            setMessages((prev) => prev.map((m) => (m.id === placeholderId ? { ...m, speaker, expression } : m)));
             return;
           }
-          const id = `local-assistant-${crypto.randomUUID()}`;
+          const id = `local-assistant-${localId()}`;
           currentId = id;
           setMessages((prev) => [
             ...prev,
-            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker },
+            { id, role: "assistant", content: "", createdAt: new Date().toISOString(), isStreaming: true, speaker, expression },
           ]);
         },
         onToken: (chunk) => {
@@ -208,7 +210,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
         setMessages((prev) =>
           prev.map((m) =>
             m.id === id
-              ? { ...m, isStreaming: false, content: m.content || "……ちょっと分からなくなった。もう一度言って。" }
+              ? { ...m, isStreaming: false, content: m.content || "ちょっと分からなくなった。もう一度言って。" }
               : m,
           ),
         );
@@ -248,7 +250,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
   }
 
   async function confirmDeleteSession() {
-    if (!deleteTarget) return;
+    if (!deleteTarget) return false;
     const id = deleteTarget.id;
     setDeleting(true);
     setDeleteError(null);
@@ -257,16 +259,17 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
     } catch (e) {
       setDeleteError(e instanceof Error ? e.message : "削除に失敗しました");
       setDeleting(false);
-      return;
+      return false;
     }
     setDeleting(false);
     setDeleteTarget(null);
     // 開いている会話を消したら、ここには居られないので最初の画面へ
     if (id === sessionId) {
       router.push("/");
-      return;
+      return true;
     }
     setSessions((prev) => prev.filter((s) => s.id !== id));
+    return true;
   }
 
   if (loading) return <CenteredNote>読み込み中……</CenteredNote>;
@@ -302,7 +305,7 @@ export function ChatApp({ sessionId }: { sessionId: string }) {
           <div className="mx-auto max-w-[860px] py-sm">
             {messages.map((message) =>
               message.isStreaming && message.content === "" ? (
-                <TypingIndicator key={message.id} speaker={message.speaker} />
+                <TypingIndicator key={message.id} speaker={message.speaker} expression={message.expression} />
               ) : (
                 <ChatMessageItem key={message.id} message={message} />
               ),
